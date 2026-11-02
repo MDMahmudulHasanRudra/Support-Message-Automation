@@ -7,7 +7,8 @@ import { getClientDetail, loadClientFormOptions } from "@/server/clients";
 import { loadClientFormContext } from "@/server/clientFormContext";
 import { aliasesOf } from "@/server/clientCodes";
 import { activeProjectId } from "@/server/projectContext";
-import { Alert, Badge, ButtonLink, Card } from "@/components/ui";
+import Link from "@/components/ProjectLink";
+import { Alert, Badge, Card } from "@/components/ui";
 import { ClientForm } from "../../ClientForm";
 import { CopyCode } from "../CopyCode";
 
@@ -33,10 +34,18 @@ export default async function EditClientPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="space-y-5">
-      <ButtonLink href={`/clients/${client.id}`} variant="ghost" size="sm">
-        <ArrowLeft className="size-3.5" aria-hidden />
-        Back to {name}
-      </ButtonLink>
+      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-sm text-[color:var(--color-muted-foreground)]">
+        <Link href="/clients" className="hover:text-[color:var(--color-foreground)] hover:underline">
+          All Clients
+        </Link>
+        <span aria-hidden>/</span>
+        <Link href={`/clients/${client.id}`} className="inline-flex items-center gap-1 hover:text-[color:var(--color-foreground)] hover:underline">
+          <ArrowLeft className="size-3.5" aria-hidden />
+          {name}
+        </Link>
+        <span aria-hidden>/</span>
+        <span className="text-[color:var(--color-foreground)]">Edit</span>
+      </nav>
       <div className="flex items-center gap-4">
         <span aria-hidden className="flex size-12 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-subtle,var(--color-neutral-bg))] text-[15px] font-semibold">
           {initials}
@@ -55,7 +64,8 @@ export default async function EditClientPage({ params }: { params: Promise<{ id:
       {client.status === "ARCHIVED" ? (
         <Alert tone="info">This client is archived. Restore it from its profile before editing it. Its channels, notes and history are all kept.</Alert>
       ) : (
-        <Card className="max-w-4xl p-6">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,56rem)_180px]">
+        <Card className="p-6">
           <ClientForm
             mode="edit"
             clientId={client.id}
@@ -83,6 +93,23 @@ export default async function EditClientPage({ params }: { params: Promise<{ id:
             }}
           />
         </Card>
+          <aside className="hidden xl:block">
+            <nav aria-label="Form sections" className="sticky top-24 space-y-1 text-sm">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]">On this page</p>
+              {[
+                ["client-identity", "Identity"],
+                ["client-contact", "Contact & currency"],
+                ["client-team", "Team & seller"],
+                ["client-notes", "Notes"],
+              ].map(([anchor, label]) => (
+                <a key={anchor} href={`#${anchor}`} className="block rounded-[var(--radius-sm)] px-2 py-1 text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]">
+                  {label}
+                </a>
+              ))}
+              <p className="pt-3 text-xs text-[color:var(--color-muted-foreground)]">Subscriptions, payments, notes and links stay on the profile; the client code changes through its own logged step.</p>
+            </nav>
+          </aside>
+        </div>
       )}
     </div>
   );

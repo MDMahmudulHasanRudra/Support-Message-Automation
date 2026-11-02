@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
+import { META_PAGE_WEBHOOK_FIELDS, metaGraphVersion, readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
 
 /**
  * The few provider calls the DASHBOARD makes: checking credentials, subscribing a Page to the app,
@@ -17,8 +17,7 @@ const TIMEOUT_MS = 15_000;
 
 /** The Graph API version. Meta keeps each version for about two years; overridable without a release. */
 export function graphBase(): string {
-  const version = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
-  return `https://graph.facebook.com/${version}`;
+  return `https://graph.facebook.com/${metaGraphVersion(process.env)}`;
 }
 
 export type ProviderResult<T> = { ok: true; data: T } | { ok: false; error: ProviderErrorReading; status: number };
@@ -91,7 +90,7 @@ export function readLinkedInstagram(pageId: string, token: string, appSecret: st
 }
 
 /** The webhook fields a Page is subscribed to for messaging. */
-export const META_PAGE_FIELDS = ["messages", "message_echoes", "message_deliveries", "message_reads"] as const;
+export const META_PAGE_FIELDS = META_PAGE_WEBHOOK_FIELDS;
 
 /** Subscribe the Page to this app, so Meta sends its messaging events to the app's webhook. */
 export function subscribeMetaPage(pageId: string, token: string, appSecret: string, fetchImpl: FetchImpl = fetch) {

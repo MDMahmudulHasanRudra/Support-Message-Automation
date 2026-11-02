@@ -104,7 +104,7 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     aiCapabilities: [],
     hasBackgroundJobs: false,
     dataWhenOff: "Messages are still collected and shown under Messages. " + KEPT,
-    setupSteps: ["Connect a WhatsApp number under WhatsApp → Accounts"],
+    setupSteps: ["Connect a WhatsApp number under WhatsApp (Legacy) → Accounts"],
     documentation: "WHATSAPP_CHAT_MULTI_ACCOUNT_AUDIT.md",
   },
   AI_REPLY: {

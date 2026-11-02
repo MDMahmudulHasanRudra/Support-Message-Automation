@@ -1,4 +1,4 @@
-import { META_SOCIAL_SCOPES, SOCIAL_META_CALLBACK_PATH } from "@support-automation/shared";
+import { META_OAUTH_CALLBACK_PATH, META_SOCIAL_SCOPES } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
 import { Card, PageHeader, SectionHeader } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
@@ -52,10 +52,16 @@ export default async function SocialSettingsPage() {
       <section className="mb-6">
         <SectionHeader title="Meta app setup (platform administrator)" />
         <Card className="space-y-2 p-4 text-sm">
-          <p>Add this to the platform Meta app&apos;s Facebook Login → Valid OAuth Redirect URIs (it is separate from the messaging callback):</p>
-          <code className="block overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-2 text-xs">{origin ? `${origin}${SOCIAL_META_CALLBACK_PATH}` : `<NEXTAUTH_URL>${SOCIAL_META_CALLBACK_PATH}`}</code>
+          <p>
+            Publishing comes back through the platform&apos;s one Meta callback — the same Valid OAuth Redirect URI as messaging, so nothing extra is registered. Connecting works from
+            every customer address; the person finishes in the same browser, on the address they started from.
+          </p>
+          <code className="block overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-2 text-xs">{ready.ok ? ready.redirectUri : `META_OAUTH_REDIRECT_URI (e.g. https://<platform address>${META_OAUTH_CALLBACK_PATH})`}</code>
           <p>Permissions publishing asks for (each needs Meta App Review approval before real customers can use it): {META_SOCIAL_SCOPES.join(", ")}.</p>
-          <p className="text-xs text-[color:var(--color-muted-foreground)]">Optional: META_SOCIAL_LOGIN_CONFIG_ID — a Facebook Login for Business configuration made for these permissions.</p>
+          <p className="text-xs text-[color:var(--color-muted-foreground)]">
+            Optional: META_SOCIAL_LOGIN_CONFIG_ID — a Facebook Login for Business configuration made for these permissions only (keep it separate from the messaging configuration,
+            META_LOGIN_CONFIG_ID).
+          </p>
         </Card>
       </section>
       <section className="mb-6">

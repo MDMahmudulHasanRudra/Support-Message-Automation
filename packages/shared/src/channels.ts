@@ -18,6 +18,19 @@ export function isChannelType(value: unknown): value is ChannelType {
   return typeof value === "string" && (CHANNEL_TYPES as readonly string[]).includes(value);
 }
 
+/** The channel types Meta's Messenger Platform carries (Page webhooks, Graph send API, Facebook Login). */
+export const META_CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM"] as const satisfies readonly ChannelType[];
+export type MetaChannelType = (typeof META_CHANNEL_TYPES)[number];
+
+/**
+ * Whether a connection of this type may use a Meta route, token or send path. Asked as an ALLOW-list:
+ * the checks it replaced excluded Telegram only, so any other type — website chat today, a new channel
+ * tomorrow — was treated as Meta by default.
+ */
+export function isMetaChannelType(value: unknown): value is MetaChannelType {
+  return typeof value === "string" && (META_CHANNEL_TYPES as readonly string[]).includes(value);
+}
+
 /** Which webhook dialect a channel speaks. Messenger and Instagram share Meta's. */
 export type ChannelWebhookKind = "META" | "TELEGRAM" | "WEBCHAT";
 
@@ -148,9 +161,16 @@ export function isInboxScope(value: unknown): value is InboxScope {
   return typeof value === "string" && (INBOX_SCOPES as readonly string[]).includes(value);
 }
 
+/**
+ * How the OpenWA (WhatsApp Web) channel is SHOWN, beside the official WhatsApp Business API that may be
+ * added later (docs/meta-expansion/09 A1). Words on screen only: the scope `whatsapp`, routes, feature and
+ * permission keys, nav module and section ids never change with it.
+ */
+export const LEGACY_WHATSAPP_LABEL = "WhatsApp (Legacy)";
+
 export function inboxScopeLabel(scope: InboxScope): string {
   if (scope === "all") return "All conversations";
-  if (scope === "whatsapp") return "WhatsApp";
+  if (scope === "whatsapp") return LEGACY_WHATSAPP_LABEL;
   return CHANNELS[channelBySlug(scope)!].label;
 }
 

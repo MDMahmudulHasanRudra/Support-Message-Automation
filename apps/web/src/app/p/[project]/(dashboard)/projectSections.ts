@@ -108,13 +108,17 @@ const SECTION_RULES: Record<string, SectionRule> = {
       "clients.link_whatsapp_chat",
       "clients.link_whatsapp_group",
       "clients.manage_subscriptions",
+      "clients.send_messages",
     ],
     // The export and each client's photo.
     also: ["/api/clients"],
   },
   "/clients/subscriptions": { write: ["clients.manage_subscriptions"] },
-  "/clients/dues": { write: ["clients.edit_billing"] },
-  "/clients/payments": { write: ["clients.edit_billing"] },
+  "/clients/subscriptions/renewals": { write: ["clients.manage_subscriptions", "clients.send_messages"] },
+  "/clients/dues": { write: ["clients.edit_billing", "clients.send_messages"], also: ["/api/clients/documents/invoice"] },
+  "/clients/payments": { write: ["clients.edit_billing", "clients.send_messages"], also: ["/api/clients/documents/receipt"] },
+  "/clients/messages": { write: ["clients.send_messages", "clients.approve_messages"] },
+  "/clients/templates": { write: ["clients.manage_settings"] },
   "/clients/import": { fullOnly: true, also: ["/api/clients/import"] },
   // Commerce
   "/commerce/orders": { write: ["orders.manage"] },
@@ -204,6 +208,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/settings/email": { fullOnly: true },
   "/settings/clients": { fullOnly: true },
   "/settings/clients/configuration": { fullOnly: true },
+  "/settings/clients/documents": { fullOnly: true },
   "/settings/google-sheets": { write: ["google_sheets.manage"], also: ["/api/google-sheets/connect"] },
 };
 
@@ -291,7 +296,7 @@ function buildModules(): AccessModule[] {
       entries = group.links.filter((link) => link !== SETTINGS_LINK).flatMap((link) => entryFor(link, taken) ?? []);
     }
     if (entries.length) {
-      modules.push({ id: isReports ? REPORTS_MODULE_ID : slug(group.label), label: group.label, description: "", groups: [{ label: null, entries }] });
+      modules.push({ id: isReports ? REPORTS_MODULE_ID : slug(group.id ?? group.label), label: group.label, description: "", groups: [{ label: null, entries }] });
     }
     if (group.links.includes(SETTINGS_LINK)) {
       // Settings sits right after System, where its one sidebar link lives, split like its own rail.

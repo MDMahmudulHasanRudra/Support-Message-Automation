@@ -66,6 +66,13 @@ const EVENT_COPY: Record<
     consequence:
       "The one alert here you should not mute. Every other event tells you about a customer; this one tells you that no customer is reaching you at all, and it is the only thing that would.",
   },
+  CHANNEL_NEEDS_RECONNECT: {
+    title: "A messaging channel needs reconnecting",
+    description:
+      "A Facebook Messenger, Instagram or Telegram connection is no longer accepted — Meta or Telegram stopped honouring its access. Sent once each time it breaks.",
+    consequence:
+      "Muting this means a channel can stop receiving messages with nobody told; its status still shows on Settings → Messaging Channels.",
+  },
 };
 
 export default async function NotificationEventsPage() {

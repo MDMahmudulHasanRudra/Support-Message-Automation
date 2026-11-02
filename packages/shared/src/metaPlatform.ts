@@ -11,7 +11,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * needs any of it: they authorise their own Pages at Meta through this one app.
  */
 
+/**
+ * The Graph API version used when META_GRAPH_API_VERSION is not set. Deliberately NOT moved to the newest
+ * version by itself (docs/meta-expansion/11 §Graph): a version change is an env change tested at Gate B,
+ * never a side effect of a release. Meta keeps each version about two years.
+ */
 export const DEFAULT_META_GRAPH_VERSION = "v25.0";
+const GRAPH_VERSION_RE = /^v\d{1,3}\.0$/;
 export const META_OAUTH_CALLBACK_PATH = "/api/meta/oauth/callback";
 
 export interface MetaPlatformConfig {
@@ -30,6 +36,19 @@ export type MetaPlatformConfigReading =
   | { ok: false; enabled: boolean; problems: string[] };
 
 type Env = Record<string, string | undefined>;
+
+/**
+ * The one reading of the Graph API version for every Meta call, web and worker: META_GRAPH_API_VERSION
+ * when it is well-formed, otherwise the default. It used to be read raw in three places, so a typo went
+ * straight into every request URL.
+ */
+export function metaGraphVersion(env: Env): string {
+  const value = env.META_GRAPH_API_VERSION?.trim();
+  return value && GRAPH_VERSION_RE.test(value) ? value : DEFAULT_META_GRAPH_VERSION;
+}
+
+/** The Page webhook fields the platform app subscribes each connected Page to (connect and health repair). */
+export const META_PAGE_WEBHOOK_FIELDS = ["messages", "message_echoes", "message_deliveries", "message_reads"] as const;
 
 const isLocalHost = (host: string) => host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".localhost");
 
@@ -55,7 +74,7 @@ export function readMetaPlatformConfig(env: Env, publicOrigin: string | null): M
   else if (!/^[a-f0-9]{32}$/i.test(appSecret)) problems.push("META_APP_SECRET must be the 32-character app secret.");
 
   const graphVersion = get("META_GRAPH_API_VERSION") || DEFAULT_META_GRAPH_VERSION;
-  if (!/^v\d{1,3}\.0$/.test(graphVersion)) problems.push("META_GRAPH_API_VERSION must look like v25.0.");
+  if (!GRAPH_VERSION_RE.test(graphVersion)) problems.push("META_GRAPH_API_VERSION must look like v25.0.");
 
   const webhookVerifyToken = get("META_WEBHOOK_VERIFY_TOKEN");
   if (!webhookVerifyToken) problems.push("META_WEBHOOK_VERIFY_TOKEN is not set.");

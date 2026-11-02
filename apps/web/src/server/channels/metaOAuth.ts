@@ -3,6 +3,8 @@ import {
   assetKey,
   classifyMetaAssets,
   META_REQUESTED_SCOPES,
+  META_SOCIAL_SCOPES,
+  isMetaChannelType,
   readGrantedScopes,
   metaProjectAllowed,
   readMetaPlatformConfig,
@@ -55,6 +57,11 @@ import {
  *
  * The user token and Page tokens are decrypted only here and in `connections.ts`; nothing returned to
  * a page carries one.
+ *
+ * Social Studio's publishing connection uses the same steps 1–3 (docs/meta-expansion/04 §2): purpose
+ * SOCIAL_CONNECT, its own binding cookie, its own claim route, its own permissions at Meta. The two are
+ * kept apart at every step — a messaging attempt can never be claimed as a publishing one or the reverse,
+ * so a person's messaging grant never becomes a publishing grant.
  */
 
 export class MetaOAuthError extends Error {
@@ -101,6 +108,18 @@ export const META_CHOICE_TTL_MS = 30 * 60_000;
 const MAX_STARTS_PER_HOUR = 20;
 
 export const META_BINDING_COOKIE = "softify-meta-oauth";
+/** Social Studio's own binding cookie, so starting one flow never overwrites the other's. */
+export const META_SOCIAL_BINDING_COOKIE = "softify-meta-social-oauth";
+
+/** Which claim may finish an attempt. */
+export type MetaOAuthFlow = "MESSAGING" | "SOCIAL";
+export const metaOAuthFlowOf = (purpose: MetaOAuthPurpose): MetaOAuthFlow => (purpose === "SOCIAL_CONNECT" ? "SOCIAL" : "MESSAGING");
+
+/** Social Studio's Facebook Login for Business configuration id, when one is set and well-formed. */
+function socialLoginConfigId(): string | null {
+  const id = process.env.META_SOCIAL_LOGIN_CONFIG_ID?.trim();
+  return id && /^\d{5,25}$/.test(id) ? id : null;
+}
 
 export function metaBindingCookieOptions(maxAgeSeconds: number) {
   return {
@@ -152,18 +171,24 @@ export function visitorOrigin(headers: Headers, fallback: URL): string | null {
 const random = (bytes: number) => randomBytes(bytes).toString("base64url");
 export const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/** Meta's login dialog. With a Facebook Login for Business configuration, its id replaces the scopes. */
-export function metaDialogUrl(config: MetaPlatformConfig, state: string, opts: { rerequest: boolean }): string {
+/**
+ * Meta's login dialog. With a Facebook Login for Business configuration, its id replaces the scopes.
+ * Messaging and publishing ask for different permissions (and configurations); both come back to the
+ * one registered redirect URI.
+ */
+export function metaDialogUrl(config: MetaPlatformConfig, state: string, opts: { rerequest: boolean; flow?: MetaOAuthFlow }): string {
   const url = new URL(`https://www.facebook.com/${config.graphVersion}/dialog/oauth`);
   url.searchParams.set("client_id", config.appId);
   url.searchParams.set("redirect_uri", config.redirectUri);
   url.searchParams.set("state", state);
   url.searchParams.set("response_type", "code");
-  if (config.loginConfigId) {
-    url.searchParams.set("config_id", config.loginConfigId);
+  const social = opts.flow === "SOCIAL";
+  const configId = social ? socialLoginConfigId() : config.loginConfigId;
+  if (configId) {
+    url.searchParams.set("config_id", configId);
     url.searchParams.set("override_default_response_type", "true");
   } else {
-    url.searchParams.set("scope", META_REQUESTED_SCOPES.join(","));
+    url.searchParams.set("scope", (social ? META_SOCIAL_SCOPES : META_REQUESTED_SCOPES).join(","));
   }
   // A reconnect asks again for anything declined last time (Meta otherwise remembers the refusal).
   if (opts.rerequest) url.searchParams.set("auth_type", "rerequest");
@@ -198,7 +223,7 @@ export async function startMetaOAuth(input: {
   if (recent >= MAX_STARTS_PER_HOUR) throw new MetaOAuthError("too_many", META_ERROR_TEXT.too_many);
   if (input.purpose === "RECONNECT") {
     const target = input.connectionId ? await prisma.channelConnection.findUnique({ where: { id: input.connectionId }, select: { type: true } }) : null;
-    if (!target || target.type === "TELEGRAM") throw new MetaOAuthError("not_found", "That connection no longer exists.");
+    if (!target || !isMetaChannelType(target.type)) throw new MetaOAuthError("not_found", "That connection no longer exists.");
   }
   const state = random(32);
   const binding = random(32);
@@ -215,7 +240,8 @@ export async function startMetaOAuth(input: {
       expiresAt: new Date(now.getTime() + META_STATE_TTL_MS),
     },
   });
-  return { dialogUrl: metaDialogUrl(config, state, { rerequest: input.purpose === "RECONNECT" }), binding };
+  // Social Studio has always asked again for anything declined (connecting again is how it reconnects).
+  return { dialogUrl: metaDialogUrl(config, state, { rerequest: input.purpose !== "CONNECT", flow: metaOAuthFlowOf(input.purpose) }), binding };
 }
 
 // ─── 2. callback ────────────────────────────────────────────────────────────────────────────────
@@ -233,9 +259,15 @@ export async function completeMetaCallback(input: { params: URLSearchParams; fet
   };
   const state = input.params.get("state") ?? "";
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(state)) return fallback("expired");
-  const row = await platformPrisma.metaOAuthSession.findUnique({ where: { stateHash: sha256(state) }, select: { id: true, projectId: true, status: true, expiresAt: true, returnOrigin: true, returnPath: true } });
+  const row = await platformPrisma.metaOAuthSession.findUnique({ where: { stateHash: sha256(state) }, select: { id: true, projectId: true, purpose: true, status: true, expiresAt: true, returnOrigin: true, returnPath: true } });
   if (!row) return fallback("expired");
-  const back = (query: string) => ({ redirect: `${row.returnOrigin}${row.returnPath}/settings/channels?${query}` });
+  const social = metaOAuthFlowOf(row.purpose) === "SOCIAL";
+  // Back to the page the flow started from, on the address it started from — both read from the row.
+  const back = (query: string) => ({
+    redirect: social
+      ? `${row.returnOrigin}${row.returnPath}/social/accounts?${query.replace(/^meta_error=/, "social_error=")}`
+      : `${row.returnOrigin}${row.returnPath}/settings/channels?${query}`,
+  });
 
   // Single use: only the request that moves it out of STARTED, before it expires, continues.
   const taken = await platformPrisma.metaOAuthSession.updateMany({
@@ -285,23 +317,31 @@ export async function completeMetaCallback(input: { params: URLSearchParams; fet
       claimHash: sha256(claim),
     },
   });
-  return { redirect: `${row.returnOrigin}${row.returnPath}/api/meta/claim?c=${encodeURIComponent(claim)}` };
+  const claimPath = social ? "/api/social/meta/claim" : "/api/meta/claim";
+  return { redirect: `${row.returnOrigin}${row.returnPath}${claimPath}?c=${encodeURIComponent(claim)}` };
 }
 
 // ─── 3. claim ───────────────────────────────────────────────────────────────────────────────────
 
-/** Inside the project. Returns the session id to open the choice screen with. */
-export async function claimMetaSession(input: { claim: string; binding: string | null | undefined; userId: string; now?: Date }): Promise<string> {
+/**
+ * Inside the project. Returns the session id to open the choice screen with (messaging) or to finish the
+ * publishing connection with (Social Studio). `flow` is the calling claim route's own: an attempt started
+ * for the other flow is not found. `origin` is the address the claim arrived on; it must be the one the
+ * attempt started from, because the callback only ever sends the browser there.
+ */
+export async function claimMetaSession(input: { claim: string; binding: string | null | undefined; userId: string; flow: MetaOAuthFlow; origin: string | null; now?: Date }): Promise<string> {
   const now = input.now ?? new Date();
   await requireProjectConfig();
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(input.claim)) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
   // Scoped client: a claim of another project's session is simply not found here.
   const row = await prisma.metaOAuthSession.findUnique({
     where: { claimHash: sha256(input.claim) },
-    select: { id: true, userId: true, status: true, claimedAt: true, expiresAt: true, browserBindingHash: true },
+    select: { id: true, userId: true, purpose: true, status: true, claimedAt: true, expiresAt: true, browserBindingHash: true, returnOrigin: true },
   });
-  if (!row || row.status !== "AUTHORIZED" || row.expiresAt <= now) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
+  if (!row || metaOAuthFlowOf(row.purpose) !== input.flow) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
+  if (row.status !== "AUTHORIZED" || row.expiresAt <= now) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
   if (row.userId !== input.userId) throw new MetaOAuthError("session", META_ERROR_TEXT.session);
+  if (input.origin !== row.returnOrigin) throw new MetaOAuthError("binding", META_ERROR_TEXT.binding);
   if (!input.binding || sha256(input.binding) !== row.browserBindingHash) throw new MetaOAuthError("binding", META_ERROR_TEXT.binding);
   const done = await prisma.metaOAuthSession.updateMany({ where: { id: row.id, claimedAt: null, status: "AUTHORIZED" }, data: { claimedAt: now } });
   if (done.count !== 1) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
@@ -329,7 +369,8 @@ const SESSION_SELECT = {
 /** A claimed, live session of this person, with its user token. Throws a reason otherwise. */
 async function openSession(sessionId: string, userId: string, now: Date) {
   const row = await prisma.metaOAuthSession.findUnique({ where: { id: sessionId }, select: SESSION_SELECT });
-  if (!row) throw new MetaOAuthError("not_found", META_ERROR_TEXT.not_found);
+  // A publishing attempt never opens the messaging choice screen (its grant has no messaging permissions).
+  if (!row || metaOAuthFlowOf(row.purpose) !== "MESSAGING") throw new MetaOAuthError("not_found", META_ERROR_TEXT.not_found);
   if (row.userId !== userId) throw new MetaOAuthError("session", META_ERROR_TEXT.session);
   if (row.status !== "AUTHORIZED" || !row.claimedAt || !row.userTokenCiphertext || !row.metaUserId) throw new MetaOAuthError("expired", META_ERROR_TEXT.expired);
   if (row.expiresAt <= now) {

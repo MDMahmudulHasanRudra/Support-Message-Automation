@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Eye, FileText, Trash2, Undo2 } from "lucide-react";
+import { Eye, FileText, ReceiptText, Trash2, Undo2 } from "lucide-react";
 import Link, { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Badge, Button, Checkbox, ConfirmDialog, Dialog, Field, Textarea, useToast } from "@/components/ui";
 import { reversePayment } from "@/server/actions/clientPayments";
@@ -80,7 +80,7 @@ export function PaymentsTable({ payments, canReverse, canDelete }: { payments: P
                   </td>
                 ) : null}
                 <td className={td}>
-                  <div className="whitespace-nowrap font-semibold font-[family-name:var(--font-mono)]">{p.receiptNumber}</div>
+                  <Link href={`/clients/payments/${p.id}`} className="whitespace-nowrap font-semibold font-[family-name:var(--font-mono)] hover:underline">{p.receiptNumber}</Link>
                   <div className={`text-xs ${muted}`}>{formatDay(p.receivedDate)}</div>
                 </td>
                 <td className={td}>
@@ -135,6 +135,7 @@ export function PaymentsTable({ payments, canReverse, canDelete }: { payments: P
                       horizontal
                       label={`More actions for ${p.receiptNumber}`}
                       items={[
+                        { label: "View receipt", icon: <ReceiptText className="size-4" aria-hidden />, href: `/clients/payments/${p.id}` },
                         { label: "Reverse…", icon: <Undo2 className="size-4" aria-hidden />, onSelect: () => setTarget(p), hidden: !canReverse || Boolean(p.reversed) },
                         { label: "Delete payment", icon: <Trash2 className="size-4" aria-hidden />, onSelect: () => setDeleting([p.id]), danger: true, hidden: !canDelete },
                       ]}

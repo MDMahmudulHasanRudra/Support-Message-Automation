@@ -16,6 +16,7 @@ import {
   type InboxFilterSet,
   type InboxViewKey,
   type InboxWithinKey,
+  LEGACY_WHATSAPP_LABEL,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
@@ -466,7 +467,7 @@ export async function inboxFilterOptions(): Promise<{ teams: { id: string; name:
   return {
     teams,
     accounts: [
-      ...waAccounts.map((a) => ({ key: `wa:${a.id}`, label: `WhatsApp · ${a.label}` })),
+      ...waAccounts.map((a) => ({ key: `wa:${a.id}`, label: `${LEGACY_WHATSAPP_LABEL} · ${a.label}` })),
       ...connections.map((c) => ({ key: `ch:${c.id}`, label: `${CHANNELS[c.type].label} · ${c.name}` })),
     ],
   };

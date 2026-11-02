@@ -1,7 +1,9 @@
 import { decryptSecret } from "@support-automation/db";
 import {
   advanceDeliveryStatus,
+  assertNeverProvider,
   channelMessagePreview,
+  routeInboundEvent,
   normalizeMetaEvent,
   normalizeTelegramUpdate,
   normalizeWebchatEvent,
@@ -106,13 +108,27 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
       select: { id: true, type: true, externalAccountId: true, appId: true, authMode: true, accessTokenCiphertext: true, appSecretCiphertext: true },
     });
     if (!connection) return settle(event.id, "IGNORED", "The connection no longer exists.");
-    const payload = event.payload as { provider?: string; item?: unknown; update?: unknown };
+    const payload = event.payload as { provider?: unknown; type?: unknown; item?: unknown; update?: unknown };
+    // Only the connection's own provider may read the event (Meta expansion B1). Anything else — a WhatsApp
+    // Cloud API event, a missing provider, another channel's event — is refused, never read as Meta's.
+    const route = routeInboundEvent(payload, connection.type);
     let normalized: NormalizedChannelEvent;
-    if (payload.provider === "TELEGRAM") normalized = normalizeTelegramUpdate(payload.update, event.receivedAt);
-    // Website chat: the web already validated the visitor and recorded a plain message (WEBSITE_CHAT.md).
-    else if (payload.provider === "WEBCHAT") normalized = connection.type === "WEBCHAT" ? normalizeWebchatEvent(payload) : { type: "IGNORED", reason: "Not a website chat connection." };
-    else if (connection.externalAccountId) normalized = normalizeMetaEvent(payload.item, connection.externalAccountId, event.receivedAt);
-    else normalized = { type: "IGNORED", reason: "The connection has no account id yet." };
+    switch (route.route) {
+      case "REJECT":
+        return reject(event.id, route.reason, now);
+      case "TELEGRAM":
+        normalized = normalizeTelegramUpdate(payload.update, event.receivedAt);
+        break;
+      case "WEBCHAT":
+        // The web already validated the visitor and recorded a plain message (WEBSITE_CHAT.md).
+        normalized = normalizeWebchatEvent(payload);
+        break;
+      case "META":
+        normalized = connection.externalAccountId ? normalizeMetaEvent(payload.item, connection.externalAccountId, event.receivedAt) : { type: "IGNORED", reason: "The connection has no account id yet." };
+        break;
+      default:
+        return assertNeverProvider(route, "inbound route");
+    }
 
     switch (normalized.type) {
       case "IGNORED":
@@ -140,6 +156,15 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
 
 async function settle(id: string, status: "PROCESSED" | "IGNORED", note: string | null): Promise<void> {
   await prisma.channelInboundEvent.update({ where: { id }, data: { status, note, processedAt: new Date(), lastError: null } });
+}
+
+/**
+ * An event no provider of this connection may read: FAILED with the reason, never retried, never PROCESSED —
+ * so it shows as a problem in diagnosis rather than passing for a handled customer message.
+ */
+async function reject(id: string, reason: string, now: Date): Promise<void> {
+  console.warn(`[channels] event ${id} refused: ${reason}`);
+  await prisma.channelInboundEvent.update({ where: { id }, data: { status: "FAILED", note: reason, lastError: reason, attempts: MAX_ATTEMPTS, processedAt: now } });
 }
 
 const isUniqueViolation = (err: unknown) => (err as { code?: string })?.code === "P2002";

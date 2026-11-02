@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition, type ReactNode } from "react";
-import { Archive, Eye, Link2, MessageCircle, Pencil, RefreshCw, RotateCcw, Trash2, Unlink, Users, Wallet } from "lucide-react";
+import { Archive, Eye, Link2, Mail, MessageCircle, Pencil, ReceiptText, RefreshCw, RotateCcw, StickyNote, Trash2, Unlink, Users, Wallet } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import Link, { useProjectHref } from "@/components/ProjectLink";
 import { Alert, Badge, Button, Checkbox, ConfirmDialog, Dialog, Field, Input, Select, SelectAllMatchingNotice } from "@/components/ui";
@@ -33,6 +33,8 @@ import { expiryTextClass, formatDay, groupChatHref, money, SUBSCRIPTION_TONE } f
 import { ClientAvatar } from "./ClientAvatar";
 import { daysBetween, flag } from "./ModuleKit";
 import { RowMenu } from "./RowMenu";
+import { PrepareMessageDialog } from "./messages/PrepareMessage";
+import { BulkEmailButton } from "./messages/BatchParts";
 
 export type ClientTableRow = ClientListRow;
 
@@ -64,6 +66,9 @@ export interface RegisterCaps {
   canRecordPayments: boolean;
   canLinkGroups: boolean;
   canOpenChat: boolean;
+  /** CLIENT_CRM_V7.md: may prepare and send messages to clients. */
+  canSendMessages: boolean;
+  billing: boolean;
 }
 
 function primaryPhone(c: ClientTableRow) {
@@ -279,7 +284,7 @@ function DaysLeftText({ today, sub }: { today: string; sub: NonNullable<ClientTa
 
 type RowAct = "archive" | "restore" | "delete";
 
-function RowActions({ c, caps, onAct }: { c: ClientTableRow; caps: RegisterCaps; onAct: (kind: RowAct, id: string) => void }) {
+function RowActions({ c, caps, onAct, onMessage }: { c: ClientTableRow; caps: RegisterCaps; onAct: (kind: RowAct, id: string) => void; onMessage: (id: string) => void }) {
   const group = c.groups.find((g) => g.active);
   const chat = caps.canOpenChat && group ? groupChatHref(group.accountId, group.groupId) : null;
   const archived = c.status === "ARCHIVED";
@@ -308,7 +313,11 @@ function RowActions({ c, caps, onAct }: { c: ClientTableRow; caps: RegisterCaps;
           { label: "Edit client", icon: <Pencil className="size-4" aria-hidden />, href: `/clients/${c.id}/edit`, hidden: !caps.canUpdate || archived },
           { label: c.subscription ? "Renew subscription" : "Add subscription", icon: <RefreshCw className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=subscriptions`, hidden: !caps.canManageSubscriptions || archived },
           { label: "Record payment", icon: <Wallet className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=payments`, hidden: !caps.canRecordPayments || !c.billing?.openInvoices || archived },
+          { label: "Open WhatsApp", icon: <MessageCircle className="size-4" aria-hidden />, href: `/clients/${c.id}/whatsapp`, hidden: !primaryPhone(c) && !c.chatLinked },
           { label: "Open WhatsApp group", icon: <MessageCircle className="size-4" aria-hidden />, href: chat ?? undefined, hidden: !chat },
+          { label: "Message client…", icon: <Mail className="size-4" aria-hidden />, onSelect: () => onMessage(c.id), hidden: archived },
+          { label: "View billing", icon: <ReceiptText className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=billing`, hidden: !caps.billing },
+          { label: "Add note", icon: <StickyNote className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=activity#notes`, hidden: archived },
           { label: group ? "Manage WhatsApp links" : "Link WhatsApp group", icon: <Link2 className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=whatsapp`, hidden: !caps.canLinkGroups || archived },
           { label: "Archive", icon: <Archive className="size-4" aria-hidden />, onSelect: () => onAct("archive", c.id), hidden: !caps.canArchive || archived },
           { label: "Restore", icon: <RotateCcw className="size-4" aria-hidden />, onSelect: () => onAct("restore", c.id), hidden: !caps.canArchive || !archived },
@@ -361,6 +370,8 @@ export function ClientsTable({
   const [pending, setPending] = useState<Pending | null>(null);
   /** One row's archive / restore / delete from its menu; null = the selection. */
   const [rowTarget, setRowTarget] = useState<string | null>(null);
+  // "Message client…" from a row: the same dialog as on the profile (CLIENT_CRM_V7.md §6).
+  const [messaging, setMessaging] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, startTransition] = useTransition();
   const [widening, setWidening] = useState(false);
@@ -388,7 +399,7 @@ export function ClientsTable({
   const pageIds = useMemo(() => clients.map((c) => c.id), [clients]);
   const allVisible = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const anyVisible = pageIds.some((id) => selected.has(id));
-  const showBulk = canUpdate || canArchive || canDelete || canExport;
+  const showBulk = canUpdate || canArchive || canDelete || canExport || caps.canSendMessages;
   const archivedView = filterParams.status === "ARCHIVED";
   const dataColumns = columns.filter((k) => k !== "client");
 
@@ -548,6 +559,7 @@ export function ClientsTable({
                 Delete
               </Button>
             ) : null}
+            {caps.canSendMessages ? <BulkEmailButton recipients={[...selected].map((clientId) => ({ clientId }))} /> : null}
             {canExport ? (
               <>
                 <Button variant="secondary" size="sm" onClick={() => exportSelected("xlsx")}>
@@ -617,6 +629,7 @@ export function ClientsTable({
                   <RowActions
                     c={c}
                     caps={caps}
+                    onMessage={setMessaging}
                     onAct={(kind, id) => {
                       setRowTarget(id);
                       setPending({ kind });
@@ -763,6 +776,7 @@ export function ClientsTable({
         description={pending ? confirmCopy[pending.kind].description : undefined}
         confirmLabel={pending ? confirmCopy[pending.kind].label : "Confirm"}
       />
+      {messaging ? <PrepareMessageDialog clientId={messaging} context={{}} onClose={() => setMessaging(null)} /> : null}
     </div>
   );
 }

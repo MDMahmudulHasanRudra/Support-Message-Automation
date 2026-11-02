@@ -1,5 +1,5 @@
 import { ArrowRight, PlugZap } from "lucide-react";
-import { CHANNEL_TYPES, CHANNELS, UNAVAILABLE_CHANNELS } from "@support-automation/shared";
+import { CHANNEL_TYPES, CHANNELS, LEGACY_WHATSAPP_LABEL, UNAVAILABLE_CHANNELS } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
@@ -108,7 +108,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
               <div className="flex items-center gap-2.5">
                 <ChannelMark channel="WHATSAPP" size="md" />
                 <div className="min-w-0">
-                  <p className="text-[13.5px] font-medium text-[color:var(--color-foreground)]">WhatsApp</p>
+                  <p className="text-[13.5px] font-medium text-[color:var(--color-foreground)]">{LEGACY_WHATSAPP_LABEL}</p>
                   <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
                     Numbers are linked on{" "}
                     <Link href="/accounts" className="link">

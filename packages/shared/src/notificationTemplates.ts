@@ -166,6 +166,29 @@ export const NOTIFICATION_TEMPLATES: readonly NotificationTemplateDefinition[] =
     ].join("\n"),
   },
   {
+    key: "CHANNEL_NEEDS_RECONNECT",
+    label: "A messaging channel needs reconnecting",
+    description:
+      "Sent once when a Facebook Messenger, Instagram or Telegram connection stops being accepted — the person who connected it lost their Page role, changed their password or removed the app, or a bot token was revoked. Nothing more is received or sent on it until somebody reconnects it. Sent again only after it was fixed and broke again.",
+    audience: "TEAM",
+    variables: [
+      { name: "connectionName", description: "The connection's name.", sample: "Shop Page (Messenger)" },
+      { name: "channel", description: "Which channel it is.", sample: "Facebook Messenger" },
+      { name: "reason", description: "Why it needs reconnecting, as recorded.", sample: "Facebook no longer accepts this connection's access. Reconnect with Facebook." },
+      { name: "action", description: "Where to fix it.", sample: "Open Settings → Messaging Channels and press Reconnect." },
+    ],
+    defaultBody: [
+      "⚠️ MESSAGING CHANNEL NEEDS RECONNECTING",
+      "",
+      "Connection: {{connectionName}} ({{channel}})",
+      "Reason: {{reason}}",
+      "",
+      "{{action}}",
+      "",
+      "Until then, messages on this channel are not received and replies are not sent.",
+    ].join("\n"),
+  },
+  {
     key: "MOOD_ALERT",
     label: "Mood Detection — customer upset",
     description:

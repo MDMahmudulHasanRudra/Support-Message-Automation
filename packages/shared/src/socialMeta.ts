@@ -12,6 +12,7 @@ import type { PublishOutcome, RecentPublication, SocialMetricValue } from "./soc
 /** Everything the publishing dialog asks for: the two implemented platforms' scopes. */
 export const META_SOCIAL_SCOPES: readonly string[] = [...new Set([...SOCIAL_PLATFORMS.FACEBOOK_PAGE.scopes, ...SOCIAL_PLATFORMS.INSTAGRAM.scopes])];
 
+/** RETIRED by Meta expansion A2: publishing now returns through META_OAUTH_CALLBACK_PATH. Kept for the stub route only. */
 export const SOCIAL_META_CALLBACK_PATH = "/api/social/meta/callback";
 
 export function missingSocialScopes(platform: SocialPlatform, granted: readonly string[]): string[] {

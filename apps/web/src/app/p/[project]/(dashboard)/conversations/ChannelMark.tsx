@@ -1,4 +1,5 @@
 import { Camera, Globe, MessageCircle, MessagesSquare, Send, type LucideIcon } from "lucide-react";
+import { LEGACY_WHATSAPP_LABEL } from "@support-automation/shared";
 import type { InboxChannel } from "@/server/channels/inbox";
 
 /**
@@ -10,7 +11,7 @@ import type { InboxChannel } from "@/server/channels/inbox";
  * word is clearer at this size anyway.
  */
 export const CHANNEL_PRESENTATION: Record<InboxChannel, { label: string; short: string; icon: LucideIcon; tint: string }> = {
-  WHATSAPP: { label: "WhatsApp", short: "WhatsApp", icon: MessageCircle, tint: "var(--chart-3)" },
+  WHATSAPP: { label: LEGACY_WHATSAPP_LABEL, short: LEGACY_WHATSAPP_LABEL, icon: MessageCircle, tint: "var(--chart-3)" },
   MESSENGER: { label: "Facebook Messenger", short: "Messenger", icon: MessagesSquare, tint: "var(--chart-1)" },
   INSTAGRAM: { label: "Instagram DM", short: "Instagram", icon: Camera, tint: "var(--chart-5)" },
   TELEGRAM: { label: "Telegram", short: "Telegram", icon: Send, tint: "var(--chart-2)" },

@@ -113,7 +113,8 @@ describe("the constraints later phases depend on", () => {
     //   + SocialRssFeed, SocialRssItem (20261030140000_social_rss).
     // + ClientCatalogEntry, ClientServicePlan, ClientCountrySetting (20261031090000_client_configuration).
     // + ProjectClientCodeSeries, ClientCodeAlias (20261101090000_client_code_series).
-    expect(refusing).toHaveLength(168);
+    // + the eight Client CRM V7 tables (20261101130100_client_crm_v7).
+    expect(refusing).toHaveLength(176);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -150,7 +151,8 @@ describe("the constraints later phases depend on", () => {
     // + the nine Social Studio tables + SocialAiRequest + the two RSS tables.
     // + the three Client Configuration Center tables.
     // + the two client code tables.
-    expect(rows).toHaveLength(171);
+    // + the eight Client CRM V7 tables.
+    expect(rows).toHaveLength(179);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

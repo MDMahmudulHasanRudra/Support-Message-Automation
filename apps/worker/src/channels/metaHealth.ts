@@ -1,11 +1,12 @@
 import { decryptSecret } from "@support-automation/db";
-import { metaPlatformAppSecret } from "@support-automation/shared";
+import { META_PAGE_WEBHOOK_FIELDS, metaPlatformAppSecret } from "@support-automation/shared";
 import { platformPrisma, prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { metaGraph, type FetchImpl } from "./providerApi.js";
+import { sweepReconnectAlerts } from "./reconnectAlert.js";
 
 /**
  * One-click (PLATFORM) Meta connections, checked on a schedule (docs/meta-integration/03 §Health).
@@ -53,23 +54,29 @@ export async function runMetaHealthTick(now: Date = new Date(), fetchImpl: Fetch
     data: { status: "EXPIRED", userTokenCiphertext: null, completedAt: now },
   });
   const appSecret = metaPlatformAppSecret(env);
-  if (!appSecret) return;
   await forEachProject(LOOP_NAME, async () => {
     if (!(await projectHasFeature("OMNICHANNEL"))) return;
-    const due = await prisma.channelConnection.findMany({
-      where: {
-        authMode: "PLATFORM",
-        type: { in: ["MESSENGER", "INSTAGRAM"] },
-        status: { in: ["CONNECTED", "ERROR"] },
-        accessTokenCiphertext: { not: null },
-        OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: new Date(now.getTime() - CHECK_EVERY_MS) } }],
-      },
-      orderBy: [{ lastCheckedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
-      take: CHECKS_PER_PROJECT_PER_TICK,
-      select: { id: true, type: true, name: true, status: true, appId: true, pageId: true, externalAccountId: true, accessTokenCiphertext: true },
-    });
-    for (const connection of due) await checkConnection(connection as DueConnection, appSecret, now, fetchImpl);
+    if (appSecret) await checkDueConnections(appSecret, now, fetchImpl);
+    // Every channel, manual and one-click alike, whatever marked it — after the checks, so a connection
+    // found dead just now is announced in the same tick.
+    await sweepReconnectAlerts(now);
   });
+}
+
+async function checkDueConnections(appSecret: string, now: Date, fetchImpl: FetchImpl): Promise<void> {
+  const due = await prisma.channelConnection.findMany({
+    where: {
+      authMode: "PLATFORM",
+      type: { in: ["MESSENGER", "INSTAGRAM"] },
+      status: { in: ["CONNECTED", "ERROR"] },
+      accessTokenCiphertext: { not: null },
+      OR: [{ lastCheckedAt: null }, { lastCheckedAt: { lt: new Date(now.getTime() - CHECK_EVERY_MS) } }],
+    },
+    orderBy: [{ lastCheckedAt: { sort: "asc", nulls: "first" } }, { id: "asc" }],
+    take: CHECKS_PER_PROJECT_PER_TICK,
+    select: { id: true, type: true, name: true, status: true, appId: true, pageId: true, externalAccountId: true, accessTokenCiphertext: true },
+  });
+  for (const connection of due) await checkConnection(connection as DueConnection, appSecret, now, fetchImpl);
 }
 
 type DueConnection = {
@@ -121,7 +128,7 @@ export async function checkConnection(c: DueConnection, appSecret: string, now: 
     const again = await metaGraph<{ success?: boolean }>(
       "POST",
       `/${encodeURIComponent(c.pageId)}/subscribed_apps`,
-      { subscribed_fields: "messages,message_echoes,message_deliveries,message_reads" },
+      { subscribed_fields: META_PAGE_WEBHOOK_FIELDS.join(",") },
       { token, appSecret },
       fetchImpl,
     );

@@ -60,7 +60,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
 
   const [caps, ctx] = await Promise.all([clientViewerCaps(session), clientFilterContext(session)]);
   const chipCount = (patch: Partial<ClientFilters>) => prisma.client.count({ where: buildClientWhere({ ...EMPTY_CLIENT_FILTERS, ...patch }, ctx) });
-  const [data, kpis, options, columns, canArchive, canExport, canImport, chipCounts] = await Promise.all([
+  const [data, kpis, options, columns, canArchive, canExport, canImport, canSendMessages, chipCounts] = await Promise.all([
     listClients({ filters, sort, dir, page, pageSize, ctx }),
     getClientRegisterKpis(ctx),
     getRegisterFilterOptions(),
@@ -68,6 +68,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
     hasPermission(session, "clients.archive"),
     hasPermission(session, "clients.export"),
     hasPermission(session, "clients.import"),
+    hasPermission(session, "clients.send_messages"),
     Promise.all([
       chipCount({}),
       chipCount({ status: "ACTIVE" }),
@@ -77,6 +78,11 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
       caps.billing ? chipCount({ due: "overdue" }) : 0,
       chipCount({ status: "INACTIVE" }),
       chipCount({ status: "ARCHIVED" }),
+      chipCount({ assigned: "none" }),
+      chipCount({ smart: "recent" }),
+      chipCount({ smart: "nowa" }),
+      caps.subscriptions ? chipCount({ smart: "renewal" }) : 0,
+      caps.subscriptions ? chipCount({ smart: "followup" }) : 0,
     ]),
   ]);
   const available = allowedColumns("clients", columnNeeds(caps));
@@ -96,16 +102,23 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
   const href = (f = filters, extra: Record<string, string | number | undefined> = {}) => `/clients${clientQueryString(f, { ...keep, ...extra })}`;
 
   // The view chips: the client's status, its current term, or an overdue invoice — one at a time.
-  const [allCount, activeCount, renewCount, trialCount, expiredCount, overdueCount, inactiveCount, archivedCount] = chipCounts;
-  const chipDefs: Array<{ key: string; label: string; patch: Pick<ClientFilters, "status" | "state" | "due">; count: number; show: boolean; tone?: Chip["tone"] }> = [
-    { key: "all", label: "All", patch: { status: "", state: "", due: "" }, count: allCount, show: true },
-    { key: "active", label: "Active", patch: { status: "ACTIVE", state: "", due: "" }, count: activeCount, show: true },
-    { key: "renew", label: "Renew soon", patch: { status: "", state: "EXPIRING", due: "" }, count: renewCount, show: caps.subscriptions, tone: "warning" },
-    { key: "trial", label: "Trial", patch: { status: "", state: "TRIAL", due: "" }, count: trialCount, show: caps.subscriptions },
-    { key: "expired", label: "Expired", patch: { status: "", state: "EXPIRED", due: "" }, count: expiredCount, show: caps.subscriptions, tone: "danger" },
-    { key: "overdue", label: "Overdue", patch: { status: "", state: "", due: "overdue" }, count: overdueCount, show: caps.billing, tone: "danger" },
-    { key: "inactive", label: "Inactive", patch: { status: "INACTIVE", state: "", due: "" }, count: inactiveCount, show: true },
-    { key: "archived", label: "Archived", patch: { status: "ARCHIVED", state: "", due: "" }, count: archivedCount, show: true },
+  const [allCount, activeCount, renewCount, trialCount, expiredCount, overdueCount, inactiveCount, archivedCount, unassignedCount, recentCount, noWhatsAppCount, renewalCount, followUpCount] = chipCounts;
+  const NO_SMART = { assigned: "", smart: "" };
+  const chipDefs: Array<{ key: string; label: string; patch: Pick<ClientFilters, "status" | "state" | "due" | "assigned" | "smart">; count: number; show: boolean; tone?: Chip["tone"] }> = [
+    { key: "all", label: "All", patch: { status: "", state: "", due: "", ...NO_SMART }, count: allCount, show: true },
+    { key: "active", label: "Active", patch: { status: "ACTIVE", state: "", due: "", ...NO_SMART }, count: activeCount, show: true },
+    { key: "renew", label: "Renew soon", patch: { status: "", state: "EXPIRING", due: "", ...NO_SMART }, count: renewCount, show: caps.subscriptions, tone: "warning" },
+    { key: "trial", label: "Trial", patch: { status: "", state: "TRIAL", due: "", ...NO_SMART }, count: trialCount, show: caps.subscriptions },
+    { key: "expired", label: "Expired", patch: { status: "", state: "EXPIRED", due: "", ...NO_SMART }, count: expiredCount, show: caps.subscriptions, tone: "danger" },
+    { key: "overdue", label: "Overdue", patch: { status: "", state: "", due: "overdue", ...NO_SMART }, count: overdueCount, show: caps.billing, tone: "danger" },
+    { key: "inactive", label: "Inactive", patch: { status: "INACTIVE", state: "", due: "", ...NO_SMART }, count: inactiveCount, show: true },
+    { key: "archived", label: "Archived", patch: { status: "ARCHIVED", state: "", due: "", ...NO_SMART }, count: archivedCount, show: true },
+    // CLIENT_CRM_V7.md §1 smart views. Each is a plain filter: "Renewal pending" is an open offer, never money owed.
+    { key: "unassigned", label: "Unassigned", patch: { status: "", state: "", due: "", assigned: "none", smart: "" }, count: unassignedCount, show: true },
+    { key: "recent", label: "Recently added", patch: { status: "", state: "", due: "", assigned: "", smart: "recent" }, count: recentCount, show: true },
+    { key: "nowa", label: "No WhatsApp", patch: { status: "", state: "", due: "", assigned: "", smart: "nowa" }, count: noWhatsAppCount, show: true },
+    { key: "renewal", label: "Renewal pending", patch: { status: "", state: "", due: "", assigned: "", smart: "renewal" }, count: renewalCount, show: caps.subscriptions },
+    { key: "followup", label: "Follow-up due", patch: { status: "", state: "", due: "", assigned: "", smart: "followup" }, count: followUpCount, show: caps.subscriptions, tone: "danger" },
   ];
   const chips: Chip[] = chipDefs
     .filter((c) => c.show)
@@ -115,7 +128,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
       count: c.count,
       tone: c.tone,
       href: href({ ...filters, ...c.patch }, { page: undefined }),
-      active: filters.status === c.patch.status && filters.state === c.patch.state && filters.due === c.patch.due,
+      active: filters.status === c.patch.status && filters.state === c.patch.state && filters.due === c.patch.due && filters.assigned === c.patch.assigned && filters.smart === c.patch.smart,
     }));
 
   const activeFilters: ActiveFilter[] = [];
@@ -130,6 +143,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
   add("WhatsApp group", filters.group === "linked" ? "Linked" : filters.group === "unlinked" ? "Not linked" : "", { group: "" });
   add("Currency", filters.currency, { currency: "" });
   add("Returning", filters.repeat ? "Returning customers" : "", { repeat: "" });
+  add("View", { recent: "Recently added", nowa: "No WhatsApp number", renewal: "Renewal pending", followup: "Follow-up due" }[filters.smart] ?? "", { smart: "" });
   if (caps.billing) add("Payment", filters.due === "open" ? "Has an open invoice" : filters.due === "overdue" ? "Has an overdue invoice" : "", { due: "" });
   add("Category", filters.category, { category: "" });
   add("Tag", filters.tag, { tag: "" });
@@ -149,6 +163,8 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
     canRecordPayments: caps.canRecordPayments,
     canLinkGroups: caps.canLinkGroups,
     canOpenChat: caps.canOpenChat,
+    canSendMessages,
+    billing: caps.billing,
   };
   const moreFilters = [filters.service, filters.team, filters.group, filters.currency, filters.repeat, filters.category, filters.tag, filters.channel, filters.assigned].filter(Boolean).length;
   const orderValue = `${sort}:${dir}`;

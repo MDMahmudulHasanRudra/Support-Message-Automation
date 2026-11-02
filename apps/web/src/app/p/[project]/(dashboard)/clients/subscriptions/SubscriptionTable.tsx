@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { CirclePause, CirclePlay, Eye, Phone, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { CirclePause, CirclePlay, Eye, Phone, RefreshCw, Send, Trash2, XCircle } from "lucide-react";
 import Link, { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Badge, Button, Checkbox, ConfirmDialog, useToast } from "@/components/ui";
 import type { ClientListRow, RosterMember } from "@/server/clients";
@@ -185,6 +185,7 @@ export function SubscriptionTable({
                           { label: "Pause", icon: <CirclePause className="size-4" aria-hidden />, onSelect: () => pause(s.id, true), hidden: !canRenew || s.state === "PAUSED" || busy },
                           { label: "Resume", icon: <CirclePlay className="size-4" aria-hidden />, onSelect: () => pause(s.id, false), hidden: !canRenew || s.state !== "PAUSED" || busy },
                           { label: "Cancel on profile…", icon: <XCircle className="size-4" aria-hidden />, href: `/clients/${c.id}?tab=subscriptions`, hidden: !canRenew },
+                          { label: "Renewal offer…", icon: <Send className="size-4" aria-hidden />, href: `/clients/subscriptions/renewals?view=${s.state === "EXPIRED" ? "expired" : "renewing"}&q=${encodeURIComponent(c.code)}`, hidden: !canRenew || s.state === "CANCELLED" },
                           { label: "Delete subscription", icon: <Trash2 className="size-4" aria-hidden />, onSelect: () => setConfirmIds([s.id]), danger: true, hidden: !canDelete },
                         ]}
                       />

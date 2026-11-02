@@ -34,6 +34,10 @@ export const CLIENT_SORTS = ["name", "code", "created", "updated", "contact", "c
 export type ClientSort = (typeof CLIENT_SORTS)[number];
 
 export const EXPIRY_WINDOWS = ["7", "30", "90", "expired"] as const;
+export const CLIENT_SMART_VIEWS = ["recent", "nowa", "renewal", "followup"] as const;
+/** "Recently added" = created within this many days. */
+export const RECENT_CLIENT_DAYS = 30;
+const OPEN_OFFER_STATUSES = ["PREPARED", "CONTACTED", "AWAITING_RESPONSE", "ACCEPTED"] as Array<"PREPARED" | "CONTACTED" | "AWAITING_RESPONSE" | "ACCEPTED">;
 
 export interface ClientFilters {
   q: string;
@@ -64,6 +68,9 @@ export interface ClientFilters {
   currency: string;
   /** "1" = returning customers only. */
   repeat: string;
+  /** CLIENT_CRM_V7.md §1 smart views: "recent" (added in 30 days), "nowa" (no WhatsApp number), "renewal" (an open
+   * renewal offer), "followup" (an open offer whose follow-up day has come). */
+  smart: string;
   /** "open" / "overdue" — honoured only for a viewer allowed to see billing. */
   due: string;
 }
@@ -85,6 +92,7 @@ export const EMPTY_CLIENT_FILTERS: ClientFilters = {
   group: "",
   currency: "",
   repeat: "",
+  smart: "",
   due: "",
 };
 
@@ -129,6 +137,7 @@ export function parseClientFilters(params: Params): ClientFilters {
     group: group === "linked" || group === "unlinked" ? group : "",
     currency: normalizeCurrencyCode(one(params.currency)) ?? "",
     repeat: one(params.repeat) === "1" ? "1" : "",
+    smart: (CLIENT_SMART_VIEWS as readonly string[]).includes(one(params.smart)) ? one(params.smart) : "",
     due: due === "open" || due === "overdue" ? due : "",
   };
 }
@@ -232,6 +241,10 @@ export function buildClientSearchWhere(filters: ClientFilters, ctx: ClientFilter
   else if (filters.group === "unlinked") and.push({ groupLinks: { none: { unlinkedAt: null } } });
   if (filters.currency) and.push({ preferredCurrency: filters.currency });
   if (filters.repeat) and.push({ subscriptions: { some: { isRenewal: true } } });
+  if (filters.smart === "recent") and.push({ createdAt: { gte: day(addCalendarDays(ctx.today, -RECENT_CLIENT_DAYS)) } });
+  else if (filters.smart === "nowa") and.push({ channels: { none: { kind: "WHATSAPP" } }, chatLinks: { none: { unlinkedAt: null } } });
+  else if (filters.smart === "renewal") and.push({ renewalOffers: { some: { status: { in: OPEN_OFFER_STATUSES } } } });
+  else if (filters.smart === "followup") and.push({ renewalOffers: { some: { status: { in: OPEN_OFFER_STATUSES }, followUpDate: { lte: day(ctx.today) } } } });
   // A billing filter from someone who may not see billing is ignored, never answered: the size of the
   // filtered list would otherwise reveal who owes money.
   if (ctx.billing && filters.due === "open") and.push({ dues: { some: OPEN_DUE } });

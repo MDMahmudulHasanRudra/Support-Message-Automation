@@ -1,4 +1,4 @@
-import { pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
+import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
   AlertCircle,
@@ -49,6 +49,8 @@ import {
   ListChecks,
   ListTodo,
   Mail,
+  MailCheck,
+  RefreshCcw,
   Megaphone,
   MessageCircleMore,
   MessageSquareOff,
@@ -121,6 +123,8 @@ export interface NavLink {
  * opens them). A group with a single link renders as that link directly, with no parent row.
  */
 export interface NavGroup {
+  /** A stable id where the label is not one (project-role module ids and the open-module preference). */
+  id?: string;
   label: string;
   icon: LucideIcon;
   links: NavLink[];
@@ -169,7 +173,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     ],
   },
   {
-    label: "WhatsApp",
+    label: LEGACY_WHATSAPP_LABEL,
     description: "Which number sends each kind of notification, and what media is kept.",
     links: [
       { href: "/accounts/routing", label: "Account Routing", icon: Route },
@@ -224,6 +228,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     links: [
       { href: "/settings/clients", label: "Client Module", icon: Contact },
       { href: "/settings/clients/configuration", label: "Client Lists", icon: Contact },
+      { href: "/settings/clients/documents", label: "Invoice & Receipt", icon: ReceiptText },
     ],
   },
   {
@@ -412,10 +417,29 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
-      { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+      {
+        href: "/clients/subscriptions",
+        label: "Subscriptions",
+        icon: CalendarClock,
+        // CLIENT_CRM_V7.md §4: renewal offers and follow-ups beside the terms they renew.
+        tabs: [
+          { href: "/clients/subscriptions", label: "Subscriptions", icon: CalendarClock },
+          { href: "/clients/subscriptions/renewals", label: "Renewals", icon: RefreshCcw },
+        ],
+      },
       // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
       { href: "/clients/dues", label: "Billing List", icon: ReceiptText },
       { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
+      {
+        href: "/clients/messages",
+        label: "Client Messages",
+        icon: MailCheck,
+        // CLIENT_CRM_V7.md §6–§7: bulk email (prepared by one person, approved by another) and the reusable wording.
+        tabs: [
+          { href: "/clients/messages", label: "Bulk email", icon: MailCheck },
+          { href: "/clients/templates", label: "Message Templates", icon: FileText },
+        ],
+      },
       { href: "/clients/import", label: "Import Clients", icon: FileUp },
     ],
   },
@@ -482,7 +506,9 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Bulk Messaging lives here now: broadcasting to groups and adding a number to groups are
     // WhatsApp work done with the same accounts and the same groups listed right above them.
-    label: "WhatsApp",
+    // Shown as "WhatsApp (Legacy)" (the OpenWA engine); the id keeps the module id it always had.
+    id: "whatsapp",
+    label: LEGACY_WHATSAPP_LABEL,
     icon: Smartphone,
     links: [
       { href: "/accounts", label: "Accounts", icon: Smartphone },
@@ -645,6 +671,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/clients/dues", "clients.view_billing"],
   ["/clients/payments", "clients.view_billing"],
   ["/clients/import", "clients.import"],
+  ["/clients/templates", "clients.view"],
+  ["/clients/messages", "clients.view"],
   ["/clients/new", "clients.create"],
   ["/clients", "clients.view"],
   ["/commerce/products/new", "commerce.manage"],

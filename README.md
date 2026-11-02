@@ -13,6 +13,12 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Client CRM & Billing V7** (inside `CLIENT_CENTER`; migrations `20261101130000_email_purpose_client_message`,
+  `20261101130100_client_crm_v7`): invoice and money-receipt pages with print and PDF, a versioned Invoice & Receipt
+  setup, renewal offers and a Renewals workspace (an offer is never money owed; a term renews once), client message
+  templates, one-to-one email and prepared WhatsApp messages, and bulk email approved by a second person.
+  Built on `feature/client-crm-billing-v7`; not merged, not deployed. Reference: `CLIENT_CRM_V7.md`.
+
 - **Connect with Facebook** (one-click Messenger / Instagram through the platform's own Meta app; off unless
   `META_INTEGRATION_ENABLED=true`; migrations `20261025090000_meta_platform_oauth`, `20261025100000_channel_ai_disclosure`),
   plus an AI disclosure for Messenger / Instagram AI replies only (off per connection). Release candidate

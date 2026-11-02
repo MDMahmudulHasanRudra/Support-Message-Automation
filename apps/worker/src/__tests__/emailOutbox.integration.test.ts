@@ -292,3 +292,60 @@ describe("5. projects", () => {
     void inB;
   });
 });
+
+describe("6. messages to clients (CLIENT_CRM_V7.md §6)", () => {
+  async function clientMessage(projectId: string, consent: "UNKNOWN" | "OPTED_IN" | "OPTED_OUT", batch: boolean) {
+    const client = await rawPrisma.client.create({ data: { projectId, code: `EM-${randomUUID().slice(0, 8)}`, name: "Mail Client" } });
+    const address = `client-${randomUUID().slice(0, 8)}@example.test`;
+    await rawPrisma.clientChannel.create({ data: { projectId, clientId: client.id, kind: "EMAIL", value: address, normalizedValue: address, consentStatus: consent } });
+    const m = await queue(projectId, { purpose: "CLIENT_MESSAGE", toAddress: address });
+    const batchRow = batch
+      ? await rawPrisma.clientMessageBatch.create({ data: { projectId, templateVersion: 1, templateName: "T", status: "QUEUED", submittedById: "a", decidedById: "b", recipientCount: 1, eligibleCount: 1, skippedCount: 0 } })
+      : null;
+    await rawPrisma.clientMessage.create({ data: { projectId, clientId: client.id, batchId: batchRow?.id ?? null, channel: "EMAIL", status: "QUEUED", toAddress: address, subject: "S", body: "B", emailOutboxId: m.id } });
+    return { message: m, clientId: client.id };
+  }
+  afterAll(async () => {
+    await rawPrisma.clientMessage.deleteMany({ where: { projectId: { in: [A, B] } } });
+    await rawPrisma.clientMessageBatch.deleteMany({ where: { projectId: { in: [A, B] } } });
+    await rawPrisma.emailOutbox.deleteMany({ where: { projectId: { in: [A, B] } } });
+    await rawPrisma.clientChannel.deleteMany({ where: { projectId: { in: [A, B] } } });
+    await rawPrisma.client.deleteMany({ where: { projectId: { in: [A, B] } } });
+  });
+
+  it("sends a client message only while the channel is ON and verified as it is now", async () => {
+    await settingsFor(A, PASSWORD_A, { enabled: false, verifiedVersion: 1 });
+    const off = await clientMessage(A, "UNKNOWN", false);
+    await inA(() => sendNextQueued(new Date(), send, publicHost));
+    expect(fake.calls).toHaveLength(0);
+    expect(await row(off.message.id)).toMatchObject({ status: "FAILED" });
+    expect((await row(off.message.id)).lastError).toMatch(/switched off/);
+
+    await settingsFor(A, PASSWORD_A, { enabled: true, settingsVersion: 2, verifiedVersion: 1 });
+    const unverified = await clientMessage(A, "UNKNOWN", false);
+    await inA(() => sendNextQueued(new Date(), send, publicHost));
+    expect(fake.calls).toHaveLength(0);
+    expect((await row(unverified.message.id)).lastError).toMatch(/not been tested again/);
+
+    await settingsFor(A, PASSWORD_A, { enabled: true, verifiedVersion: 1 });
+    const ok = await clientMessage(A, "UNKNOWN", false);
+    await inA(() => sendNextQueued(new Date(), send, publicHost));
+    expect(fake.calls).toHaveLength(1);
+    expect(await row(ok.message.id)).toMatchObject({ status: "ACCEPTED" });
+    // A client message never touches the channel's verification (only a TEST does).
+    expect((await settingsOf(A)).lastTestOk).toBeNull();
+  });
+
+  it("never sends to a client who opted out after it was queued; a bulk message still needs recorded consent", async () => {
+    await settingsFor(A, PASSWORD_A, { enabled: true, verifiedVersion: 1 });
+    const opted = await clientMessage(A, "OPTED_IN", false);
+    await rawPrisma.clientChannel.updateMany({ where: { clientId: opted.clientId }, data: { consentStatus: "OPTED_OUT" } });
+    await inA(() => sendNextQueued(new Date(), send, publicHost));
+    expect((await row(opted.message.id)).lastError).toMatch(/opted out/);
+
+    const bulk = await clientMessage(A, "UNKNOWN", true);
+    await inA(() => sendNextQueued(new Date(), send, publicHost));
+    expect((await row(bulk.message.id)).lastError).toMatch(/consent/);
+    expect(fake.calls).toHaveLength(0);
+  });
+});

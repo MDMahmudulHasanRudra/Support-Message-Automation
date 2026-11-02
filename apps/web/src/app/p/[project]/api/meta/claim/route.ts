@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const slug = await activeProjectSlug();
-  const origin = visitorOrigin(request.headers, request.nextUrl) ?? request.nextUrl.origin;
+  const visited = visitorOrigin(request.headers, request.nextUrl);
+  const origin = visited ?? request.nextUrl.origin;
   const base = `${origin}/p/${slug}/settings/channels`;
   const back = (path: string) => {
     const response = NextResponse.redirect(`${base}${path}`, 303);
@@ -32,6 +33,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       claim: request.nextUrl.searchParams.get("c") ?? "",
       binding: request.cookies.get(META_BINDING_COOKIE)?.value,
       userId: session.userId,
+      flow: "MESSAGING",
+      origin: visited,
     });
     return back(`/meta/${sessionId}`);
   } catch (err) {

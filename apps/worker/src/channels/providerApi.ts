@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { decryptSecret } from "@support-automation/db";
-import { metaPlatformAppSecret, readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
+import { metaGraphVersion, metaPlatformAppSecret, readMetaError, readTelegramError, type ProviderErrorReading } from "@support-automation/shared";
 
 /**
  * The provider calls the WORKER makes for Messenger, Instagram and Telegram: sending a reply and
@@ -18,8 +18,7 @@ const SEND_TIMEOUT_MS = 20_000;
 const PROFILE_TIMEOUT_MS = 5_000;
 
 export function graphBase(): string {
-  const version = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
-  return `https://graph.facebook.com/${version}`;
+  return `https://graph.facebook.com/${metaGraphVersion(process.env)}`;
 }
 
 export type SendOutcome =
