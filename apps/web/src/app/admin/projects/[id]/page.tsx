@@ -9,7 +9,7 @@ import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "../../ProjectCard";
 import { getProjectModuleState } from "@/server/projectModules";
-import { ProjectAccessList, ProjectDetailsForm, ProjectStatusControl } from "./ProjectControls";
+import { ProjectAccessList, ProjectDeletePanel, ProjectDetailsForm, ProjectStatusControl } from "./ProjectControls";
 
 export const metadata = { title: "Project" };
 
@@ -182,6 +182,15 @@ export default async function ProjectDetailPage({
         />
         <ProjectAccessList projectId={project.id} users={users} canManage={canManage} />
       </div>
+
+      {canManage && project.status === "ARCHIVED" ? (
+        <div className="mt-8">
+          <SectionHeader title="Delete this project" description="Permanent. Only an archived project can be deleted, and never a customer's last one." />
+          <Card>
+            <ProjectDeletePanel projectId={project.id} projectName={project.name} />
+          </Card>
+        </div>
+      ) : null}
     </div>
   );
 }

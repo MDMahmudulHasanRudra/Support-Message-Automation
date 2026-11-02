@@ -16,7 +16,7 @@ import {
   validateProjectSlug,
 } from "@support-automation/shared";
 import { globalPrisma, platformPrisma } from "@/server/db";
-import { requireSession, type Session } from "@/server/auth";
+import { requireSession, verifyPassword, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { forgetProjectAccessDecisions } from "@/server/projectContext";
 import { logSystemEvent } from "@/server/logSystemEvent";
@@ -25,6 +25,8 @@ import { applyProjectModules } from "@/server/actions/projectModules";
 import { applyModuleSelection, findModuleTemplate, getProjectModuleState } from "@/server/projectModules";
 import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { currentTenant, customerOfTenant } from "@/server/tenant";
+import { recordFailedSecret } from "@/server/loginLockout";
+import { deleteProjectData } from "@/server/projectDeletion";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -228,6 +230,64 @@ export async function setProjectStatus(projectId: string, nextRaw: string): Prom
   });
   revalidatePath("/admin", "layout");
   return { success: `${project.name} is now ${PROJECT_STATUS_LABELS[nextRaw].toLowerCase()}.` };
+}
+
+export interface ProjectDeletionState {
+  error?: string;
+  fieldErrors?: { confirmName?: string; password?: string };
+  done?: string;
+}
+
+/**
+ * Delete an ARCHIVED project permanently, with all of its data (PROJECT_DELETION.md). Needs the project's
+ * exact name typed and the person's own password (a wrong one counts toward the login lockout). Refused for a
+ * support session: erasing a customer's workspace is the customer's own decision. The project is looked up
+ * through the customer-scoped client, so another customer's project is "no longer exists".
+ */
+export async function deleteProject(projectId: string, _prev: ProjectDeletionState, formData: FormData): Promise<ProjectDeletionState> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+  if (access.session.support) return { error: "A support session cannot delete a project." };
+
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { id: true, name: true, status: true } });
+  if (!project) return { error: "That project no longer exists." };
+  if (project.status !== "ARCHIVED") return { error: "Archive the project first. Only an archived project can be deleted." };
+
+  const fieldErrors: NonNullable<ProjectDeletionState["fieldErrors"]> = {};
+  if (String(formData.get("confirmName") ?? "").trim() !== project.name.trim()) fieldErrors.confirmName = `Type the project's name exactly: ${project.name}`;
+  const password = String(formData.get("password") ?? "");
+  if (!password) fieldErrors.password = "Enter your password.";
+  if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
+
+  const user = await globalPrisma.user.findUnique({
+    where: { id: access.session.userId },
+    select: { id: true, username: true, passwordHash: true, customerId: true, supportOperatorId: true, failedLoginAttempts: true, lastFailedLoginAt: true, lockedUntil: true },
+  });
+  if (!user || user.supportOperatorId) return { error: "A support session cannot delete a project." };
+  if (user.lockedUntil && user.lockedUntil > new Date()) return { fieldErrors: { password: "Too many wrong attempts. Wait a few minutes and try again." } };
+  if (!verifyPassword(password, user.passwordHash)) {
+    await recordFailedSecret(user, user.customerId, "ACCOUNT_PASSWORD_CHECK_FAILED");
+    return { fieldErrors: { password: "Your password is not right." } };
+  }
+
+  const deleted = await deleteProjectData(project.id);
+  if ("error" in deleted) return { error: deleted.error };
+
+  forgetProjectAccessDecisions();
+  forgetProjectFeatureStates();
+  await logSystemEvent(
+    "WARN",
+    "projects",
+    `Project "${deleted.name}" deleted permanently`,
+    { projectId, slug: deleted.slug, deletedBy: access.session.username, rows: deleted.deleted, mediaRemoved: deleted.mediaRemoved },
+    { actorUserId: access.session.userId, targetType: "Project", targetId: projectId },
+  );
+  revalidatePath("/admin", "layout");
+  return {
+    done: deleted.mediaRemoved
+      ? `${deleted.name} was deleted permanently.`
+      : `${deleted.name} was deleted permanently. Some files could not be removed from storage; they are no longer linked to anything.`,
+  };
 }
 
 /**
