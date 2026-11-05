@@ -114,7 +114,9 @@ describe("the constraints later phases depend on", () => {
     // + ClientCatalogEntry, ClientServicePlan, ClientCountrySetting (20261031090000_client_configuration).
     // + ProjectClientCodeSeries, ClientCodeAlias (20261101090000_client_code_series).
     // + the eight Client CRM V7 tables (20261101130100_client_crm_v7).
-    expect(refusing).toHaveLength(176);
+    // + FailedReplyAction (FAILED_REPLIES.md, 20261105120000_failed_replies): same-project triggers on both
+    //   message ids, projectId immutable, append-only.
+    expect(refusing).toHaveLength(177);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -152,7 +154,8 @@ describe("the constraints later phases depend on", () => {
     // + the three Client Configuration Center tables.
     // + the two client code tables.
     // + the eight Client CRM V7 tables.
-    expect(rows).toHaveLength(179);
+    // + FailedReplyAction (20261105120000_failed_replies).
+    expect(rows).toHaveLength(180);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 
