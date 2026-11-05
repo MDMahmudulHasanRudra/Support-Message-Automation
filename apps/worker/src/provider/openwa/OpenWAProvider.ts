@@ -81,6 +81,7 @@ import {
   writeLinkMarker,
   type ProfileActivity,
 } from "./linkLoading.js";
+import { logRef } from "../../logging/logRef.js";
 
 /**
  * Ceilings on the two teardown calls into Chromium, neither of which had one.
@@ -890,8 +891,11 @@ export class OpenWAProvider implements WhatsAppProvider {
      */
     if (process.env.WHATSAPP_DEBUG_EVENTS === "true") {
       ev.on("**", (data: unknown, sessionId: string, namespace: string) => {
+        // Never the payload itself, even in debug: a short string can be a phone number, a chat id or
+        // message text (review O1-R3). A constant-looking string (`QR_CODE_SUCCESS`) is what this trace
+        // exists to show, so that alone is printed; everything else by type and length.
         const summary =
-          typeof data === "string" ? (data.length > 60 ? `<${data.length} chars>` : data) : typeof data;
+          typeof data === "string" ? (/^[A-Z][A-Z0-9_]{0,39}$/.test(data) ? data : `<string ${data.length}>`) : typeof data;
         console.log(`[openwa:ev] ${namespace}.${sessionId} ${summary}`);
       });
     }
@@ -2110,7 +2114,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       try {
         raw = toRawIncomingMessage(this.accountId, message);
       } catch (err) {
-        console.error(`[openwa] could not read an incoming message for ${this.sessionId} (id ${String((message as { id?: unknown })?.id ?? "unknown")})`, err);
+        console.error(`[openwa] could not read an incoming message for ${this.sessionId} (message ${logRef(String((message as { id?: unknown })?.id ?? "unknown"))})`, err);
         try {
           this.onMessageConversionError?.(err);
         } catch {
@@ -2338,7 +2342,7 @@ export class OpenWAProvider implements WhatsAppProvider {
               raw = toRawIncomingMessage(this.accountId, message);
             } catch (err) {
               unreadableMessages += 1;
-              console.warn(`[openwa] could not read one message in chat ${chat.id} — skipping it`, err);
+              console.warn(`[openwa] could not read one message in chat ${logRef(String(chat.id))} — skipping it`, err);
               continue;
             }
             collected.push(raw);
@@ -2346,7 +2350,7 @@ export class OpenWAProvider implements WhatsAppProvider {
           }
         } catch (err) {
           unreadable += 1;
-          console.warn(`[openwa] could not read history for chat ${chat.id} — skipping it`, err);
+          console.warn(`[openwa] could not read history for chat ${logRef(String(chat.id))} — skipping it`, err);
         }
         if (stoppedAt !== null) break;
       }
@@ -2552,7 +2556,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         })
         .filter((participant) => participant.rawId.length > 0);
     } catch (err) {
-      console.error(`[provider] could not read participants for ${chatId}`, err);
+      console.error(`[provider] could not read participants for ${logRef(chatId)}`, err);
       return [];
     }
   }
@@ -2617,7 +2621,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const admins: unknown = await this.client.getGroupAdmins(chatId as GroupChatId);
       return Array.isArray(admins) ? admins.map((id) => String(id)) : null;
     } catch (err) {
-      console.error(`[provider] could not read admins for ${chatId}`, err);
+      console.error(`[provider] could not read admins for ${logRef(chatId)}`, err);
       return null;
     }
   }
@@ -2645,7 +2649,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const message: unknown = await this.client.getMessageById(whatsappMessageId as MessageId);
       return message && typeof message === "object" ? toMediaDownloadInfo(message as WaMediaFields) : null;
     } catch (err) {
-      console.error(`[provider] could not read media details for ${whatsappMessageId}`, err);
+      console.error(`[provider] could not read media details for ${logRef(whatsappMessageId)}`, err);
       return null;
     }
   }

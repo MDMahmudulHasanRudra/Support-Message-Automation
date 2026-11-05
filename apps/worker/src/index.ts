@@ -1,3 +1,4 @@
+import "./logging/installRedaction.js"; // first: every later module's console output is redacted (redact.ts)
 import { checkDatabaseConnection } from "@support-automation/db";
 import { platformPrisma } from "./db.js";
 import type { Prisma } from "@prisma/client";

@@ -2,6 +2,7 @@ import type { RawIncomingMessage } from "./types.js";
 import { processIncomingMessage } from "./processIncomingMessage.js";
 import { countDroppedMessage } from "./dropCounter.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { messageTraceId } from "../logging/logRef.js";
 
 /**
  * Gives a message that failed to process a few more chances before it is written off.
@@ -46,7 +47,7 @@ export async function processWithRetry(
     await process(raw);
     return;
   } catch (err) {
-    console.error(`[worker] error processing incoming message ${raw.whatsappMessageId}`, err);
+    console.error(`[worker] error processing incoming message ${messageTraceId(raw.accountId, raw.whatsappMessageId)}`, err);
     scheduleRetry(raw, process, delaysMs, 0, err);
   }
 }
@@ -73,10 +74,10 @@ function scheduleRetry(raw: RawIncomingMessage, process: Processor, delaysMs: re
     pending -= 1;
     process(raw).then(
       () => {
-        console.log(`[worker] message ${raw.whatsappMessageId} processed on retry ${attempt + 1}`);
+        console.log(`[worker] message ${messageTraceId(raw.accountId, raw.whatsappMessageId)} processed on retry ${attempt + 1}`);
       },
       (err: unknown) => {
-        console.error(`[worker] retry ${attempt + 1} failed for message ${raw.whatsappMessageId}`, err);
+        console.error(`[worker] retry ${attempt + 1} failed for message ${messageTraceId(raw.accountId, raw.whatsappMessageId)}`, err);
         scheduleRetry(raw, process, delaysMs, attempt + 1, err);
       },
     );

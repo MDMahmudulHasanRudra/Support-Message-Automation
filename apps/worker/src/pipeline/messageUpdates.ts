@@ -8,6 +8,7 @@ import { isActiveTeamMember } from "./teamFilter.js";
 import { isOwnAccountMessage, rememberOwnSender } from "./ownAccounts.js";
 import { resolveGroup } from "./processIncomingMessage.js";
 import type { RawIncomingMessage } from "./types.js";
+import { messageTraceId } from "../logging/logRef.js";
 
 /**
  * Chat v2 rich messaging (CHAT_RICH_MESSAGING.md): what happens to a message AFTER it was first seen
@@ -72,7 +73,7 @@ export async function recordMessageAck(accountId: string, whatsappMessageId: str
       return true;
     });
   } catch (err) {
-    console.error(`[receipts] could not record a receipt for ${accountId}:${whatsappMessageId}`, err);
+    console.error(`[receipts] could not record a receipt for ${messageTraceId(accountId, whatsappMessageId)}`, err);
     return false;
   }
 }
@@ -89,7 +90,7 @@ export async function recordMessageRevoked(accountId: string, whatsappMessageId:
       return marked.count > 0;
     });
   } catch (err) {
-    console.error(`[deleted] could not mark ${accountId}:${whatsappMessageId} as deleted`, err);
+    console.error(`[deleted] could not mark ${messageTraceId(accountId, whatsappMessageId)} as deleted`, err);
     return false;
   }
 }

@@ -2,6 +2,7 @@ import { projectIdForAccount, withProject } from "../../project/context.js";
 import { closeCollectionGap, openCollectionGap } from "../../health/collectionGaps.js";
 import { decryptSecret } from "@support-automation/db";
 import { prisma } from "../../db.js";
+import { redactText, redactValue } from "../../logging/redact.js";
 import type { WhatsAppAccountStatus } from "@prisma/client";
 
 /**
@@ -251,8 +252,10 @@ async function recordConnectionStateInProject(
       data: {
         level: logLevelFor(state),
         scope: "provider",
-        message,
-        metadata: { state, ...metadata } as any,
+        message: redactText(message),
+        // OpenWA's error text and stack (OpenWAProvider setState("ERROR", …)) are stored here, so they are
+        // redacted by shape first, like every other System Log write (logging/redact.ts).
+        metadata: redactValue({ state, ...metadata }) as any,
       },
     });
     const before = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { status: true } });
@@ -293,7 +296,8 @@ async function recordConnectionStateInProject(
           level: "ERROR",
           scope: "provider",
           message: "Could not record a connection state change — this account's reported status is now stale",
-          metadata: { accountId, state, error: (err as Error).message } as any,
+          // Prisma's error text can quote the row it failed on (review O1-R6): redacted like every write.
+          metadata: redactValue({ accountId, state, error: (err as Error).message }) as any,
         },
       })
       .catch(() => undefined);

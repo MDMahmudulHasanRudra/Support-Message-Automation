@@ -1,4 +1,5 @@
 import { prisma } from "../db.js";
+import { redactText, redactValue } from "./redact.js";
 import type { LogLevel, Prisma } from "@prisma/client";
 
 /**
@@ -43,8 +44,10 @@ export async function logSystemEvent(
       data: {
         level,
         scope,
-        message,
-        metadata: metadata as Prisma.InputJsonValue | undefined,
+        // Redacted by shape (redact.ts): an error's message or stack quoted here comes from a library and
+        // can carry a WhatsApp id, a phone number or an address, whatever the caller meant to store.
+        message: redactText(message),
+        metadata: redactValue(metadata) as Prisma.InputJsonValue | undefined,
         actorUserId: context?.actorUserId ?? null,
         targetType: context?.targetType ?? null,
         targetId: context?.targetId ?? null,
