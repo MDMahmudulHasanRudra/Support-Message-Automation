@@ -206,14 +206,18 @@ describe("retry", () => {
     const down = await outbound({ accountId: fx.downAccount });
     expect((await inIsp(() => actions.retryFailedReply(W(down.id)))).error).toMatch(/not connected/);
 
-    await rawPrisma.automationSettings.update({ where: { projectId: ORIGINAL_PROJECT_ID }, data: { automationEnabled: false } });
+    // A freshly migrated database has no settings row (CI runs the web suite first), so create it if needed
+    // and put things back exactly as they were.
+    const existing = await rawPrisma.automationSettings.findUnique({ where: { projectId: ORIGINAL_PROJECT_ID }, select: { automationEnabled: true } });
+    await rawPrisma.automationSettings.upsert({ where: { projectId: ORIGINAL_PROJECT_ID }, create: { projectId: ORIGINAL_PROJECT_ID, automationEnabled: false }, update: { automationEnabled: false } });
     try {
       const auto = await outbound();
       const manual = await outbound({ actionType: "MANUAL_REPLY" });
       expect((await inIsp(() => actions.retryFailedReply(W(auto.id)))).error).toMatch(/Automation is paused/);
       expect((await inIsp(() => actions.retryFailedReply(W(manual.id)))).done).toBe(1);
     } finally {
-      await rawPrisma.automationSettings.update({ where: { projectId: ORIGINAL_PROJECT_ID }, data: { automationEnabled: true } });
+      if (existing) await rawPrisma.automationSettings.update({ where: { projectId: ORIGINAL_PROJECT_ID }, data: { automationEnabled: existing.automationEnabled } });
+      else await rawPrisma.automationSettings.delete({ where: { projectId: ORIGINAL_PROJECT_ID } });
     }
   });
 
