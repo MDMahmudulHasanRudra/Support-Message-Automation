@@ -1235,6 +1235,12 @@ export async function recoverStuckCommands(options: { atBoot?: boolean } = {}): 
 async function claimNextCommand() {
   // One shared queue, strictly serial, in one global order; each command then runs inside the
   // project that queued it (withProject(command.projectId)).
+  //
+  // Deliberately NOT FOR UPDATE SKIP LOCKED, unlike the send, alert, channel and email queues (P1-13).
+  // Almost every command needs the live browser session of one account, and only the worker holding that
+  // session can run it; a second worker skipping to the next row would claim commands it cannot carry out.
+  // Commands can be shared only after workers own disjoint sets of accounts (leases, docs/get-assist-ultimate/01 §6 step 5); the
+  // claim then filters by those accounts, and SKIP LOCKED belongs with that change.
   const candidate = await platformPrisma.workerCommand.findFirst({
     where: { status: "PENDING" },
     orderBy: { createdAt: "asc" },

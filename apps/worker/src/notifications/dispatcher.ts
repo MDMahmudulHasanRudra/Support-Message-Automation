@@ -1,7 +1,7 @@
 import { trackTick } from "../lifecycle.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import type { Notification } from "@prisma/client";
 import type { NotificationProvider } from "./NotificationProvider.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -37,21 +37,26 @@ export async function recoverStuckNotifications(): Promise<number> {
  */
 export async function claimNextNotification() {
   // One shared queue in one global order (see claimNextOutboundMessage); the rest of the work runs
-  // inside the claimed row's own project.
-  const candidate = await platformPrisma.notification.findFirst({
-    // A suspended or archived project's alerts are held, like its outbound messages.
-    where: { status: "PENDING", project: OPERATING_PROJECT_FILTER },
-    orderBy: { createdAt: "asc" },
+  // inside the claimed row's own project. SKIP LOCKED for the same reason (P1-13). A suspended or
+  // archived project's alerts are held, like its outbound messages.
+  const id = await platformPrisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT n.id FROM "Notification" n
+      JOIN "Project" p ON p.id = n."projectId"
+      WHERE n.status = 'PENDING'
+        AND p.status::text = ANY(${[...OPERATING_PROJECT_STATUSES]}) AND p."billingHoldAt" IS NULL
+      ORDER BY n."createdAt" ASC
+      LIMIT 1
+      FOR UPDATE OF n SKIP LOCKED`;
+    const candidate = rows[0];
+    if (!candidate) return null;
+    const claim = await tx.notification.updateMany({
+      where: { id: candidate.id, status: "PENDING" },
+      data: { status: "RETRYING", lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
+    });
+    return claim.count === 1 ? candidate.id : null;
   });
-  if (!candidate) return null;
-
-  const claim = await platformPrisma.notification.updateMany({
-    where: { id: candidate.id, status: "PENDING" },
-    data: { status: "RETRYING", lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
-  });
-  if (claim.count === 0) return null;
-
-  return platformPrisma.notification.findUniqueOrThrow({ where: { id: candidate.id } });
+  return id ? platformPrisma.notification.findUniqueOrThrow({ where: { id } }) : null;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { countMetric } from "../health/metrics.js";
 import { trackTick } from "../lifecycle.js";
 import { platformPrisma, prisma } from "../db.js";
-import { currentProjectId, OPERATING_PROJECT_FILTER, projectIdForAccount, withProject } from "../project/context.js";
+import { currentProjectId, OPERATING_PROJECT_STATUSES, projectIdForAccount, withProject } from "../project/context.js";
 import type { OutboundMessage } from "@prisma/client";
 import type { SendResult, WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { isCooldownActive } from "./cooldown.js";
@@ -81,20 +81,31 @@ export async function recoverStuckOutboundMessages(): Promise<number> {
  * belongs to any other project.
  */
 export async function claimNextOutboundMessage() {
-  const candidate = await platformPrisma.outboundMessage.findFirst({
-    // A suspended or archived project's rows are HELD — left PENDING, never cancelled (§8).
-    where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: OPERATING_PROJECT_FILTER },
-    orderBy: { scheduledAt: "asc" },
+  const now = new Date();
+  // FOR UPDATE SKIP LOCKED (P1-13): a row another claimer is holding is skipped rather than waited on or
+  // fought over, so two claimers take two different rows. With one worker nothing changes: same rows, same
+  // order. The conditional update stays as the second guard. It does not by itself make this queue
+  // shareable: a send needs the account's live session, so a second WhatsApp worker would also have to
+  // claim only the accounts it holds (leases, docs/get-assist-ultimate/01 §6 step 5 — see claimNextCommand). A suspended or archived project's rows are
+  // HELD — left PENDING, never cancelled (§8): the same rule as OPERATING_PROJECT_FILTER, evaluated live.
+  const id = await platformPrisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT o.id FROM "OutboundMessage" o
+      JOIN "Project" p ON p.id = o."projectId"
+      WHERE o.status = 'PENDING' AND o."scheduledAt" <= ${now}
+        AND p.status::text = ANY(${[...OPERATING_PROJECT_STATUSES]}) AND p."billingHoldAt" IS NULL
+      ORDER BY o."scheduledAt" ASC
+      LIMIT 1
+      FOR UPDATE OF o SKIP LOCKED`;
+    const candidate = rows[0];
+    if (!candidate) return null;
+    const claim = await tx.outboundMessage.updateMany({
+      where: { id: candidate.id, status: "PENDING" },
+      data: { status: "PROCESSING", lastAttemptAt: new Date() },
+    });
+    return claim.count === 1 ? candidate.id : null;
   });
-  if (!candidate) return null;
-
-  const claim = await platformPrisma.outboundMessage.updateMany({
-    where: { id: candidate.id, status: "PENDING" },
-    data: { status: "PROCESSING", lastAttemptAt: new Date() },
-  });
-  if (claim.count === 0) return null; // lost the race (shouldn't happen with a single worker, but defensive)
-
-  return platformPrisma.outboundMessage.findUniqueOrThrow({ where: { id: candidate.id } });
+  return id ? platformPrisma.outboundMessage.findUniqueOrThrow({ where: { id } }) : null;
 }
 
 /**
