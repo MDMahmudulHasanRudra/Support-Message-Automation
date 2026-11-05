@@ -28,10 +28,13 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Every console.x(…), traceStage(…) and logSystemEvent(…) call, from its name to its balanced closing paren. */
+/**
+ * Every console.x(…), traceStage(…), logSystemEvent(…) and logEvent(…) call (the shared logger, P1-07), from
+ * its name to its balanced closing paren.
+ */
 function logCalls(source: string): string[] {
   const calls: string[] = [];
-  const start = /\b(console\.(?:log|info|warn|error|debug)|traceStage|logSystemEvent)\(/g;
+  const start = /\b(console\.(?:log|info|warn|error|debug)|traceStage|logSystemEvent|logEvent)\(/g;
   for (let m = start.exec(source); m; m = start.exec(source)) {
     const before = source.slice(Math.max(0, m.index - 16), m.index);
     if (/function\s+$/.test(before) || /async\s+function\s+$/.test(before)) continue; // the declarations themselves
@@ -124,6 +127,12 @@ describe("worker logs never print customer data", () => {
     expect(findingsIn(fake, "console.warn(`could not read history for chat ${logRef(String(chat.id))}`, err);")).toEqual([]);
     // Outside the provider, message.id is a database row id.
     expect(findingsIn(join(SRC, "pipeline", "fake.ts"), 'traceStage(traceId, "MESSAGE_PERSISTED", { messageId: message.id });')).toEqual([]);
+  });
+
+  it("scans the shared logger's calls too (P1-07)", () => {
+    const file = join(SRC, "queue", "fake.ts");
+    expect(findingsIn(file, 'logEvent("info", "queue", "SENT", { chatId: message.chatId });')).toHaveLength(1);
+    expect(findingsIn(file, 'logEvent("info", "queue", "SENT", { outboundId: message.id, messageId: message.relatedMessageId });')).toEqual([]);
   });
 
   it("the pipeline trace id is a reference, not the raw WhatsApp message id", () => {
