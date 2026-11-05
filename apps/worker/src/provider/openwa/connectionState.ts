@@ -2,6 +2,7 @@ import { projectIdForAccount, withProject } from "../../project/context.js";
 import { closeCollectionGap, openCollectionGap } from "../../health/collectionGaps.js";
 import { decryptSecret } from "@support-automation/db";
 import { prisma } from "../../db.js";
+import { redactValue } from "../../logging/redact.js";
 import type { WhatsAppAccountStatus } from "@prisma/client";
 
 /**
@@ -252,7 +253,9 @@ async function recordConnectionStateInProject(
         level: logLevelFor(state),
         scope: "provider",
         message,
-        metadata: { state, ...metadata } as any,
+        // OpenWA's error text and stack (OpenWAProvider setState("ERROR", …)) are stored here, so they are
+        // redacted by shape first, like every other System Log write (logging/redact.ts).
+        metadata: redactValue({ state, ...metadata }) as any,
       },
     });
     const before = await prisma.whatsAppAccount.findUnique({ where: { id: accountId }, select: { status: true } });
