@@ -10,6 +10,7 @@ import { currentHostScope, requestHostname } from "@/server/hostScope";
 import { runWithTenant, tenantOfCustomer } from "@/server/tenant";
 import { decryptSecret } from "@support-automation/db";
 import { recordFailedSecret } from "@/server/loginLockout";
+import { clientAddress, tooManyAttemptsMessage, userSignInFailures } from "@/server/authRateLimit";
 import { consumeRecoveryCode, hashRecoveryCode, verifyTotp } from "@/server/totp";
 import type { HostScope } from "@support-automation/shared";
 
@@ -50,14 +51,30 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
     return { error: "Username and password are required." };
   }
 
+  // Failed attempts per address (authRateLimit.ts), checked before anything is looked up, so a refusal
+  // says nothing about whether the account exists.
+  const address = clientAddress(await headers());
+  const limit = userSignInFailures.check(address);
+  if (limit.limited) return { error: tooManyAttemptsMessage(limit.retryAfterSeconds) };
+
   // Usernames are unique across the platform; which customer the person belongs to is checked below.
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user) {
+    // Counted here as well: without it, guessing across usernames is never slowed down.
+    await countFailedSignIn(address);
     return { error: GENERIC_ERROR };
   }
   // Every log line and setting from here on is the person's own customer's.
   const tenant = await tenantOfCustomer(user.customerId);
-  return runWithTenant(tenant, () => signIn(user, tenant, password, code));
+  return runWithTenant(tenant, () => signIn(user, tenant, password, code, address));
+}
+
+/** One failed secret from this address; logged once when the address reaches its limit. */
+async function countFailedSignIn(address: string): Promise<void> {
+  const after = userSignInFailures.recordFailure(address);
+  if (after.reachedNow) {
+    await logSystemEvent("WARN", "auth", "LOGIN_RATE_LIMITED", { address, retryAfterSeconds: after.retryAfterSeconds });
+  }
 }
 
 async function signIn(
@@ -77,6 +94,7 @@ async function signIn(
   tenant: string | null,
   password: string,
   code: string,
+  address: string,
 ): Promise<LoginState> {
   const username = user.username;
   // A RELQIVO support identity has no password that works: it is entered only through support access.
@@ -93,6 +111,7 @@ async function signIn(
 
   if (!verifyPassword(password, user.passwordHash)) {
     await recordFailedSecret(user, tenant, "LOGIN_FAILURE");
+    await countFailedSignIn(address);
     return { error: GENERIC_ERROR };
   }
 
@@ -115,6 +134,7 @@ async function signIn(
     if (!code) return { needsCode: true };
     if (!(await acceptSecondStep(user, code))) {
       await recordFailedSecret(user, tenant, "LOGIN_MFA_FAILURE");
+      await countFailedSignIn(address);
       return { needsCode: true, error: "That code is not right. Use the current code from your authenticator app, or one of your recovery codes." };
     }
   }
