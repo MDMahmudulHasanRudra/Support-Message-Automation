@@ -3,6 +3,7 @@ import { checkDatabaseConnection } from "@support-automation/db";
 import { readMetrics } from "./metrics.js";
 import { readCollectionByKind } from "./collectionByKind.js";
 import { readLoops, stalestLoop } from "./loopLiveness.js";
+import { readLatestProcessStats } from "./serverStatsPublisher.js";
 
 /**
  * A loopback-only operations route (the personal backfill): reachable only from inside this
@@ -41,7 +42,14 @@ export interface WorkerHealthState {
 export function startHealthServer(state: WorkerHealthState, port: number) {
   const server = createServer((req, res) => {
     if (req.url === "/metrics") {
-      respond(res, 200, { uptimeMs: Date.now() - state.startedAt, ...readMetrics(), loops: readLoops(), collectionByKind: readCollectionByKind() });
+      respond(res, 200, {
+        uptimeMs: Date.now() - state.startedAt,
+        ...readMetrics(),
+        loops: readLoops(),
+        collectionByKind: readCollectionByKind(),
+        // Memory, load, browsers, disk: the latest once-a-minute reading (serverStatsPublisher.ts), null until the first.
+        process: readLatestProcessStats(),
+      });
       return;
     }
 

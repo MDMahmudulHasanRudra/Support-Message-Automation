@@ -29,6 +29,7 @@ import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
 import { startGroupRecoveryProcessor } from "./commands/groupRecovery.js";
 import { startMessageReconcileProcessor, startMessageStoreSweepProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
+import { maybePublishProcessStats } from "./health/serverStatsPublisher.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startMoodDetectionProcessor } from "./mood/moodProcessor.js";
@@ -319,6 +320,10 @@ function startHeartbeat(state: WorkerHealthState, registry: ProviderRegistry): N
             create: { id: "global", loops: (readLoops() as unknown as Prisma.InputJsonValue), startedAt: new Date(state.startedAt) },
           })
           .catch((err) => console.error("[worker] loop-liveness snapshot failed", err));
+
+        // Memory, load, browsers and disk for Platform → Monitoring: once a minute, in the background, on
+        // its own guard, so it can never hold this heartbeat up (health/serverStatsPublisher.ts).
+        maybePublishProcessStats(state.startedAt);
       }
     })()
       .catch((err) => console.error("[worker] heartbeat failed", err))
