@@ -80,7 +80,7 @@ export async function recoverStuckOutboundMessages(): Promise<number> {
  * project that created it; `processClaimedMessage` then refuses to send through an account that
  * belongs to any other project.
  */
-async function claimNextOutboundMessage() {
+export async function claimNextOutboundMessage() {
   const candidate = await platformPrisma.outboundMessage.findFirst({
     // A suspended or archived project's rows are HELD — left PENDING, never cancelled (§8).
     where: { status: "PENDING", scheduledAt: { lte: new Date() }, project: OPERATING_PROJECT_FILTER },

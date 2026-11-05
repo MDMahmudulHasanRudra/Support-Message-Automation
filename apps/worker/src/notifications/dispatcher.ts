@@ -35,7 +35,7 @@ export async function recoverStuckNotifications(): Promise<number> {
  * is being claimed, so the count moves atomically instead of being written back from a value read
  * before the provider call.
  */
-async function claimNextNotification() {
+export async function claimNextNotification() {
   // One shared queue in one global order (see claimNextOutboundMessage); the rest of the work runs
   // inside the claimed row's own project.
   const candidate = await platformPrisma.notification.findFirst({
