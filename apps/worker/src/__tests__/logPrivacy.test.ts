@@ -138,10 +138,54 @@ describe("worker logs never print customer data", () => {
     expect(firstImport).toMatch(/^import "\.\/logging\/installRedaction\.js";/);
   });
 
-  it("System Log writers redact what they store (review O1-R4)", () => {
-    expect(readFileSync(join(SRC, "logging/logSystemEvent.ts"), "utf8")).toMatch(/metadata: redactValue\(metadata\)/);
-    expect(readFileSync(join(SRC, "provider/openwa/connectionState.ts"), "utf8")).toMatch(/metadata: redactValue\(/);
+  it("every direct System Log write redacts its message and metadata (review O1-R4, O1-R6)", () => {
+    expect(systemLogWrites.length).toBeGreaterThanOrEqual(5); // logSystemEvent, connectionState ×2, ai-client ×2
+    expect(systemLogWriteFindings).toEqual([]);
   });
+
+  it("catches an unredacted direct write, in either spacing (the R6 fallback as it was)", () => {
+    const asItWas = `await prisma.systemLog
+      .create({ data: { level: "ERROR", scope: "provider", message: "Could not record", metadata: { accountId, state, error: (err as Error).message } as any } })`;
+    expect(unredactedSystemLogWrite(asItWas)).toBe("metadata not wrapped in redactValue(…)");
+    expect(unredactedSystemLogWrite('db.systemLog.create({ data: { message: `AI failed: ${detail}`, metadata: redactValue({}) } })')).toBe(
+      "message is neither a plain string nor redactText(…)",
+    );
+    expect(unredactedSystemLogWrite('db.systemLog.create({ data: { message: "fixed text", metadata: redactValue({ a }) as any } })')).toBeNull();
+  });
+});
+
+/**
+ * Direct `systemLog.create` calls bypass logSystemEvent's redaction, so each must do its own: the message a
+ * plain string literal or `redactText(…)`, the metadata `redactValue(…)`. Scanned in this worker and in
+ * packages/ai-client, which writes System Logs from inside this process (review O1-R6 found one missed).
+ */
+function unredactedSystemLogWrite(call: string): string | null {
+  const message = call.match(/\bmessage:\s*([^,\n]+)/)?.[1]?.trim() ?? "";
+  const plainLiteral = /^"[^"]*"$/.test(message) || /^'[^']*'$/.test(message) || /^`[^`$]*`$/.test(message);
+  if (message && !plainLiteral && !message.startsWith("redactText(")) return "message is neither a plain string nor redactText(…)";
+  if (/\bmetadata:/.test(call) && !/\bmetadata:\s*redactValue\(/.test(call)) return "metadata not wrapped in redactValue(…)";
+  return null;
+}
+
+const AI_CLIENT_SRC = resolve(SRC, "../../../packages/ai-client/src");
+const systemLogWrites = [...files, ...sourceFiles(AI_CLIENT_SRC)].flatMap((file) => {
+  const source = readFileSync(file, "utf8");
+  const writes: Array<{ file: string; call: string }> = [];
+  const start = /\bsystemLog\s*\.\s*create\(/g;
+  for (let m = start.exec(source); m; m = start.exec(source)) {
+    let depth = 0;
+    let i = source.indexOf("(", m.index);
+    for (; i < source.length; i++) {
+      if (source[i] === "(") depth++;
+      else if (source[i] === ")" && --depth === 0) break;
+    }
+    writes.push({ file, call: source.slice(m.index, i + 1) });
+  }
+  return writes;
+});
+const systemLogWriteFindings = systemLogWrites.flatMap(({ file, call }) => {
+  const problem = unredactedSystemLogWrite(call);
+  return problem ? [`${relative(SRC, file)}: ${problem}`] : [];
 });
 
 describe("logRef and messageTraceId", () => {

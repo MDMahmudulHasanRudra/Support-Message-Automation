@@ -1,4 +1,6 @@
 import type { PrismaClient } from "@support-automation/db";
+import { redactText, redactValue } from "@support-automation/shared";
+import type { Prisma } from "@prisma/client";
 import type { AiCallOutcome } from "./types.js";
 
 /**
@@ -74,8 +76,10 @@ async function logProviderEvent(
       data: {
         level,
         scope: PROVIDER_HEALTH_LOG_SCOPE,
-        message,
-        metadata: { providerId, ...extra },
+        // The provider's own error text can quote part of a key or an account address: redacted by shape
+        // before it is stored, like every System Log write (shared/logRedaction.ts, review O1-R6).
+        message: redactText(message),
+        metadata: redactValue({ providerId, ...extra }) as Prisma.InputJsonValue,
       },
     });
   } catch (err) {

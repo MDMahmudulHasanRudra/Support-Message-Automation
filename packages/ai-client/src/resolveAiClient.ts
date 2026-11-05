@@ -1,6 +1,6 @@
 import { decryptSecret, type PrismaClient } from "@support-automation/db";
-import { AI_PROVIDER_PROFILES, isOpenAiCompatibleKind, openRouterAttributionHeaders } from "@support-automation/shared";
-import type { AiModelJob } from "@prisma/client";
+import { AI_PROVIDER_PROFILES, isOpenAiCompatibleKind, openRouterAttributionHeaders, redactText, redactValue } from "@support-automation/shared";
+import type { AiModelJob, Prisma } from "@prisma/client";
 import { AnthropicClient } from "./AnthropicClient.js";
 import { OpenAiCompatibleClient } from "./OpenAiCompatibleClient.js";
 import { PROVIDER_HEALTH_LOG_SCOPE, reportProviderCallOutcome } from "./providerHealth.js";
@@ -181,8 +181,8 @@ function logUnavailable(
       data: {
         level: REASON_IS_EXPECTED[reason] ? "INFO" : "WARN",
         scope: PROVIDER_HEALTH_LOG_SCOPE,
-        message: `AI unavailable for ${job}: ${detail}`,
-        metadata: { job, reason, providerId },
+        message: redactText(`AI unavailable for ${job}: ${detail}`),
+        metadata: redactValue({ job, reason, providerId }) as Prisma.InputJsonValue,
       },
     })
     .catch((err) => {
