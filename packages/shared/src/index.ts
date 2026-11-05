@@ -101,3 +101,4 @@ export * from "./webchat.js";
 export * from "./logRedaction.js";
 export * from "./failedReplies.js";
 export * from "./logEvent.js";
+export * from "./backupHealth.js";

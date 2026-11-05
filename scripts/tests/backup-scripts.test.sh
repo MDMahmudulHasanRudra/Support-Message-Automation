@@ -39,6 +39,9 @@ case "$*" in
   "exec -i "*" sh -c "*) sh -c "$(mapdir "$6")" ;;
   "exec "*" sh -c "*) sh -c "$(mapdir "$5")" ;;
   "exec "*" psql "*) shift 3; psql "$@" ;;
+  # The run record (BackupRun): keep the SQL and the arguments so a case can inspect what would be stored.
+  "compose exec -T -e BR_STATUS="*) cat > "$STATE/record.sql"; printf "%s
+" "$@" > "$STATE/record.args"; [ -n "${FAKE_RECORD_FAIL:-}" ] && exit 1; exit 0 ;;
   *) echo "fake docker: unexpected call: $*" >&2; exit 97 ;;
 esac
 EOF
@@ -72,7 +75,7 @@ reset_state() {
   echo "image bytes" > "$STATE/src/whatsapp/p1/a.jpg"; echo "voice bytes" > "$STATE/src/whatsapp/p1/b.ogg"
   : > "$STATE/calls.log"
   export FAKE_VOLUMES="support_automation_media support_automation_whatsapp_session"
-  unset FAKE_DUMP_FAIL FAKE_TOC_LINES FAKE_RESTORE_FAIL FAKE_FLOCK_RC FAKE_LIVE_DB_BYTES FAKE_APPLIED
+  unset FAKE_DUMP_FAIL FAKE_TOC_LINES FAKE_RESTORE_FAIL FAKE_FLOCK_RC FAKE_LIVE_DB_BYTES FAKE_APPLIED FAKE_RECORD_FAIL
   export BACKUP_DIR="$WORK/backups" RESTORE_MIN_FREE_GB=0
 }
 run_backup() { (cd "$REPO" && PATH="$FAKE:$PATH" bash scripts/backup.sh) > "$WORK/out" 2>&1; echo $?; }
@@ -123,6 +126,20 @@ for d in 01 02 03 04 05; do f="db/db-202610${d}-030000-abc.dump"; echo old > "$B
 rc=$(run_backup)
 check "retention removes old dumps but keeps 3, and only manifests whose files are all gone" \
   '[ "$rc" = 0 ] && [ "$(ls "$BACKUP_DIR/db" | wc -l)" = 3 ] && [ "$(ls "$BACKUP_DIR"/manifest-* | wc -l)" = 3 ]'
+
+
+# The run record (docs/get-assist-ultimate/19 §7): what Platform Monitoring and the backup alert read.
+reset_state; rc=$(run_backup)
+check "a successful run is recorded SUCCEEDED with its sizes, every value as a psql variable"   '[ "$rc" = 0 ] && grep -qx "BR_STATUS=SUCCEEDED" "$STATE/record.args" && grep -q "^BR_DB=[0-9][0-9]*$" "$STATE/record.args" && grep -q "^BR_MEDIA=[0-9][0-9]*$" "$STATE/record.args" && grep -q ":.status.::" "$STATE/record.sql" && ! grep -q SUCCEEDED "$STATE/record.sql"'
+
+reset_state; rc=$( (cd "$REPO" && PATH="$WORK/lowdisk:$FAKE:$PATH" bash scripts/backup.sh) > "$WORK/out" 2>&1; echo $?)
+check "a failed run is recorded FAILED, and its reason names no path"   '[ "$rc" = 1 ] && grep -qx "BR_STATUS=FAILED" "$STATE/record.args" && grep -q "^BR_REASON=.*[path]" "$STATE/record.args" && ! grep -q "$WORK" "$STATE/record.args"'
+
+reset_state; export FAKE_RECORD_FAIL=1; rc=$(run_backup)
+check "a run that cannot be recorded still exits as the backup did, and says so"   '[ "$rc" = 0 ] && [ -n "$(latest db)" ] && grep -q "could not be recorded" "$WORK/out"'
+
+reset_state; export FAKE_FLOCK_RC=1; rc=$(run_backup)
+check "a run that found another holding the lock records nothing" '[ "$rc" = 0 ] && [ ! -f "$STATE/record.args" ]'
 
 # ---------------------------------------------------------------------------------------------------------
 echo "# restore-rehearsal.sh"

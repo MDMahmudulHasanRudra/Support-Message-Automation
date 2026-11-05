@@ -15,6 +15,7 @@ import { createMediaStorageFromEnv } from "@support-automation/media-storage";
 import { startMediaDownloadProcessor } from "./media/mediaDownloadProcessor.js";
 import { startMediaCleanupProcessor } from "./media/mediaCleanupProcessor.js";
 import { startSystemLogRetention } from "./health/systemLogRetention.js";
+import { startBackupWatch } from "./health/backupWatch.js";
 import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -201,6 +202,8 @@ async function main() {
     startForgeResearchProcessor(),
     // System Log retention: OFF unless SYSTEM_LOG_RETENTION_DAYS is set (>= 30); never support-access or platform entries.
     startSystemLogRetention(),
+    // Backup alerts: emails platform operators when the newest backup failed or the last success is stale (read-only).
+    startBackupWatch(),
     // Google Sheets (GOOGLE_SHEETS.md, Phase 8): who changed a MONITORED sheet in Google directly.
     // A no-op until the server has an OAuth client and a project has the feature on.
     startGoogleExternalActivityProcessor(),

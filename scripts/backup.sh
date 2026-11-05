@@ -38,7 +38,28 @@ for tool in docker flock sha256sum tar find df awk; do
 done
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
-fail() { log "FAILED: $*"; exit 1; }
+
+# Every run that gets past the lock records its outcome in the database (BackupRun), which Platform Monitoring
+# shows and the worker's backup alert reads. Best effort: a failure to record never changes the backup's own
+# result (the alert then sees the run as missing and reports the backup as stale). Values go in as psql
+# variables (:'name' quoting), never as SQL text, and the reason is stripped of file paths first — it is shown
+# outside this server, and a path names where the backups are.
+RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RECORDING=0
+DB_BYTES=""; MEDIA_BYTES=""
+record_run() {
+  [ "$RECORDING" = "1" ] || return 0
+  local status="$1" reason="${2:-}"
+  reason="$(printf '%s' "$reason" | sed -E 's#([A-Za-z]:)?(/[^ "]*)+#[path]#g' | tr -d "\r\n" | cut -c1-300)"
+  local sessions=false; [ "$WITH_SESSIONS" = "1" ] && sessions=true
+  printf '%s\n' "INSERT INTO \"BackupRun\" (id, status, \"startedAt\", \"finishedAt\", \"databaseBytes\", \"mediaBytes\", \"sessionsIncluded\", \"commitSha\", reason) VALUES ('br_' || md5(random()::text || clock_timestamp()::text), :'status'::\"BackupRunStatus\", :'started'::timestamp, (now() AT TIME ZONE 'UTC'), NULLIF(:'dbbytes', '')::bigint, NULLIF(:'mediabytes', '')::bigint, :'sessions'::boolean, NULLIF(:'commit', ''), NULLIF(:'reason', ''));" \
+    | docker compose exec -T -e BR_STATUS="$status" -e BR_STARTED="$RUN_STARTED_AT" -e BR_DB="$DB_BYTES" -e BR_MEDIA="$MEDIA_BYTES" \
+        -e BR_SESSIONS="$sessions" -e BR_COMMIT="${COMMIT:-}" -e BR_REASON="$reason" postgres \
+        sh -c 'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v status="$BR_STATUS" -v started="$BR_STARTED" -v dbbytes="$BR_DB" -v mediabytes="$BR_MEDIA" -v sessions="$BR_SESSIONS" -v commit="$BR_COMMIT" -v reason="$BR_REASON"' \
+        >/dev/null 2>&1 \
+    || log "warning: this run could not be recorded in the database; Platform Monitoring will show the backup as missing"
+}
+fail() { log "FAILED: $*"; record_run FAILED "$*"; exit 1; }
 
 mkdir -p "$BACKUP_DIR/db" "$BACKUP_DIR/media" "$BACKUP_DIR/sessions"
 chmod 700 "$BACKUP_DIR"
@@ -46,6 +67,7 @@ chmod 700 "$BACKUP_DIR"
 # One backup at a time: a second cron run while the first is still dumping would double the I/O for nothing.
 exec 9>"$BACKUP_DIR/.lock"
 if ! flock -n 9; then log "another backup is still running; nothing done"; exit 0; fi
+RECORDING=1   # from here on, every outcome is a run worth recording
 
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -80,6 +102,7 @@ docker compose exec -T postgres pg_restore -l < "$DB_FILE.part" > "$TOC_FILE" \
 grep -q '_prisma_migrations' "$TOC_FILE" \
   || fail "the database dump has no _prisma_migrations table; it is not a dump of this database. No database backup written."
 mv "$DB_FILE.part" "$DB_FILE"
+DB_BYTES="$(wc -c < "$DB_FILE" | tr -d ' ')"
 log "database: $(du -h "$DB_FILE" | cut -f1), $(wc -l < "$TOC_FILE") archive entries -> $DB_FILE"
 
 # 2. Media volume, read-only mount. Required: compose names it explicitly, so a missing volume means the
@@ -97,6 +120,7 @@ archive_volume() {
   log "$volume: $(du -h "$target" | cut -f1) -> $target"
 }
 archive_volume "$MEDIA_VOLUME" "$MEDIA_FILE"
+MEDIA_BYTES="$(wc -c < "$MEDIA_FILE" | tr -d ' ')"
 
 # 3. WhatsApp sessions, only when asked — then required like media. They are login credentials for every
 #    linked number, and copying a live browser profile can catch it mid-write; without them a restore means
@@ -135,3 +159,4 @@ for m in "$BACKUP_DIR"/manifest-*.sha256; do
 done
 
 log "done: manifest-$STAMP.sha256"
+record_run SUCCEEDED

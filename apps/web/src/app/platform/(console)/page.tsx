@@ -8,6 +8,8 @@ import { listSupportSessions } from "@/server/platform/support";
 import { databaseFigures, serverFigures, speedFigures } from "@/server/platform/systemFigures";
 import { formatBytes } from "./customers/[id]/CustomerHealthPanel";
 import { SystemFigures } from "./SystemFigures";
+import { BackupHealthSection } from "./BackupHealthSection";
+import { backupFigures } from "@/server/platform/backups";
 
 export const metadata = { title: "Overview" };
 
@@ -21,13 +23,14 @@ export default async function PlatformOverview() {
   await requireOperatorPage();
   // Each figures reader is caught on its own: a timed-out query shows "could not read" for its section
   // instead of taking the whole overview down.
-  const [platform, customers, activeSupport, server, speed, database] = await Promise.all([
+  const [platform, customers, activeSupport, server, speed, database, backups] = await Promise.all([
     platformHealth(),
     customersHealth(),
     listSupportSessions({ activeOnly: true, take: 20 }),
     serverFigures().catch(() => null),
     speedFigures().catch(() => null),
     databaseFigures().catch(() => null),
+    backupFigures().catch(() => null),
   ]);
   const attention = customers.filter((c) => c.attention.length > 0);
   const subscribed = customers.filter((c) => c.subscription);
@@ -73,6 +76,8 @@ export default async function PlatformOverview() {
       </div>
 
       <SystemFigures server={server} speed={speed} database={database} />
+
+      <BackupHealthSection backups={backups} />
 
       <SectionHeader title="Customers" description={`${customers.length} customer(s), ${subscribed.length} with a subscription, ${attention.length} needing attention.`} />
       {activeSupport.length > 0 ? (

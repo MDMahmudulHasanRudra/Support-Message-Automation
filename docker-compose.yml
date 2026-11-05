@@ -78,6 +78,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       TZ: ${TZ:-Asia/Dhaka}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
+      # Same value as the worker's, so Platform Monitoring shows backups stale exactly when operators are emailed.
+      BACKUP_ALERT_STALE_HOURS: ${BACKUP_ALERT_STALE_HOURS:-}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       # SaaS emergency switch (SAAS_PLATFORM_PLAN.md §8): "true" forces hostname routing OFF whatever
@@ -172,6 +174,8 @@ services:
       # System Log retention in days (>= 30). Empty = keep every entry, as before. Support-access and
       # platform entries are never removed (health/systemLogRetention.ts).
       SYSTEM_LOG_RETENTION_DAYS: ${SYSTEM_LOG_RETENTION_DAYS:-}
+      # Backup alert: hours without a successful backup before platform operators are emailed (default 26; 0 = never).
+      BACKUP_ALERT_STALE_HOURS: ${BACKUP_ALERT_STALE_HOURS:-}
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
       # before calling it — same key apps/web already uses, so the two must always match.
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}

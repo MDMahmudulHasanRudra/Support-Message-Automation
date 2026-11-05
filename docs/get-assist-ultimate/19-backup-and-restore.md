@@ -142,8 +142,13 @@ which are empty unless set, so the app behaves as before.
 - The first real backup on the server, its run time and its size.
 - The first real rehearsal (RTO).
 - Off-host copy (§3).
-- A backup alert. A failed run exits non-zero and writes `FAILED` to `backup.log`, but nobody is told. Candidate:
-  the Notification Center, once P1-6 metrics exist.
+- ~~A backup alert~~ — built (`feat/backup-alerts`). `backup.sh` records every run that passed the lock in
+  `BackupRun`: status, times, sizes, and a reason with no paths. Recording is best effort and never changes the
+  run's exit code. The worker's `backup-watch` (every 15 min) emails active platform operators once when the
+  latest run failed and once when no backup succeeded for `BACKUP_ALERT_STALE_HOURS` (26 by default; 0 turns
+  that off). Both are deduplicated by a `BackupAlert` key until the next success. It stays silent until a first
+  run is recorded. Platform → Overview shows a Backups section. Needs platform email (Platform → Settings or
+  `PLATFORM_SMTP_*`); without it, the alert is recorded as not delivered.
 - Point-in-time recovery (WAL archiving). Only if a 24-hour RPO is not acceptable.
 
 ## 8. What was tested, and how
@@ -178,4 +183,4 @@ first rehearsal on a real machine is what proves those.
 | Real restore rehearsal, on a separate machine or a checked disk | pending — Rudra |
 | Media restoration verified by the rehearsal | pending — same run |
 | Off-server encrypted copy | pending — Rudra chooses the destination |
-| Scheduled backup with a failure alert | pending — cron is §2; the alert needs P1-6 |
+| Scheduled backup with a failure alert | alert built; cron (§2) and a tested alert email — pending, Rudra |

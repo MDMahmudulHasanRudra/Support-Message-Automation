@@ -9438,3 +9438,39 @@ model FailedReplyAction {
   @@index([outboundMessageId, createdAt])
   @@index([channelMessageId, createdAt])
 }
+
+enum BackupRunStatus {
+  SUCCEEDED
+  FAILED
+}
+
+/// One run of scripts/backup.sh, recorded by the script itself at its end (docs/get-assist-ultimate/19 §7).
+/// Platform data: no projectId, one installation's backups. Never a path, host or credential: `reason` is
+/// stripped of paths by the script and again when shown.
+model BackupRun {
+  id               String          @id @default(cuid())
+  status           BackupRunStatus
+  startedAt        DateTime
+  finishedAt       DateTime
+  databaseBytes    BigInt?
+  mediaBytes       BigInt?
+  sessionsIncluded Boolean         @default(false)
+  commitSha        String?
+  reason           String?
+  createdAt        DateTime        @default(now())
+
+  @@index([finishedAt])
+  @@index([status, finishedAt])
+}
+
+/// One backup alert sent to platform operators. The unique key ("FAILED:<last success id>" or
+/// "STALE:<…>", backupHealth.ts) is claimed BEFORE sending, so an outage alerts once per kind, restarts included.
+model BackupAlert {
+  id         String   @id @default(cuid())
+  key        String   @unique
+  kind       String
+  recipients Int      @default(0)
+  delivered  Boolean  @default(false)
+  note       String?
+  createdAt  DateTime @default(now())
+}
