@@ -169,6 +169,9 @@ services:
       WHATSAPP_DEBUG_EVENTS: ${WHATSAPP_DEBUG_EVENTS:-false}
       TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL}
       WHATSAPP_NOTIFICATION_GROUP_ID: ${WHATSAPP_NOTIFICATION_GROUP_ID}
+      # System Log retention in days (>= 30). Empty = keep every entry, as before. Support-access and
+      # platform entries are never removed (health/systemLogRetention.ts).
+      SYSTEM_LOG_RETENTION_DAYS: ${SYSTEM_LOG_RETENTION_DAYS:-}
       # Needed by packages/ai-client's resolveAiClient() to decrypt a stored AiProvider API key
       # before calling it — same key apps/web already uses, so the two must always match.
       AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY}
