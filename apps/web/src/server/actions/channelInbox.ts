@@ -57,7 +57,7 @@ export async function retryChannelReplyAction(messageId: string, confirmedUnknow
   const access = await checkPermission("conversations.reply");
   if ("denied" in access) return { error: access.denied };
   try {
-    await retryChannelReply({ messageId, confirmedUnknown });
+    await retryChannelReply({ messageId, confirmedUnknown, actor: { userId: access.session.userId, username: access.session.username } });
     await logSystemEvent("INFO", "channels", "A channel reply was queued again", { confirmedUnknown }, { actorUserId: access.session.userId, targetType: "ChannelMessage", targetId: messageId });
     return { success: "Queued again." };
   } catch (err) {

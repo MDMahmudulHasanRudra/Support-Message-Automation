@@ -56,6 +56,7 @@ import {
   MessageSquareOff,
   MessageSquareQuote,
   MessagesSquare,
+  MessageSquareWarning,
   Network,
   PackageSearch,
   PhoneCall,
@@ -395,6 +396,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { href: "/messages?decision=IGNORE", label: "Ignored", icon: EyeOff },
           { href: "/messages/unanswered", label: "Unanswered groups", icon: Hourglass },
           { href: "/messages/response-time", label: "Response time", icon: Timer },
+          { href: "/messages/failed-replies", label: "Failed replies", icon: MessageSquareWarning },
         ],
       },
       {

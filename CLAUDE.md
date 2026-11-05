@@ -1091,6 +1091,13 @@ write another identifier→member map. Rules worth not undoing:
     (rules permitting, last 365 days) and records per-member what it found; Team Members shows
     "Syncing history…" then "History synced: N messages in G groups" (`getMemberHistorySync`).
 
+### Failed Replies and delivery uncertainty (`FAILED_REPLIES.md`, 5 Nov 2026)
+
+Messages → Failed replies lists customer replies (WhatsApp AUTO_REPLY/MANUAL_REPLY, channel replies) that did not go out. Rules worth not undoing:
+- **An unknown outcome is never retried by itself.** `sendStartedAt` is stamped right before the call into WhatsApp Web; a send that throws (`SendResult.uncertain`) is FAILED + `deliveryUncertain`; crash recovery requeues a stranded row only when it was never stamped. A refusal the provider RETURNS keeps its automatic retries.
+- **A retry is the same row and key**, through a conditional update with its `FailedReplyAction` history row in the same transaction (append-only, actor stored without an FK). An uncertain one needs the person's confirmation and is refused when an echo of it is in the chat; bulk retry and broadcast "Retry failed" skip uncertain rows.
+- State is derived (`failedReplyState`), with an SQL twin pinned by a test. The broadcast and notification failure views are unchanged.
+
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 
 - **One record per wait.** `SupportResponseEpisode` has one row per wait per group row (account +

@@ -2482,7 +2482,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         providerMessageId: typeof result === "string" ? result : undefined,
       };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 
@@ -2851,7 +2851,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const providerMessageId = serializeMessageId(id);
       return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the poll." };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 
@@ -2863,7 +2863,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
       return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the location." };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 
@@ -2876,7 +2876,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
       return providerMessageId ? { success: true, providerMessageId } : { success: false, error: "WhatsApp did not accept the sticker." };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 
@@ -2903,7 +2903,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const providerMessageId = typeof id === "boolean" ? null : serializeMessageId(id);
       return { success: true, providerMessageId: providerMessageId ?? undefined };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 
@@ -2915,7 +2915,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const providerMessageId = Array.isArray(result) ? serializeMessageId(result[0]) : null;
       return { success: true, providerMessageId: providerMessageId ?? undefined };
     } catch (err) {
-      return { success: false, error: (err as Error).message };
+      return { success: false, error: (err as Error).message, uncertain: true };
     }
   }
 

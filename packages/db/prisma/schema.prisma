@@ -630,6 +630,7 @@ model Project {
   sandboxSessionRows                   SandboxSession[]
   sandboxTurnRows                      SandboxTurn[]
   messageRows                          Message[]
+  failedReplyActions                   FailedReplyAction[]
   outboundMessageRows                  OutboundMessage[]
   whatsAppGroupRows                    WhatsAppGroup[]
   automationExecutionRows              AutomationExecution[]
@@ -1866,6 +1867,19 @@ model OutboundMessage {
   providerMessageId String?
   createdById       String?
   createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// Stamped immediately before the call into WhatsApp Web; null = never handed over (FAILED_REPLIES.md).
+  sendStartedAt       DateTime?
+  /// The send began and never answered, so it may have arrived. Never retried by itself.
+  deliveryUncertain   Boolean                @default(false)
+  /// Failed Replies: retries a person asked for, and how they settled it.
+  manualRetryCount    Int                    @default(0)
+  lastManualRetryAt   DateTime?
+  replyResolution     FailedReplyResolution?
+  replyResolvedAt     DateTime?
+  replyResolvedById   String?
+  replyResolutionNote String?
+  failedReplyActions  FailedReplyAction[]
 
   aiFallbackDecision AiFallbackDecision?
 
@@ -6613,6 +6627,15 @@ model ChannelMessage {
   /// The AI reply this message received (an outbound row's id).
   aiReplyMessageId String?
 
+  // ─ Failed Replies (FAILED_REPLIES.md) ─
+  manualRetryCount    Int                    @default(0)
+  lastManualRetryAt   DateTime?
+  replyResolution     FailedReplyResolution?
+  replyResolvedAt     DateTime?
+  replyResolvedById   String?
+  replyResolutionNote String?
+  failedReplyActions  FailedReplyAction[]
+
   @@unique([projectId, connectionId, externalMessageId])
   @@unique([projectId, idempotencyKey])
   @@index([projectId, conversationId, occurredAt])
@@ -9374,4 +9397,44 @@ model ClientDocumentAsset {
   createdAt  DateTime @default(now())
 
   @@unique([projectId, sha256])
+}
+
+enum FailedReplyResolution {
+  RESOLVED
+  CLOSED
+}
+
+enum FailedReplyActionKind {
+  RETRY
+  RESOLVE
+  CLOSE
+  REOPEN
+}
+
+/// Append-only history of what people did on Failed Replies (FAILED_REPLIES.md). Exactly one of the two
+/// message ids is set (CHECK). The actor is an id plus the username at that moment, with no foreign key:
+/// deleting a login must neither fail on nor rewrite this record.
+model FailedReplyAction {
+  id                 String                @id @default(cuid())
+  projectId          String                @default(dbgenerated("project_id_required()"))
+  project            Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  outboundMessageId  String?
+  outboundMessage    OutboundMessage?      @relation(fields: [outboundMessageId], references: [id], onDelete: Cascade)
+  channelMessageId   String?
+  channelMessage     ChannelMessage?       @relation(fields: [channelMessageId], references: [id], onDelete: Cascade)
+  action             FailedReplyActionKind
+  /// The status the message had when the person acted.
+  fromStatus         String
+  /// The failure recorded at that moment (already redacted).
+  failureReason      String?
+  /// A RETRY of an uncertain reply: the person confirmed they checked the chat.
+  confirmedUncertain Boolean               @default(false)
+  note               String?
+  actorUserId        String?
+  actorUsername      String?
+  createdAt          DateTime              @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([outboundMessageId, createdAt])
+  @@index([channelMessageId, createdAt])
 }

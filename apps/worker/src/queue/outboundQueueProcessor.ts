@@ -20,6 +20,7 @@ import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from ".
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { getAiSettings } from "../ai/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { redactText } from "@support-automation/shared";
 import { recordOperatorAttendance } from "../teamManagement/attendance.js";
 import {
   countJobSentLastMinute,
@@ -60,12 +61,30 @@ const RATE_LIMIT_DEFER_MS = 30_000;
  */
 const MAX_RATE_LIMIT_DEFERRALS = 20;
 
-/** Crash recovery: rows left in PROCESSING by a worker that died mid-send go back to PENDING. */
+/** Recorded on a row whose send was handed to WhatsApp Web and never answered. */
+export const UNCERTAIN_STRANDED_REASON =
+  "The worker stopped while this message was being handed to WhatsApp, so it is not known whether the customer received it. It was not sent again automatically — check the chat before retrying.";
+
+/**
+ * Crash recovery for rows left PROCESSING by a worker that died or hung. Two cases, told apart by
+ * `sendStartedAt`, which is stamped immediately before the call into WhatsApp Web:
+ *   - never handed over (no stamp): nothing can have been sent, so it goes back to PENDING, as before;
+ *   - handed over (stamp set): it may have arrived. It is settled FAILED with `deliveryUncertain` and
+ *     NEVER requeued by itself (FAILED_REPLIES.md) — a person checks the chat and decides on Failed Replies.
+ * Returns how many rows went back to PENDING.
+ */
 export async function recoverStuckOutboundMessages(): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_PROCESSING_TIMEOUT_MS);
   // Install-wide on purpose: releases this worker's own stranded claims, status only.
+  const uncertain = await platformPrisma.outboundMessage.updateMany({
+    where: { status: "PROCESSING", updatedAt: { lt: cutoff }, sendStartedAt: { not: null } },
+    data: { status: "FAILED", deliveryUncertain: true, failureReason: UNCERTAIN_STRANDED_REASON },
+  });
+  if (uncertain.count > 0) {
+    await logSystemEvent("WARN", "queue", "Messages stranded mid-send were held for a person to check, not resent", { count: uncertain.count }).catch(() => undefined);
+  }
   const result = await platformPrisma.outboundMessage.updateMany({
-    where: { status: "PROCESSING", updatedAt: { lt: cutoff } },
+    where: { status: "PROCESSING", updatedAt: { lt: cutoff }, sendStartedAt: null },
     data: { status: "PENDING" },
   });
   return result.count;
@@ -476,6 +495,9 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
     quotedMessageId = target.whatsappMessageId;
   }
 
+  // From here the message may reach WhatsApp. The stamp is what lets crash recovery tell "never handed
+  // over" (safe to requeue) from "may have arrived" (held for a person) — FAILED_REPLIES.md.
+  await prisma.outboundMessage.update({ where: { id: message.id }, data: { sendStartedAt: new Date() } });
   try {
     const result =
       message.contentType === "TEXT"
@@ -500,10 +522,11 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         void recordOperatorAttendance({ providerMessageId: result.providerMessageId, timestampWa: new Date() });
       }
     } else {
-      await handleSendFailure(message, result.error ?? "Unknown provider error");
+      await handleSendFailure(message, result.error ?? "Unknown provider error", result.uncertain === true);
     }
   } catch (err) {
-    await handleSendFailure(message, (err as Error).message);
+    // Thrown past the provider's own handling, after the hand-over began: the outcome is unknown.
+    await handleSendFailure(message, (err as Error).message, true);
   }
   return;
 }
@@ -628,9 +651,27 @@ async function deleteStoredFile(key: string): Promise<void> {
   }
 }
 
-async function handleSendFailure(message: OutboundMessage, failureReason: string): Promise<void> {
+async function handleSendFailure(message: OutboundMessage, rawReason: string, uncertain = false): Promise<void> {
   const attemptCount = message.attemptCount + 1;
   const isBroadcast = message.actionType === "GROUP_BROADCAST" && Boolean(message.broadcastJobId);
+  // Provider text can quote a chat id or a number; it is shown on Failed Replies, so it is redacted here.
+  const failureReason = redactText(rawReason).slice(0, 1000);
+
+  // An unknown outcome is never retried by itself: the customer may already have it (FAILED_REPLIES.md).
+  if (uncertain) {
+    await prisma.outboundMessage.update({
+      where: { id: message.id },
+      data: { status: "FAILED", attemptCount, failureReason, deliveryUncertain: true },
+    });
+    await logSystemEvent("WARN", "queue", "A send did not finish; held for a person to check instead of retrying", {
+      outboundMessageId: message.id,
+      accountId: message.accountId,
+      actionType: message.actionType,
+      attemptCount,
+    }).catch(() => undefined);
+    if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
+    return;
+  }
   const maxAttempts = isBroadcast
     ? (await getGroupBroadcastSettings()).retryMaxAttempts
     : (await getAutomationSettings()).retryMaxAttempts;
@@ -662,6 +703,8 @@ async function handleSendFailure(message: OutboundMessage, failureReason: string
       attemptCount,
       failureReason,
       scheduledAt: new Date(Date.now() + delayMs),
+      // The provider RETURNED a refusal, so nothing was handed over: the retry starts unstamped.
+      sendStartedAt: null,
     },
   });
 }
