@@ -26,7 +26,7 @@ describe("backupFigures", () => {
   });
 
   it("reports the last success with its size, the week's counts, and a failure reason without any path", async () => {
-    await run("SUCCEEDED", hoursAgo(10), { databaseBytes: 2048n });
+    await run("SUCCEEDED", hoursAgo(10), { databaseBytes: BigInt(2048) });
     await run("FAILED", hoursAgo(1), { reason: "pg_dump could not write /home/rudra/backups/db/x.dump.part" });
     const figures = await backupFigures(NOW);
     expect(figures.state).toBe("FAILED");
