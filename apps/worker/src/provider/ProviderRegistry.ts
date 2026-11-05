@@ -15,6 +15,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 // re-exported here so existing callers and tests are unaffected by where it lives.
 import { connectWithRetry } from "./connectWithRetry.js";
 import { messageTraceId } from "../logging/logRef.js";
+import { logEvent } from "@support-automation/shared";
 export { connectWithRetry };
 
 /**
@@ -105,10 +106,11 @@ export class ProviderRegistry {
       // The pipeline's trace reference (logging/logRef.ts), so this line groups with its stages; never the
       // chat, the sender or the raw WhatsApp id, which embeds both.
       const isGroup = Boolean(message.whatsappGroupId);
-      console.log(
-        `[pipeline] [${messageTraceId(message.accountId, message.whatsappMessageId)}] MESSAGE_RECEIVED`,
-        JSON.stringify({ direction: message.direction, isGroup }),
-      );
+      logEvent("info", "pipeline", "MESSAGE_RECEIVED", {
+        trace: messageTraceId(message.accountId, message.whatsappMessageId),
+        direction: message.direction,
+        isGroup,
+      });
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
       void processWithRetry(message, message.deliveredLate ? processLateMessage : undefined);

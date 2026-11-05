@@ -3,7 +3,7 @@ import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/d
 import { prisma } from "../db.js";
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
-import type { RuleAction } from "@support-automation/shared";
+import { logEvent, type LogFields, type RuleAction } from "@support-automation/shared";
 import type { AiClient } from "@support-automation/ai-client";
 import { enqueueOutboundMessage } from "./enqueueOutbound.js";
 import { buildExecutionIdempotencyKey } from "./idempotency.js";
@@ -53,9 +53,16 @@ interface ActionExecutionRecord {
  * decisions and lengths only — never the text, a phone number or a WhatsApp id (logPrivacy.test.ts).
  * Logged to console/docker logs only, not SystemLog — this fires on every single message, and writing
  * that to the DB-backed Logs page would be a lasting volume/behavior change, not a test-only addition.
+ *
+ * Written through the shared logger (logEvent, P1-07): `[pipeline] STAGE trace=m… key=value`, or JSON with
+ * LOG_FORMAT=json. A list or object detail is written as compact JSON text, redacted like any value.
  */
 function traceStage(traceId: string, stage: string, details?: Record<string, unknown>): void {
-  console.log(`[pipeline] [${traceId}] ${stage}${details ? " " + JSON.stringify(details) : ""}`);
+  const fields: LogFields = { trace: traceId };
+  for (const [key, value] of Object.entries(details ?? {})) {
+    fields[key] = value === null || ["string", "number", "boolean"].includes(typeof value) ? (value as LogFields[string]) : JSON.stringify(value);
+  }
+  logEvent("info", "pipeline", stage, fields);
 }
 
 /** `aiClientOverride` is a test-only seam (mirrors processOneAiAnalysisBatch's clientOverride) — production's sole caller never passes it. */
@@ -320,7 +327,6 @@ async function runAutomationStageInProject(
       select: { id: true, label: true },
     });
     if (primaryAccount && primaryAccount.id !== raw.accountId) {
-      const why = `it arrived on an account that is not Primary ("${primaryAccount.label}" is).`;
       traceStage(traceId, "AUTOMATION_RULE_CHECK", { matched: false, matchedRuleType: null });
       // Settled exactly as the ordinary no-match path does: PROCESSED, and the checkpoint moved.
       // Leaving it PENDING would make `recoverStrandedMessages` re-run it every few hours, and the
@@ -340,7 +346,7 @@ async function runAutomationStageInProject(
           lastProcessedTimestampWa: raw.timestampWa,
         },
       });
-      console.log(`[pipeline] [${traceId}] AUTOMATION_SKIPPED_NOT_PRIMARY ${why}`);
+      traceStage(traceId, "AUTOMATION_SKIPPED_NOT_PRIMARY", { primaryAccountId: primaryAccount.id });
       return;
     }
 

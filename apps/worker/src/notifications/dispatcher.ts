@@ -1,5 +1,7 @@
 import { trackTick } from "../lifecycle.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { correlationForMessage } from "../logging/correlation.js";
+import { logEvent } from "@support-automation/shared";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import type { Notification } from "@prisma/client";
@@ -113,16 +115,24 @@ async function dispatchClaimedNotification(
         where: { id: notification.id },
         data: { status: "SENT", sentAt: new Date() },
       });
+      // One line per delivered alert (P1-07); messageId is the customer message it is about, when there is one.
+      logEvent("info", "notifications", "SENT", {
+        notificationId: notification.id,
+        messageId: notification.relatedMessageId ?? undefined,
+        type: notification.type,
+        event: notification.event ?? undefined,
+        attempt: attemptCount,
+      });
     } else {
-      await handleFailure(notification.id, attemptCount, result.error ?? "Unknown notification error");
+      await handleFailure(notification.id, attemptCount, result.error ?? "Unknown notification error", notification.relatedMessageId);
     }
   } catch (err) {
-    await handleFailure(notification.id, attemptCount, (err as Error).message);
+    await handleFailure(notification.id, attemptCount, (err as Error).message, notification.relatedMessageId);
   }
   return true;
 }
 
-async function handleFailure(id: string, attemptCount: number, failureReason: string): Promise<void> {
+async function handleFailure(id: string, attemptCount: number, failureReason: string, relatedMessageId: string | null): Promise<void> {
   const givingUp = attemptCount >= MAX_NOTIFICATION_ATTEMPTS;
   await prisma.notification.update({
     where: { id },
@@ -135,11 +145,15 @@ async function handleFailure(id: string, attemptCount: number, failureReason: st
   // Retries in progress stay console-quiet, because a transient webhook failure that then succeeds
   // is not an event.
   if (givingUp) {
-    await logSystemEvent("ERROR", "notifications", "Gave up delivering a notification after every retry", {
-      notificationId: id,
-      attemptCount,
-      failureReason,
-    }).catch(() => undefined);
+    logEvent("error", "notifications", "GAVE_UP", { notificationId: id, messageId: relatedMessageId ?? undefined, attempts: attemptCount });
+    // In the trail of the customer message the alert was about, beside its AI decision (P1-07).
+    await logSystemEvent(
+      "ERROR",
+      "notifications",
+      "Gave up delivering a notification after every retry",
+      { notificationId: id, attemptCount, failureReason },
+      { targetType: "Notification", targetId: id, correlationId: await correlationForMessage(relatedMessageId) },
+    ).catch(() => undefined);
   }
 }
 

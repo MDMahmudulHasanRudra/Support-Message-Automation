@@ -14,6 +14,7 @@ import {
   STICKER_MAX_BYTES,
   validateLocation,
   validatePoll,
+  logEvent,
 } from "@support-automation/shared";
 import { createMediaStorageFromEnv } from "@support-automation/media-storage";
 import { exceedsLimit, getGlobalRateLimitUsage, getPerClientLimitUsage } from "./rateLimiter.js";
@@ -21,6 +22,7 @@ import { getAutomationSettings } from "../pipeline/settings.js";
 import { getAiSettings } from "../ai/settings.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { redactText } from "@support-automation/shared";
+import { correlationForMessage } from "../logging/correlation.js";
 import { recordOperatorAttendance } from "../teamManagement/attendance.js";
 import {
   countJobSentLastMinute,
@@ -505,16 +507,27 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         : await sendRichContent(message, provider, isManualReply);
     if (result === null) return; // refused and settled by sendRichContent: nothing left to retry
     if (result.success) {
+      const sentAt = new Date();
       await prisma.outboundMessage.update({
         where: { id: message.id },
         data: {
           status: "SENT",
-          sentAt: new Date(),
+          sentAt,
           attemptCount: { increment: 1 },
           providerMessageId: result.providerMessageId ?? undefined,
         },
       });
       countMetric("replied");
+      // One line per send (P1-07): the customer message it answers (messageId, the database id the
+      // message page and its timeline use), how long it waited once due, and on which attempt.
+      logEvent("info", "queue", "SENT", {
+        outboundId: message.id,
+        messageId: message.relatedMessageId ?? undefined,
+        accountId: message.accountId,
+        actionType: message.actionType,
+        attempt: message.attemptCount + 1,
+        waitedMs: Math.max(0, sentAt.getTime() - message.scheduledAt.getTime()),
+      });
       if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
       // A dashboard reply credits the team member linked to the login that sent it (attendance.ts);
       // the echo may already be stored, so the day is recomputed from here too. Never throws.
@@ -663,12 +676,14 @@ async function handleSendFailure(message: OutboundMessage, rawReason: string, un
       where: { id: message.id },
       data: { status: "FAILED", attemptCount, failureReason, deliveryUncertain: true },
     });
-    await logSystemEvent("WARN", "queue", "A send did not finish; held for a person to check instead of retrying", {
-      outboundMessageId: message.id,
-      accountId: message.accountId,
-      actionType: message.actionType,
-      attemptCount,
-    }).catch(() => undefined);
+    logEvent("warn", "queue", "DELIVERY_UNCERTAIN", { outboundId: message.id, messageId: message.relatedMessageId ?? undefined, accountId: message.accountId, attempt: attemptCount });
+    await logSystemEvent(
+      "WARN",
+      "queue",
+      "A send did not finish; held for a person to check instead of retrying",
+      { outboundMessageId: message.id, accountId: message.accountId, actionType: message.actionType, attemptCount },
+      { targetType: "OutboundMessage", targetId: message.id, correlationId: await correlationForMessage(message.relatedMessageId) },
+    ).catch(() => undefined);
     if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
     return;
   }
@@ -685,13 +700,22 @@ async function handleSendFailure(message: OutboundMessage, rawReason: string, un
     // failed to deliver was console-only — visible in `docker compose logs` if somebody thought to
     // look, and absent from the Logs page that is the actual place people look. A customer who was
     // never answered is exactly the event the durable log exists for.
-    await logSystemEvent("ERROR", "queue", "Gave up sending a message after every retry", {
-      outboundMessageId: message.id,
-      accountId: message.accountId,
-      actionType: message.actionType,
-      attemptCount,
-      failureReason,
-    }).catch(() => undefined);
+    logEvent("error", "queue", "GAVE_UP", { outboundId: message.id, messageId: message.relatedMessageId ?? undefined, accountId: message.accountId, attempts: attemptCount });
+    // Carries the customer message's trace id, so the reply that never went out is in that message's
+    // trail on the Logs page beside its AI decision (P1-07).
+    await logSystemEvent(
+      "ERROR",
+      "queue",
+      "Gave up sending a message after every retry",
+      {
+        outboundMessageId: message.id,
+        accountId: message.accountId,
+        actionType: message.actionType,
+        attemptCount,
+        failureReason,
+      },
+      { targetType: "OutboundMessage", targetId: message.id, correlationId: await correlationForMessage(message.relatedMessageId) },
+    ).catch(() => undefined);
     if (isBroadcast) await maybeCompleteBroadcastJob(message.broadcastJobId!);
     return;
   }
@@ -707,6 +731,7 @@ async function handleSendFailure(message: OutboundMessage, rawReason: string, un
       sendStartedAt: null,
     },
   });
+  logEvent("warn", "queue", "RETRY_SCHEDULED", { outboundId: message.id, messageId: message.relatedMessageId ?? undefined, attempt: attemptCount, inSeconds: Math.round(delayMs / 1000) });
 }
 
 /**

@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { requireAccess } from "@/server/authorize";
 import { Badge, type BadgeColor, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { buildMessageTimeline, formatStepDuration } from "@/lib/messageTimeline";
 import type { ReactNode } from "react";
 
 interface DecisionTraceEntry {
@@ -42,6 +43,44 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
   });
   if (!message) notFound();
 
+  // The message's journey, from the rows above (P1-07, lib/messageTimeline.ts). One extra lookup: WhatsApp's
+  // own copy of each sent reply (the echo), which is what confirms the reply really went out.
+  const sentIds = message.outboundReplies.map((r) => r.providerMessageId).filter((id): id is string => Boolean(id));
+  const echoes = sentIds.length
+    ? await prisma.message.findMany({ where: { whatsappMessageId: { in: sentIds } }, select: { accountId: true, whatsappMessageId: true, createdAt: true } })
+    : [];
+  const echoAt = new Map(echoes.map((e) => [`${e.accountId}:${e.whatsappMessageId}`, e.createdAt]));
+  const latestExecution = message.executions[0] ?? null;
+  const timeline = buildMessageTimeline({
+    receivedAt: message.timestampWa,
+    storedAt: message.createdAt,
+    processingStatus: message.processingStatus,
+    direction: message.direction,
+    decision: latestExecution ? { at: latestExecution.matchedAt, decision: latestExecution.decision } : null,
+    ai: message.aiFallbackDecision
+      ? { at: message.aiFallbackDecision.createdAt, outcome: message.aiFallbackDecision.outcome, latencyMs: message.aiFallbackDecision.latencyMs }
+      : null,
+    replies: message.outboundReplies.map((r) => ({
+      actionType: r.actionType,
+      status: r.status,
+      createdAt: r.createdAt,
+      scheduledAt: r.scheduledAt,
+      sentAt: r.sentAt,
+      attemptCount: r.attemptCount,
+      failureReason: r.failureReason,
+      echoStoredAt: r.providerMessageId ? (echoAt.get(`${r.accountId}:${r.providerMessageId}`) ?? null) : null,
+    })),
+    alerts: message.notifications.map((n) => ({
+      type: n.type,
+      event: n.event,
+      status: n.status,
+      createdAt: n.createdAt,
+      sentAt: n.sentAt,
+      attemptCount: n.attemptCount,
+      failureReason: n.failureReason,
+    })),
+  });
+
   const execution = message.executions[0] ?? null;
   const trace = (execution?.reasonTrace as unknown as DecisionTraceEntry[] | null) ?? [];
   const actionsExecuted =
@@ -61,6 +100,39 @@ export default async function MessageDetailPage({ params }: { params: Promise<{ 
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="space-y-4">
+          <Card>
+            <SectionHeader
+              title="Timeline"
+              description={
+                timeline.stoppedAt
+                  ? `Stopped at: ${timeline.stoppedAt}.`
+                  : `Every step finished${timeline.totalMs != null ? `, ${formatStepDuration(timeline.totalMs)} after the customer sent it` : ""}.`
+              }
+            />
+            <ol className="space-y-2 text-sm">
+              {timeline.steps.map((step, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <Badge color={step.state === "done" ? "green" : step.state === "waiting" ? "yellow" : step.state === "failed" ? "red" : "gray"} dot>
+                    {step.state}
+                  </Badge>
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {step.label}
+                      {step.sincePreviousMs != null ? (
+                        <span className="ml-2 text-xs font-normal text-[color:var(--color-muted-foreground)]">+{formatStepDuration(step.sincePreviousMs)}</span>
+                      ) : null}
+                    </div>
+                    <div className="text-xs text-[color:var(--color-muted-foreground)]">
+                      {step.at ? formatDateTime(step.at) : null}
+                      {step.at && step.detail ? " · " : null}
+                      {step.detail}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </Card>
+
           <Card>
             <SectionHeader title="Message" />
             <dl className="grid grid-cols-1 gap-x-4 gap-y-4 text-sm sm:grid-cols-2">
