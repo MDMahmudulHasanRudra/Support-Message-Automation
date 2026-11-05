@@ -23,15 +23,19 @@ triggers), so the diff is never empty by design.
 
 ## 2. Known gaps (not hidden)
 
-- **First run not yet observed.** The workflow was written and its YAML parsed locally; it has not run on GitHub.
-  Whatever the first run reports is recorded in `18-progress-and-decisions.md`, failing tests included. No test is
-  skipped or removed to make it green.
+- **CI runs on GitHub and is green** (checked 5 Nov 2026, run #52 on `05da3e1`: all three jobs passed). Run
+  history and the open items are in `18-progress-and-decisions.md`. No test is skipped or removed to make it green.
+- One failure on `main` (run #38, integration job, 31 Oct) is unexplained. The same commit passed on its branch
+  (#37), and every later `main` run passed. Logs need a signed-in viewer; until someone reads them it is treated
+  as a possible flaky test.
+- Actions moved off the deprecated Node 20 runtime on 5 Nov (`checkout`, `setup-node`, `upload-artifact` → v7,
+  `pnpm/action-setup` → v5). Not yet confirmed by a run on GitHub. `ubuntu-latest` moved to Ubuntu 26 from 19 Oct.
 - `next build` may need build-time env the Dockerfile does not set either; if it fails, the fix goes in the
   workflow `env`, never by weakening a check.
 - No E2E (Playwright) yet — P1-10.
 - `packages/db` has no test suite (unchanged).
-- Required status checks on `rudra`/`main` are a GitHub repository setting, not code — Rudra enables them once the
-  first runs are green.
+- Required status checks on `rudra`/`main` are a GitHub repository setting, not code. Runs are green, so Rudra can
+  enable them now. Whether they are on could not be checked: the setting is visible only to a repository admin.
 
 ## 3. Branch rule
 

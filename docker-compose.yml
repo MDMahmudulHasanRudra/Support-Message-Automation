@@ -111,6 +111,12 @@ services:
       META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
       # Workspaces allowed to use it (project ids, "*" = all). Empty = none: it fails closed.
       META_ALLOWED_PROJECT_IDS: ${META_ALLOWED_PROJECT_IDS:-}
+      # Background work in the app process (apps/web/src/instrumentation.ts): "true" leaves that processor off
+      # and its queued work waits. Unset = on, as before. Needed after a database restore, so restored queue
+      # rows are not sent again before someone checks them (docs/get-assist-ultimate/19-backup-and-restore.md §5).
+      SMART_IMPORT_PROCESSOR_DISABLED: ${SMART_IMPORT_PROCESSOR_DISABLED:-}
+      INTEGRATIONS_PROCESSOR_DISABLED: ${INTEGRATIONS_PROCESSOR_DISABLED:-}
+      SOCIAL_PROCESSOR_DISABLED: ${SOCIAL_PROCESSOR_DISABLED:-}
     volumes:
       - whatsapp_media:/app/media
     ports:

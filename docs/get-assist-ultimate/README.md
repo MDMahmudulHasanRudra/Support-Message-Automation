@@ -3,12 +3,14 @@
 | Doc | Status |
 |---|---|
 | [00 Current system audit](00-current-system-audit.md) | Phase 0, done |
+| [00b Audit update, 4 vCPU / 16 GB](00b-audit-update-2026-11-05.md) | 5 Nov; delta since Phase 0 + top 10 |
 | [01 Backend architecture decision](01-backend-architecture-decision.md) | Option A approved 29 Oct; measurements pending |
 | [02 UI/UX design brief](02-ui-ux-design-system.md) | Phase 2 brief |
 | [05 Data model and migrations](05-data-model-and-migrations.md) | proposal |
-| [13 Test and quality plan](13-test-and-quality-plan.md) | CI described; first run pending |
+| [13 Test and quality plan](13-test-and-quality-plan.md) | CI green on GitHub since 30 Oct; required checks not confirmed |
 | [15 Performance baseline](15-performance-benchmarks.md) | method + safety report ready; production run needs approval |
 | [16 Roadmap and backlog](16-implementation-roadmap.md) | Phase 0–11 work packages + owner decisions |
+| [19 Backup and restore](19-backup-and-restore.md) | P1-4 scripts + runbook; not yet run on the server |
 | [18 Progress and decisions](18-progress-and-decisions.md) | log |
 | 03, 04, 06–12, 14, 17 | written at the start of the phase that needs them |
 
