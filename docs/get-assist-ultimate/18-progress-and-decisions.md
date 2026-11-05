@@ -2,6 +2,21 @@
 
 Newest first. A decision is recorded only when it was made, with who made it.
 
+## 5 Nov 2026 — P1-4 review findings BKP-01 to BKP-05 fixed
+
+A review of `ops/backup-restore` (pasted by the owner) found five problems. All five were confirmed against the
+code and fixed:
+- **BKP-01:** checksums are now required by the rehearsal.
+- **BKP-02:** a missing media volume fails the backup.
+- **BKP-03:** media is extracted, and every STORED file is checked.
+- **BKP-04:** the rehearsal has a disk guard and a watchdog.
+- **BKP-05:** the archive listing is read in full before `grep`.
+
+21 failure tests (`scripts/tests/backup-scripts.test.sh`) now run in CI. 10 of them fail on `3525548`; BKP-05's
+SIGPIPE false failure was reproduced there. Details in `19` §8; completion criteria in `19` §9.
+
+Not merged and not scheduled. Merge order: `ci/actions-node24` first, then this branch, with its base moved to `rudra`.
+
 ## 5 Nov 2026 — P1-4 backup and restore (scripts, not yet run on the server)
 
 - Added `scripts/backup.sh`, `scripts/restore-rehearsal.sh` and `19-backup-and-restore.md`. Branch

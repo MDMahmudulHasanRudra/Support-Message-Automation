@@ -43,6 +43,8 @@ jobs:
         run: pnpm build:packages
       - run: pnpm typecheck
       - run: pnpm lint
+      - name: Backup script tests (fake docker, no containers)
+        run: bash scripts/tests/backup-scripts.test.sh
       - name: Unit tests — packages
         run: pnpm --filter "./packages/**" --if-present run test --reporter=default --reporter=junit --outputFile.junit=test-results/junit.xml
       - name: Unit tests — web (integration files excluded; they run in the integration job)
