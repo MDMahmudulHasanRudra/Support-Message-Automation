@@ -2,6 +2,25 @@
 
 Newest first. A decision is recorded only when it was made, with who made it.
 
+## 5 Nov 2026 — P1-4 backup and restore (scripts, not yet run on the server)
+
+- Added `scripts/backup.sh`, `scripts/restore-rehearsal.sh` and `19-backup-and-restore.md`. Branch
+  `ops/backup-restore`, stacked on `ci/actions-node24`.
+- `docker-compose.yml` now passes `SMART_IMPORT_PROCESSOR_DISABLED`, `INTEGRATIONS_PROCESSOR_DISABLED` and
+  `SOCIAL_PROCESSOR_DISABLED` into `app`. All three are read by `instrumentation.ts`, but nothing passed them in, so
+  setting them on the server did nothing. Unset = on, as before. A restore needs them (`19` §5, step 7).
+- The rehearsal uses its own networkless container, never `docker-compose.test.yml`, whose port 5433 is published
+  with a known password.
+- Dry-run testing with a fake `docker` found and fixed two bugs before any server run (`19` §8).
+- Not done: the first real backup, the first rehearsal, the off-host copy and a failure alert. All are Rudra's
+  steps on the server. Until a rehearsal passes, backups are unproven.
+
+## 5 Nov 2026 — P1-1 CI: Node 24 bump verified
+
+Run #53 on `ci/actions-node24` (`8662772`): **success**, 12m 43s. Typecheck/lint/unit 4m 7s, build 3m 28s,
+integration 8m 29s. Both artifacts uploaded through `upload-artifact@v7`. The Node 20 deprecation annotations are
+gone. Left: the `git` exit 128 warning (one per job, unchanged) and the Ubuntu 26 notice.
+
 ## 5 Nov 2026 — P1-1 CI: actions moved to Node 24
 
 `.github/workflows/ci.yml`: only the `uses:` versions changed. No step, input, trigger or permission changed.

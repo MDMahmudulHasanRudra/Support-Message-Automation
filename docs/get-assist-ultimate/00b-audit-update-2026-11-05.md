@@ -72,7 +72,7 @@ Since Phase 0 the work went into features. The reliability foundation that both 
 |---|---|---|
 | P1-1 CI | **Runs and is green** (52 runs; green since 30 Oct 15:02 UTC). Required checks not confirmed. See `18`. | GitHub Actions, run #52 |
 | P1-3 Web port on 127.0.0.1 | OPEN: `"${WEB_PORT:-8668}:3000"` on all interfaces | `docker-compose.yml:117` |
-| P1-4 Scheduled backup + rehearsed restore, media volume | OPEN: no backup or restore script | `scripts/` |
+| P1-4 Scheduled backup + rehearsed restore, media volume | Scripts + runbook written 5 Nov; **not yet run on the server** | `19-backup-and-restore.md` |
 | P1-5 Structured logs + correlation id | OPEN: no logger dependency | `apps/*/package.json` |
 | P1-6 Prometheus metrics, event-loop delay | OPEN | `health/metrics.ts` |
 | P1-7 Global security headers | OPEN: none in `next.config.ts` | — |

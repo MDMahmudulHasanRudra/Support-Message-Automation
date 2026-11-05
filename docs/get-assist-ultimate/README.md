@@ -10,6 +10,7 @@
 | [13 Test and quality plan](13-test-and-quality-plan.md) | CI green on GitHub since 30 Oct; required checks not confirmed |
 | [15 Performance baseline](15-performance-benchmarks.md) | method + safety report ready; production run needs approval |
 | [16 Roadmap and backlog](16-implementation-roadmap.md) | Phase 0–11 work packages + owner decisions |
+| [19 Backup and restore](19-backup-and-restore.md) | P1-4 scripts + runbook; not yet run on the server |
 | [18 Progress and decisions](18-progress-and-decisions.md) | log |
 | 03, 04, 06–12, 14, 17 | written at the start of the phase that needs them |
 

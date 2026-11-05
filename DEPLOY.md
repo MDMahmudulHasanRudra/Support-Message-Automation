@@ -14,7 +14,8 @@
 # 1. Get the code
 git pull
 
-# 2. Back up the database (keep it until the deploy is verified)
+# 2. Back up the database (keep it until the deploy is verified).
+#    `bash scripts/backup.sh` does this too, with media and checksums (docs/get-assist-ultimate/19-backup-and-restore.md).
 mkdir -p ~/backups
 docker compose exec -T postgres sh -c 'pg_dump -U $POSTGRES_USER -d $POSTGRES_DB' \
   | gzip > ~/backups/pre-deploy-$(git rev-parse --short HEAD)-$(date -u +%Y%m%d-%H%M).sql.gz
