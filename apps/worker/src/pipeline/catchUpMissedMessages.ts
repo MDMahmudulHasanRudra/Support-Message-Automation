@@ -6,6 +6,7 @@ import type { WhatsAppProvider } from "../provider/WhatsAppProvider.js";
 import { processIncomingMessage, storeMissedMessage } from "./processIncomingMessage.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { recordGapRecovery } from "../health/collectionGaps.js";
+import { messageTraceId } from "../logging/logRef.js";
 
 /**
  * Fills the gap in collected messages left by any period this worker was not listening.
@@ -197,7 +198,7 @@ async function catchUpMissedMessagesInProject(accountId: string, provider: Whats
         }
       } catch (err) {
         // One unparseable message must not abandon the rest of the gap.
-        console.error(`[catch-up] failed to recover message ${raw.whatsappMessageId}`, err);
+        console.error(`[catch-up] failed to recover message ${messageTraceId(raw.accountId, raw.whatsappMessageId)}`, err);
       }
       if (!newest || raw.timestampWa > newest) newest = raw.timestampWa;
     }

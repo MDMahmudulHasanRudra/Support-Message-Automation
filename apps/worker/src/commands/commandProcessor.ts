@@ -18,6 +18,7 @@ import { shouldHoldDeactivationSweep } from "./groupSyncGuard.js";
 import type { Prisma } from "@prisma/client";
 import type { GroupSyncBasis } from "@support-automation/shared";
 import { storeHistoryMessages } from "../pipeline/messageUpdates.js";
+import { logRef } from "../logging/logRef.js";
 
 /** Name this loop reports itself under in the per-loop liveness view. */
 const LOOP_NAME = "command-processor";
@@ -300,7 +301,7 @@ async function syncGroupsInProject(
         } catch (err) {
           failed += 1;
           failedIds.add(group.whatsappGroupId);
-          console.warn(`[groupsync] could not save group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+          console.warn(`[groupsync] could not save group ${logRef(group.whatsappGroupId)}: ${(err as Error).message.slice(0, 200)}`);
         }
       }
     }
@@ -316,7 +317,7 @@ async function syncGroupsInProject(
       });
     } catch (err) {
       failed += 1;
-      console.warn(`[groupsync] could not rename group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+      console.warn(`[groupsync] could not rename group ${logRef(group.whatsappGroupId)}: ${(err as Error).message.slice(0, 200)}`);
     }
   }
   if (renamed.length > 0) console.log(`[groupsync] GROUP_SYNC_RENAMED ${renamed.length} group(s)`);
@@ -333,7 +334,7 @@ async function syncGroupsInProject(
       });
       redescribedCount += 1;
     } catch (err) {
-      console.warn(`[groupsync] could not save the description of group ${group.whatsappGroupId}: ${(err as Error).message.slice(0, 200)}`);
+      console.warn(`[groupsync] could not save the description of group ${logRef(group.whatsappGroupId)}: ${(err as Error).message.slice(0, 200)}`);
     }
   }
   if (redescribedCount > 0) console.log(`[groupsync] GROUP_SYNC_DESCRIBED ${redescribedCount} group(s)`);

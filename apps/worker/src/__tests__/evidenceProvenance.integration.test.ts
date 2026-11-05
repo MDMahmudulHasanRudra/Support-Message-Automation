@@ -5,6 +5,7 @@ import { createKnowledgeItem } from "@support-automation/db";
 import { prisma } from "./helpers/projectFixtures.js";
 import type { AiSettings, AutomationSettings, Prisma, WhatsAppAccount, WhatsAppGroup } from "@prisma/client";
 import { processIncomingMessage } from "../pipeline/processIncomingMessage.js";
+import { messageTraceId } from "../logging/logRef.js";
 import { MockAiClient } from "./mockAiClient.js";
 
 /**
@@ -238,8 +239,10 @@ describe("interaction metadata", () => {
     expect(decision.promptVersion).toBeTruthy();
     expect(decision.retrievalVersion).toBeTruthy();
     expect(decision.evidenceFingerprint).toBeTruthy();
-    // The pipeline's own trace id, reused rather than a second correlation scheme.
-    expect(decision.correlationId).toBe(`${raw.accountId}:${raw.whatsappMessageId}`);
+    // The pipeline's own trace id, reused rather than a second correlation scheme. A reference to the
+    // account + WhatsApp id pair, never the pair itself, which embeds the chat and sender (logRef.ts).
+    expect(decision.correlationId).toBe(messageTraceId(raw.accountId, raw.whatsappMessageId));
+    expect(decision.correlationId).not.toContain(raw.whatsappMessageId);
     // Denormalised from the snapshot so "same evidence?" needs no join.
     expect(decision.evidenceFingerprint).toBe(decision.evidenceSnapshot!.fingerprint);
   });

@@ -81,6 +81,7 @@ import {
   writeLinkMarker,
   type ProfileActivity,
 } from "./linkLoading.js";
+import { logRef } from "../../logging/logRef.js";
 
 /**
  * Ceilings on the two teardown calls into Chromium, neither of which had one.
@@ -2552,7 +2553,7 @@ export class OpenWAProvider implements WhatsAppProvider {
         })
         .filter((participant) => participant.rawId.length > 0);
     } catch (err) {
-      console.error(`[provider] could not read participants for ${chatId}`, err);
+      console.error(`[provider] could not read participants for ${logRef(chatId)}`, err);
       return [];
     }
   }
@@ -2617,7 +2618,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const admins: unknown = await this.client.getGroupAdmins(chatId as GroupChatId);
       return Array.isArray(admins) ? admins.map((id) => String(id)) : null;
     } catch (err) {
-      console.error(`[provider] could not read admins for ${chatId}`, err);
+      console.error(`[provider] could not read admins for ${logRef(chatId)}`, err);
       return null;
     }
   }
@@ -2645,7 +2646,7 @@ export class OpenWAProvider implements WhatsAppProvider {
       const message: unknown = await this.client.getMessageById(whatsappMessageId as MessageId);
       return message && typeof message === "object" ? toMediaDownloadInfo(message as WaMediaFields) : null;
     } catch (err) {
-      console.error(`[provider] could not read media details for ${whatsappMessageId}`, err);
+      console.error(`[provider] could not read media details for ${logRef(whatsappMessageId)}`, err);
       return null;
     }
   }

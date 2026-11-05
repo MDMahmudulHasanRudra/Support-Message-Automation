@@ -10,6 +10,7 @@ import { recordCollection } from "../health/collectionByKind.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { trackTick } from "../lifecycle.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
+import { messageTraceId } from "../logging/logRef.js";
 
 /**
  * Compares what WhatsApp Web holds for the last half hour with what is stored, and stores the
@@ -115,7 +116,7 @@ async function recoverMissing(accountId: string, missing: readonly RawIncomingMe
       recordCollection(accountId, raw.chatId, "recovered");
     } catch (err) {
       failed += 1;
-      console.error(`[reconcile] failed to recover message ${raw.whatsappMessageId}`, err);
+      console.error(`[reconcile] failed to recover message ${messageTraceId(raw.accountId, raw.whatsappMessageId)}`, err);
     }
   }
   return { recovered, failed };
