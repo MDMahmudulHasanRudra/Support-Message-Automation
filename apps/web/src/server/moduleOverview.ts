@@ -1,3 +1,6 @@
+import { defaultFilterContext, subscriptionStateWhere } from "@/lib/clientFilters";
+import type { Session } from "@/server/auth";
+import { hasPermission } from "@/server/permissions";
 import { OPEN_SHIPMENT_STATUSES, PROJECT_FEATURES, resolveAiCommercePolicy, AI_COMMERCE_CAPABILITY_LABELS, type ProjectFeatureKey } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
@@ -134,4 +137,49 @@ export async function getSetupChecklist(): Promise<SetupItem[]> {
   );
   await Promise.all(checks.map((c) => c.catch((err) => console.error("[overview] setup check failed", (err as Error).name))));
   return items;
+}
+
+export interface ClientOverview {
+  total: number;
+  active: number;
+  expiring: number;
+  expired: number;
+  /** Open dues with an amount; null for a viewer without billing access. */
+  unpaidDues: number | null;
+}
+
+/** Null when Client Management is off or this viewer cannot open it. Billing only for a billing viewer. */
+export async function getClientOverview(session: Session): Promise<ClientOverview | null> {
+  const off = await activeDisabledFeatures();
+  if (off.has("CLIENT_CENTER") || !(await hasPermission(session, "clients.view"))) return null;
+  const billing = await hasPermission(session, "clients.view_billing");
+  const ctx = { ...defaultFilterContext(), billing };
+  const live = { archivedAt: null };
+  const [total, active, expiring, expired, unpaidDues] = await Promise.all([
+    prisma.client.count({ where: live }),
+    prisma.client.count({ where: { ...live, ...subscriptionStateWhere("ACTIVE", ctx) } }),
+    prisma.client.count({ where: { ...live, ...subscriptionStateWhere("EXPIRING", ctx) } }),
+    prisma.client.count({ where: { ...live, ...subscriptionStateWhere("EXPIRED", ctx) } }),
+    billing ? prisma.clientDue.count({ where: { status: { in: ["UNPAID", "PARTIALLY_PAID"] }, amount: { not: null } } }) : null,
+  ]);
+  return { total, active, expiring, expired, unpaidDues };
+}
+
+/**
+ * The first-run steps on a project's Overview, each read from what actually exists, so a step ticks itself and
+ * the card leaves once all are done.
+ */
+export async function getGettingStarted(): Promise<Array<{ key: string; title: string; detail: string; done: boolean; href: string; action: string }>> {
+  const [connected, monitored, activeRules, members] = await Promise.all([
+    prisma.whatsAppAccount.count({ where: { status: "CONNECTED" } }),
+    prisma.whatsAppGroup.count({ where: { isActive: true, isMonitored: true } }),
+    prisma.automationRule.count({ where: { status: "ACTIVE" } }),
+    prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
+  ]);
+  return [
+    { key: "number", title: "Connect a WhatsApp number", detail: "Scan a code with the phone. Messages start arriving straight away.", done: connected > 0, href: "/accounts", action: "Connect" },
+    { key: "groups", title: "Choose groups to monitor", detail: "Automation and reports follow only the groups you pick.", done: monitored > 0, href: "/groups", action: "Open groups" },
+    { key: "team", title: "Add your team", detail: "So their replies count as support, and customers are told apart from staff.", done: members > 0, href: "/team-members", action: "Add members" },
+    { key: "rules", title: "Create your first rule", detail: "Decide what gets an instant reply and what goes to a person.", done: activeRules > 0, href: "/rules", action: "Open rules" },
+  ];
 }

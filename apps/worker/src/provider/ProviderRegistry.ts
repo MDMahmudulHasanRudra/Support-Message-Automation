@@ -14,6 +14,8 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 // Moved to its own module to break the ProviderRegistry <-> commandProcessor import cycle; still
 // re-exported here so existing callers and tests are unaffected by where it lives.
 import { connectWithRetry } from "./connectWithRetry.js";
+import { messageTraceId } from "../logging/logRef.js";
+import { logEvent } from "@support-automation/shared";
 export { connectWithRetry };
 
 /**
@@ -101,15 +103,14 @@ export class ProviderRegistry {
       // PHASE 6.1: the exact OpenWA -> worker event handoff point — logged here, not inside the
       // provider, since this is the provider-agnostic boundary any future provider implementation
       // would call through identically.
-      console.log(
-        `[pipeline] [${message.accountId}:${message.whatsappMessageId}] MESSAGE_RECEIVED`,
-        JSON.stringify({
-          chatId: message.chatId,
-          senderPhone: message.senderPhone,
-          direction: message.direction,
-          isGroup: Boolean(message.whatsappGroupId),
-        }),
-      );
+      // The pipeline's trace reference (logging/logRef.ts), so this line groups with its stages; never the
+      // chat, the sender or the raw WhatsApp id, which embeds both.
+      const isGroup = Boolean(message.whatsappGroupId);
+      logEvent("info", "pipeline", "MESSAGE_RECEIVED", {
+        trace: messageTraceId(message.accountId, message.whatsappMessageId),
+        direction: message.direction,
+        isGroup,
+      });
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
       void processWithRetry(message, message.deliveredLate ? processLateMessage : undefined);

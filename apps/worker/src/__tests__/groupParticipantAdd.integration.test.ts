@@ -64,6 +64,19 @@ async function makeJob(overrides: Partial<Prisma.GroupParticipantAddJobUnchecked
   });
 }
 
+/**
+ * The claim takes the oldest `scheduledAt`. Two items queued back to back with `new Date()` can land in
+ * the same millisecond on a fast machine (the CI runner), and a tie leaves Postgres free to return either
+ * first, so a test that queued A then B could have B processed first. The default is therefore strictly
+ * increasing: items are claimed in the order a test queued them, on every machine. It runs a second in the
+ * past, so a burst of items never steps into the future and every one is already due.
+ */
+let lastDefaultScheduledMs = 0;
+function nextDefaultScheduledAt(): Date {
+  lastDefaultScheduledMs = Math.max(Date.now() - 1000, lastDefaultScheduledMs + 1);
+  return new Date(lastDefaultScheduledMs);
+}
+
 async function queueItem(params: {
   job: { id: string };
   group: WhatsAppGroup;
@@ -77,7 +90,7 @@ async function queueItem(params: {
       groupNameSnapshot: params.group.name,
       // Defaults to the same number makeJob() queues, so every existing test reads unchanged.
       phoneNumber: params.phoneNumber ?? "8801000000000",
-      scheduledAt: params.scheduledAt ?? new Date(),
+      scheduledAt: params.scheduledAt ?? nextDefaultScheduledAt(),
     },
   });
 }
@@ -445,7 +458,7 @@ describe("The per-minute cap is global, not per job", () => {
     const groupA = await makeGroup();
     const groupB = await makeGroup();
     const job = await makeJob({ maxPerMinute: 1 });
-    await queueItem({ job, group: groupA, phoneNumber: "8801000000000" });
+    const itemA = await queueItem({ job, group: groupA, phoneNumber: "8801000000000" });
     const itemB = await queueItem({ job, group: groupB, phoneNumber: "8801000000000" });
 
     const provider = new MockProvider();
@@ -456,9 +469,12 @@ describe("The per-minute cap is global, not per job", () => {
     await processOne(provider); // skips groupA — still spends the minute's budget
     await processOne(provider);
 
+    // The skip happened, and happened first: this is the premise, not just the outcome.
+    expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: itemA.id } })).status).toBe("SKIPPED_ALREADY_MEMBER");
     expect((await prisma.groupParticipantAddItem.findUniqueOrThrow({ where: { id: itemB.id } })).status).toBe(
       "PENDING",
     );
+    expect(provider.addedParticipants).toHaveLength(0);
   });
 });
 

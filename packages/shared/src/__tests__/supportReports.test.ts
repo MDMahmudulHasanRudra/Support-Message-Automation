@@ -430,6 +430,7 @@ describe("report catalogue and date presets", () => {
       "/support-activity/reports",
       "/support-assignment/report",
       "/team-management/attendance",
+      "/reports/csat",
     ]);
     expect(GENERIC_REPORT_IDS).toHaveLength(18);
   });

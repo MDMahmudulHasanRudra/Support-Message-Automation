@@ -246,7 +246,7 @@ export function ComposerV2({
 
   if (disabledReason) {
     return (
-      <div className="border-t border-[var(--color-border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+      <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
         <Alert tone="warning">{disabledReason}</Alert>
         {otherCopies.length ? (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[color:var(--color-muted-foreground)]">
@@ -268,7 +268,7 @@ export function ComposerV2({
   }
 
   return (
-    <div className="relative border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:px-2.5 sm:px-6 sm:py-3.5">
+    <div className="relative bg-[var(--color-surface)] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:px-2.5 sm:px-6 sm:py-3.5">
       {state.error ? (
         <div className="mb-3">
           <Alert tone="danger">{state.error}</Alert>

@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { channelMessagePreview, decideReplyWindow, validateChannelText, type ChannelAttachment } from "@support-automation/shared";
+import { channelMessagePreview, decideReplyWindow, FAILED_REPLY_MAX_MANUAL_RETRIES, redactText, validateChannelText, type ChannelAttachment } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { connectionProblem } from "@/server/channels/inbox";
@@ -107,22 +107,61 @@ export async function queueChannelReply(input: { conversationId: string; text: s
  * reached the customer and a retry is safe. An UNKNOWN one may have arrived, so it is only retried
  * when the person confirms they checked — the composer asks first.
  */
-export async function retryChannelReply(input: { messageId: string; confirmedUnknown: boolean; now?: Date }): Promise<void> {
+export async function retryChannelReply(input: {
+  messageId: string;
+  confirmedUnknown: boolean;
+  now?: Date;
+  /** Who asked; recorded in the Failed Replies history (FAILED_REPLIES.md) whichever page they used. */
+  actor?: { userId: string; username: string } | null;
+  note?: string | null;
+}): Promise<void> {
   const now = input.now ?? new Date();
   const message = await prisma.channelMessage.findUnique({
     where: { id: input.messageId },
-    select: { id: true, direction: true, senderType: true, deliveryStatus: true, conversationId: true },
+    select: { id: true, projectId: true, direction: true, senderType: true, deliveryStatus: true, conversationId: true, lastError: true, manualRetryCount: true },
   });
   if (!message || message.direction !== "OUTBOUND" || message.senderType === "BUSINESS") throw new ChannelReplyError("That message cannot be sent again.");
   if (message.deliveryStatus !== "FAILED" && message.deliveryStatus !== "UNKNOWN") throw new ChannelReplyError("Only a reply that failed or could not be confirmed can be sent again.");
   if (message.deliveryStatus === "UNKNOWN" && !input.confirmedUnknown) {
     throw new ChannelReplyError("It is not known whether this reply arrived. Check the conversation in the provider's app first, then confirm to send it again.");
   }
-  const updated = await prisma.channelMessage.updateMany({
-    where: { id: message.id, deliveryStatus: message.deliveryStatus },
-    data: { deliveryStatus: "QUEUED", attempts: 0, nextAttemptAt: null, failedAt: null, lastError: null, sendingStartedAt: null },
+  if (message.manualRetryCount >= FAILED_REPLY_MAX_MANUAL_RETRIES) {
+    throw new ChannelReplyError(`This reply has been sent again ${FAILED_REPLY_MAX_MANUAL_RETRIES} times. Close it on Failed Replies, or answer the customer another way.`);
+  }
+  // The conditional update and its history row land together, or neither does.
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.channelMessage.updateMany({
+      where: { id: message.id, deliveryStatus: message.deliveryStatus, manualRetryCount: message.manualRetryCount },
+      data: {
+        deliveryStatus: "QUEUED",
+        attempts: 0,
+        nextAttemptAt: null,
+        failedAt: null,
+        lastError: null,
+        sendingStartedAt: null,
+        manualRetryCount: { increment: 1 },
+        lastManualRetryAt: now,
+        replyResolution: null,
+        replyResolvedAt: null,
+        replyResolvedById: null,
+        replyResolutionNote: null,
+      },
+    });
+    if (updated.count === 0) throw new ChannelReplyError("That reply changed meanwhile. Reload to see where it is.");
+    await tx.failedReplyAction.create({
+      data: {
+        projectId: message.projectId,
+        channelMessageId: message.id,
+        action: "RETRY",
+        fromStatus: message.deliveryStatus ?? "UNKNOWN",
+        failureReason: message.lastError ? redactText(message.lastError).slice(0, 1000) : null,
+        confirmedUncertain: message.deliveryStatus === "UNKNOWN" && input.confirmedUnknown,
+        note: input.note?.trim().slice(0, 300) || null,
+        actorUserId: input.actor?.userId ?? null,
+        actorUsername: input.actor?.username ?? null,
+      },
+    });
   });
-  if (updated.count === 0) throw new ChannelReplyError("That reply changed meanwhile. Reload to see where it is.");
   await prisma.channelConversation.update({ where: { id: message.conversationId }, data: { updatedAt: now } });
 }
 

@@ -204,8 +204,12 @@ describe("Unanswered Groups", () => {
     expect((await f({ sender: "nobody-like-this" })).total).toBe(0);
     expect((await f({ waitingMin: "60" })).total).toBe(2);
     expect((await f({ minMessages: "2" })).total).toBe(2);
-    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date());
-    expect((await f({ dateFrom: today, dateTo: today })).total).toBeGreaterThanOrEqual(1);
+    // The day the waits started on, never "today": just after Dhaka midnight these waits are on yesterday's date.
+    const dhakaDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(d);
+    const waitDay = dhakaDay(ago(30));
+    expect((await f({ dateFrom: waitDay, dateTo: waitDay })).total).toBeGreaterThanOrEqual(1);
+    const longAgo = dhakaDay(ago(5 * 1440));
+    expect((await f({ dateFrom: longAgo, dateTo: longAgo })).total).toBe(0);
   });
 
   it("sorts by newest, by message count, by group and by account", async () => {

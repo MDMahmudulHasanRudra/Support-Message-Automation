@@ -1,6 +1,7 @@
 import { prisma } from "../db.js";
 import { createSenderResolver, type SenderResolution } from "@support-automation/shared";
 import { countMetric } from "../health/metrics.js";
+import { logRef } from "../logging/logRef.js";
 
 /**
  * Which ACTIVE roster member sent a message — the live pipeline's reading of the ONE identity rule
@@ -49,7 +50,7 @@ export async function resolveTeamSender(senderPhone: string, senderJid?: string 
     if (!reportedConflicts.has(key)) {
       reportedConflicts.add(key);
       console.warn(
-        `[identity] ${resolution.status}: sender ${senderJid ?? senderPhone} matches team members ${resolution.candidateIds.join(", ")} — ` +
+        `[identity] ${resolution.status}: sender ${logRef(senderJid ?? senderPhone)} matches team members ${resolution.candidateIds.join(", ")} — ` +
           "treated as staff, credited to nobody until the roster is corrected (Team Members → Identity check).",
       );
     }

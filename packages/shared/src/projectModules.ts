@@ -312,6 +312,42 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: [],
     documentation: "INBOX_WORKSPACE.md",
   },
+  UNIFIED_INBOX_V3: {
+    category: "Support",
+    benefits: ["Open, Pending, Snoozed and Resolved on every conversation", "Snooze with automatic reopen", "Assign WhatsApp conversations to a person or a Team"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "The status controls sit beside a conversation in WhatsApp Chat or All Conversations." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Statuses, snoozes and assignments are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "INBOX_WORKSPACE.md",
+  },
+  CSAT_SURVEYS: {
+    category: "Support",
+    benefits: ["\"How did we do?\" after every resolved conversation", "CSAT score, response rate and average per agent and channel"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["UNIFIED_INBOX_V3"], why: "A survey is asked when a conversation is Resolved, which is an Inbox V3 status." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Surveys and answers are kept. " + KEPT,
+    setupSteps: ["Choose the channels and the question under Settings → Satisfaction surveys"],
+    documentation: "CSAT.md",
+  },
+  AUTO_ROUTING: {
+    category: "Support",
+    benefits: ["New conversations reach one person without anyone sharing them out", "Only people on duty, with room, who can reply"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["UNIFIED_INBOX_V3"], why: "Routing assigns conversations through Inbox V3's assignment and status." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Assignments already made are kept. " + KEPT,
+    setupSteps: ["Settings → Automatic routing: choose the conversations, the Teams or people, and the method"],
+    documentation: "AUTO_ROUTING.md",
+  },
   PRODUCT_CATALOG: {
     category: "Commerce",
     benefits: ["One catalogue of products, variants and prices", "Stock that moves with every order, with its history"],
@@ -416,6 +452,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     dataWhenOff: "Drafts, scheduled posts, history and the connection are kept. " + KEPT,
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
+  },
+  FOLLOW_UPS: {
+    category: "Support",
+    benefits: ["Call-backs, visits and promised replies with a due date and an owner", "Overdue and due-today reminders inside the app", "Created from a conversation or a client, and kept when the chat is resolved"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "A follow-up is usually about a conversation, and is created from its side panel." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Follow-ups and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "FOLLOW_UPS.md",
   },
   AI_COPILOT: {
     category: "AI",
@@ -587,6 +635,13 @@ export interface ModuleEntitlement {
   approvedFeatures: readonly string[];
 }
 
+/**
+ * The switch for both gates below. Off for now at the owner's request ("allow all, we lock it later"): every module can
+ * be switched on, with no platform approval and no plan limit. To lock again, set NEXT_PUBLIC_MODULE_LOCKS=on at
+ * build time. A hard dependency is still added automatically, because the module cannot work without it.
+ */
+export const MODULE_LOCKS_ENFORCED = typeof process !== "undefined" && process.env.NEXT_PUBLIC_MODULE_LOCKS === "on";
+
 /** The modules that need platform approval before a customer may switch them on. */
 export const APPROVAL_REQUIRED_MODULES: readonly string[] = PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key);
 
@@ -604,6 +659,7 @@ export const TEMPLATE_ENTITLEMENT: ModuleEntitlement = { restricted: false, allo
 export function moduleEntitled(entitlement: ModuleEntitlement, key: string): boolean {
   const def = MODULE_BY_KEY.get(key);
   if (!def) return false;
+  if (!MODULE_LOCKS_ENFORCED) return true;
   if (def.manualOnly) return entitlement.approvedFeatures.includes(key);
   if (!entitlement.restricted) return true;
   return entitlement.allowedFeatures.includes(key);

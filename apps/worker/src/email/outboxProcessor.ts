@@ -1,10 +1,10 @@
 import { decryptSecret } from "@support-automation/db";
 import { EMAIL_MAX_ATTEMPTS, emailRetryDelayMs, headerSafe, type SmtpFailure } from "@support-automation/shared";
 import { trackTick } from "../lifecycle.js";
-import { prisma } from "../db.js";
+import { platformPrisma, prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
-import { forEachProject } from "../project/context.js";
+import { currentProjectId, forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { checkHostIsAllowed, resolveHostAddresses, sendWithNodemailer, type HostResolver, type SmtpSender } from "./smtpTransport.js";
 
@@ -61,30 +61,64 @@ async function recoverStuckSends(now: Date): Promise<void> {
   });
 }
 
+/** What counts toward a project's sending limits: every message that was, or may have been, handed to SMTP. */
+const COUNTED_STATUSES = ["SENDING", "ACCEPTED", "UNKNOWN"] as const;
+
+/**
+ * Claims the oldest due message of the current project: QUEUED → SENDING, attempts + 1. Null when nothing
+ * is due or a limit is reached (the row stays QUEUED); `won: false` when the conditional update lost.
+ *
+ * FOR UPDATE SKIP LOCKED (P1-13), like the channel queue: SMTP needs no browser, so a second worker could
+ * share this queue; a row another claimer holds is skipped, never sent twice. The conditional update stays.
+ *
+ * The limits are checked INSIDE the claim, under a per-project advisory lock. Checked outside, two claimers
+ * could both read "one below the limit" and both claim, so the limit could be passed once per extra claimer.
+ * Under the lock the second claimer counts after the first one's SENDING row is committed. The lock is held
+ * for two counts and one update, never for the send, and only while something is due.
+ */
+export async function claimNextEmail(now: Date, limits: { maxPerMinute: number; maxPerDay: number } | null): Promise<{ id: string; won: boolean } | null> {
+  // Anything due at all? A plain indexed read, so an idle tick takes no lock and runs no count.
+  const due = await prisma.emailOutbox.findFirst({
+    where: { status: "QUEUED", OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+    select: { id: true },
+  });
+  if (!due) return null;
+
+  const projectId = currentProjectId();
+  return platformPrisma.$transaction(async (tx) => {
+    // The project's own ceilings: leave the queue untouched rather than exceed either.
+    if (limits) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`email-outbox-rate:${projectId}`})::bigint)`;
+      const counted = { projectId, status: { in: [...COUNTED_STATUSES] } };
+      const [lastMinute, lastDay] = await Promise.all([
+        tx.emailOutbox.count({ where: { ...counted, sendingStartedAt: { gte: new Date(now.getTime() - 60_000) } } }),
+        tx.emailOutbox.count({ where: { ...counted, sendingStartedAt: { gte: new Date(now.getTime() - 24 * 60 * 60_000) } } }),
+      ]);
+      if (lastMinute >= limits.maxPerMinute || lastDay >= limits.maxPerDay) return null;
+    }
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT e.id FROM "EmailOutbox" e
+      WHERE e."projectId" = ${projectId} AND e.status = 'QUEUED' AND (e."nextAttemptAt" IS NULL OR e."nextAttemptAt" <= ${now})
+      ORDER BY e."createdAt" ASC, e.id ASC
+      LIMIT 1
+      FOR UPDATE OF e SKIP LOCKED`;
+    const found = rows[0];
+    if (!found) return null;
+    const claim = await tx.emailOutbox.updateMany({
+      where: { id: found.id, projectId, status: "QUEUED" },
+      data: { status: "SENDING", sendingStartedAt: now, attempts: { increment: 1 } },
+    });
+    return { id: found.id, won: claim.count === 1 };
+  });
+}
+
 /** Claim and send the oldest due message of the current project. False when there was nothing to do. */
 export async function sendNextQueued(now: Date = new Date(), send: SmtpSender = sendWithNodemailer, resolve: HostResolver = resolveHostAddresses): Promise<boolean> {
   const settings = await prisma.emailSettings.findFirst();
-  const candidate = await prisma.emailOutbox.findFirst({
-    where: { status: "QUEUED", OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
-  if (!candidate) return false;
-
-  // The project's own ceilings: leave the row queued rather than exceed either.
-  if (settings) {
-    const [lastMinute, lastDay] = await Promise.all([
-      prisma.emailOutbox.count({ where: { status: { in: ["SENDING", "ACCEPTED", "UNKNOWN"] }, sendingStartedAt: { gte: new Date(now.getTime() - 60_000) } } }),
-      prisma.emailOutbox.count({ where: { status: { in: ["SENDING", "ACCEPTED", "UNKNOWN"] }, sendingStartedAt: { gte: new Date(now.getTime() - 24 * 60 * 60_000) } } }),
-    ]);
-    if (lastMinute >= settings.maxPerMinute || lastDay >= settings.maxPerDay) return false;
-  }
-
-  const claim = await prisma.emailOutbox.updateMany({
-    where: { id: candidate.id, status: "QUEUED" },
-    data: { status: "SENDING", sendingStartedAt: now, attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return true;
+  const claimed = await claimNextEmail(now, settings);
+  if (!claimed) return false;
+  if (!claimed.won) return true;
+  const candidate = { id: claimed.id };
 
   const message = await prisma.emailOutbox.findUniqueOrThrow({ where: { id: candidate.id } });
   const fail = (reason: string) => finish(message.id, { status: "FAILED", lastError: reason, nextAttemptAt: null });

@@ -12,7 +12,7 @@ import type { InboxChannel } from "@/server/channels/inbox";
  */
 export const CHANNEL_PRESENTATION: Record<InboxChannel, { label: string; short: string; icon: LucideIcon; tint: string }> = {
   WHATSAPP: { label: LEGACY_WHATSAPP_LABEL, short: LEGACY_WHATSAPP_LABEL, icon: MessageCircle, tint: "var(--chart-3)" },
-  MESSENGER: { label: "Facebook Messenger", short: "Messenger", icon: MessagesSquare, tint: "var(--chart-1)" },
+  MESSENGER: { label: "Facebook Messenger", short: "Messenger", icon: MessagesSquare, tint: "var(--chart-6)" },
   INSTAGRAM: { label: "Instagram DM", short: "Instagram", icon: Camera, tint: "var(--chart-5)" },
   TELEGRAM: { label: "Telegram", short: "Telegram", icon: Send, tint: "var(--chart-2)" },
   WEBCHAT: { label: "Website chat", short: "Website", icon: Globe, tint: "var(--chart-4)" },

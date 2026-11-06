@@ -51,7 +51,9 @@ describe("who sees which card", () => {
     expect(hrefs).toContain("/reports/response-sla");
     expect(hrefs).not.toContain("/reports/duty-workload");
     expect(hrefs).not.toContain("/team-management/attendance");
-    expect(hrefs).toHaveLength(18);
+    // 18 + Customer Satisfaction (CSAT.md), its own page under the same key.
+    expect(hrefs).toContain("/reports/csat");
+    expect(hrefs).toHaveLength(19);
     expect(hrefs).not.toContain("/reports/whatsapp-user-activity");
   });
 
@@ -65,7 +67,12 @@ describe("who sees which card", () => {
 
   it("a feature switched off removes its reports, and only those", () => {
     const off = reportPagesFor(ALL_KEYS, new Set(["TEAM_REPORTS"])).map((p) => p.href);
-    expect(off.some((href) => href.startsWith("/reports/") && href !== "/reports/duty-workload")).toBe(false);
+    expect(off.some((href) => href.startsWith("/reports/") && href !== "/reports/duty-workload" && href !== "/reports/csat")).toBe(false);
+    // Customer Satisfaction belongs to CSAT_SURVEYS, not to the Team Report family.
+    expect(off).toContain("/reports/csat");
+    expect(featureForPath("/reports/csat")).toBe("CSAT_SURVEYS");
+    expect(reportPagesFor(ALL_KEYS, new Set(["CSAT_SURVEYS"])).map((p) => p.href)).not.toContain("/reports/csat");
+    expect(navPermissionFor("/reports/csat")).toBe("support_activity.view");
     expect(off).toContain("/reports/duty-workload");
     expect(off).toContain("/support-activity/reports");
     const teamOff = reportPagesFor(ALL_KEYS, new Set(["TEAM_MANAGEMENT"])).map((p) => p.href);

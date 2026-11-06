@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useEffect, useRef, useState } from "react";
 
@@ -38,11 +38,10 @@ export function MonitoringPill({ monitored, aiOn }: { monitored: boolean; aiOn: 
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="flex h-9 items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-foreground)] transition-colors hover:border-[var(--color-border-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+        title={monitored ? "Monitored" : "Not monitored"} className="flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-2 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
       >
         <span className={`size-2 rounded-full ${monitored ? "bg-[var(--wa-green)]" : "bg-[var(--color-warning)]"}`} aria-hidden />
-        {monitored ? "Monitored" : "Not monitored"}
-        <ChevronDown className={`size-3.5 text-[color:var(--color-muted-foreground)] transition-transform ${open ? "rotate-180" : ""}`} aria-hidden />
+        <span className="max-[1700px]:sr-only">{monitored ? "Monitored" : "Not monitored"}</span>
       </button>
       {open ? (
         <div role="dialog" aria-label="Monitoring" className="absolute right-0 top-full z-40 mt-1.5 w-72 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-raised)] p-3 text-[12.5px] leading-relaxed shadow-[var(--shadow-lg)] animate-scale-in">

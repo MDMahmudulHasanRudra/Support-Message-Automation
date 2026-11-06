@@ -6,6 +6,7 @@ import { getAiSettings } from "../ai/settings.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 import { findRelevantKnowledge, type KnowledgeSnippet } from "../aiFallback/knowledgeContext.js";
 import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
+import { findClientAccountGrounding } from "../aiFallback/clientAccountContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import { buildAnswerPlan, renderAnswerPlan } from "../aiFallback/answerPlan.js";
 import { formatConversationTranscript, type ConversationTurn } from "../aiFallback/conversationContext.js";
@@ -171,8 +172,28 @@ async function answer(draftId: string, attempt: number, clientOverride?: AiClien
     switches: { ...settings, commerceHandoverRequests: false },
     customerPhone: personalChat ? async () => personalChat : null,
   });
+  // The customer's own account (AI_CLIENT_ANSWERS.md): only in a one-to-one WhatsApp chat, and only what the
+  // agent who asked may see — `clients.view` for the package and expiry, `clients.view_billing` as well for
+  // dues — as the web's own permission check decided when the request was made (AiDraft.client*Allowed). A
+  // request to pay or change a package is still drafted: the agent sends it, or not.
+  const account = await findClientAccountGrounding({
+    text: conversation.customerMessage,
+    switches: settings,
+    customer: draft.accountId && draft.chatId
+      ? {
+          kind: "WHATSAPP",
+          accountId: draft.accountId,
+          chatId: draft.chatId,
+          isGroup: draft.chatId.endsWith("@g.us"),
+          verifiedPhone: async () => personalChat,
+        }
+      : { kind: "UNVERIFIABLE" },
+    viewer: { account: draft.clientAccountAllowed, dues: draft.clientDuesAllowed },
+    handoverRequests: false,
+  });
   const knowledge: KnowledgeSnippet[] = [
     ...commerce.snippets,
+    ...account.snippets,
     ...(await findRelevantKnowledge(
       conversation.customerMessage,
       { groupId: conversation.groupId, accountId: draft.accountId },
@@ -230,6 +251,7 @@ async function answer(draftId: string, attempt: number, clientOverride?: AiClien
     conversation: conversation.turns.filter((_, i) => i !== conversation.customerIndex),
     planGuidance: renderAnswerPlan(buildAnswerPlan(conversation.customerMessage, knowledge)),
     commerceRules: commerce.rules,
+    accountRules: account.rules,
   });
   const completion = await client.complete(prompt);
   const parsed = parseFallbackResponse(completion.text);

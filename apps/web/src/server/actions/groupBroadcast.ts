@@ -254,9 +254,11 @@ export async function retryFailedBroadcastMessages(jobId: string): Promise<void>
     return;
   }
 
+  // Never a row whose delivery is uncertain: the group may already have it, and a bulk retry is no
+  // place to decide that (FAILED_REPLIES.md). Those stay FAILED for a person to check.
   const result = await prisma.outboundMessage.updateMany({
-    where: { broadcastJobId: jobId, status: "FAILED" },
-    data: { status: "PENDING", attemptCount: 0, failureReason: null, scheduledAt: new Date() },
+    where: { broadcastJobId: jobId, status: "FAILED", deliveryUncertain: false },
+    data: { status: "PENDING", attemptCount: 0, failureReason: null, scheduledAt: new Date(), sendStartedAt: null },
   });
 
   if (result.count > 0 && job.status === "COMPLETED") {

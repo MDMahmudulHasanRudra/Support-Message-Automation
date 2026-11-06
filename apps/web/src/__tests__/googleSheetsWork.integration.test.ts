@@ -394,8 +394,9 @@ describe("2. who changes it, and how a save behaves (Phase 3 + 6)", () => {
     expect(row).toMatchObject({ kind: "WORK", userId: people.borhan.userId, teamMemberId: team.borhan, memberRole: "EDITOR", googleAccountId: accountId, range: "'Follow-up'!B2:C3", itemCount: 2 });
     // The account belongs to Rudra; Rudra did nothing.
     expect(row.userId).not.toBe(people.rudra.userId);
-    // No cell value is stored anywhere on the row.
-    expect(JSON.stringify(row)).not.toMatch(/650|B2\*2/);
+    // No cell value is stored anywhere on the row. Ids and timestamps are left out: they are random, and one
+    // that happened to hold "650" used to fail this check.
+    expect(JSON.stringify(row, (key, value) => (key === "id" || /(Id|At)$/.test(key) ? undefined : value))).not.toMatch(/650|B2\*2/);
   });
 
   it("a cell changed in Google since it was loaded is reported with what it holds now, and NOT overwritten", async () => {

@@ -40,7 +40,7 @@ const CUSTOMER_TABLES = [
   "SystemLog",
 ] as const;
 
-/** A table's rows for the purge, by how the table names its owner. */
+/** A table's rows for the customer purge, by how the table names its owner. */
 function ownerCondition(table: string, projectTables: Set<string>): string {
   if (table === "Project") return `"id" = ANY($1::text[])`;
   const byProject = projectTables.has(table);
@@ -137,13 +137,19 @@ export async function restoreCustomerData(customerId: string): Promise<Refusal |
   });
 }
 
-/** Every table that holds a workspace's rows, and the keys that decide the order to empty them in. */
-async function purgePlan(tx: Prisma.TransactionClient): Promise<{ order: string[]; projectTables: Set<string> } | Refusal> {
+/**
+ * Every table that holds a workspace's rows (plus `extraTables`), and the keys that decide the order to empty
+ * them in. Shared with deleting one workspace (`server/projectDeletion.ts`).
+ */
+export async function workspacePurgePlan(
+  tx: Prisma.TransactionClient,
+  extraTables: readonly string[],
+): Promise<{ order: string[]; projectTables: Set<string> } | Refusal> {
   const columns = await tx.$queryRaw<Array<{ table_name: string }>>`
     SELECT "table_name" FROM information_schema.columns
     WHERE "table_schema" = current_schema() AND "column_name" = 'projectId'`;
   const projectTables = new Set(columns.map((c) => c.table_name));
-  const tables = [...new Set([...projectTables, ...CUSTOMER_TABLES, "Project"])];
+  const tables = [...new Set([...projectTables, ...extraTables, "Project"])];
   const unsafe = tables.find((t) => !SAFE_IDENTIFIER.test(t));
   if (unsafe) return { error: `Unexpected table name "${unsafe}". Nothing was deleted.` };
   const keys = await tx.$queryRaw<Array<{ child: string; parent: string; blocking: boolean }>>`
@@ -186,7 +192,7 @@ export async function purgeCustomerData(
       // share lock on the row), so nothing new can land between one table being emptied and the next.
       const projects = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "Project" WHERE "customerId" = ${customerId} FOR UPDATE`;
       const projectIds = projects.map((p) => p.id);
-      const plan = await purgePlan(tx);
+      const plan = await workspacePurgePlan(tx, CUSTOMER_TABLES);
       if ("error" in plan) return plan;
 
       const deleted: Record<string, number> = {};
@@ -203,15 +209,19 @@ export async function purgeCustomerData(
     { timeout: 15 * 60_000, maxWait: 30_000 },
   );
   if ("error" in result) return result;
-  return { ...result, mediaRemoved: await removeMediaFiles(result.projectIds) };
+  return { ...result, mediaRemoved: await removeWorkspaceMediaFiles(result.projectIds) };
 }
 
+/** Every media-volume area that keeps a workspace's files under `<area>/<projectId>/`. */
+const WORKSPACE_MEDIA_AREAS = ["whatsapp", "outbound", "webchat", "webchat-brand", "social"] as const;
+
 /**
- * The workspaces' files on the media volume (MEDIA_STORAGE.md: `whatsapp/<projectId>/…` and
- * `outbound/<projectId>/…`). After the database commit, so a failed delete never leaves rows pointing at
- * missing files. Best effort: false when storage is not local or a folder could not be removed.
+ * The workspaces' files on the media volume (MEDIA_STORAGE.md: `whatsapp/<projectId>/…`, `outbound/<projectId>/…`,
+ * and the website chat's and Social Studio's own areas). After the database commit, so a failed delete never
+ * leaves rows pointing at missing files. Best effort: false when storage is not local or a folder could not be
+ * removed.
  */
-async function removeMediaFiles(projectIds: string[]): Promise<boolean> {
+export async function removeWorkspaceMediaFiles(projectIds: string[]): Promise<boolean> {
   if (projectIds.length === 0) return true;
   const storage = getMediaStorage();
   if (!(storage instanceof LocalMediaStorage)) return false;
@@ -221,9 +231,9 @@ async function removeMediaFiles(projectIds: string[]): Promise<boolean> {
       ok = false;
       continue;
     }
-    for (const area of ["whatsapp", "outbound"]) {
+    for (const area of WORKSPACE_MEDIA_AREAS) {
       try {
-        await rm(path.join(storage.root, area, id), { recursive: true, force: true });
+        await rm(path.join(/*turbopackIgnore: true*/ storage.root, area, id), { recursive: true, force: true });
       } catch (err) {
         console.error(`[platform] could not remove media for a deleted workspace (${area}/${id})`, err);
         ok = false;

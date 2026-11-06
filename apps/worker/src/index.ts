@@ -1,3 +1,4 @@
+import "./logging/installRedaction.js"; // first: every later module's console output is redacted (redact.ts)
 import { checkDatabaseConnection } from "@support-automation/db";
 import { platformPrisma } from "./db.js";
 import type { Prisma } from "@prisma/client";
@@ -13,6 +14,11 @@ import { startGroupAdminPromotionProcessor } from "./queue/groupAdminPromotionPr
 import { createMediaStorageFromEnv } from "@support-automation/media-storage";
 import { startMediaDownloadProcessor } from "./media/mediaDownloadProcessor.js";
 import { startMediaCleanupProcessor } from "./media/mediaCleanupProcessor.js";
+import { startSystemLogRetention } from "./health/systemLogRetention.js";
+import { startBackupWatch } from "./health/backupWatch.js";
+import { startInboxLifecycleProcessor } from "./inbox/lifecycle.js";
+import { startCsatSurveyProcessor } from "./csat/csatSurveys.js";
+import { startAutoRoutingProcessor } from "./routing/autoRouting.js";
 import { startNotificationDispatcher } from "./notifications/dispatcher.js";
 import { TeamsProvider } from "./notifications/TeamsProvider.js";
 import { WhatsAppNotificationProvider } from "./notifications/WhatsAppNotificationProvider.js";
@@ -28,6 +34,7 @@ import { startCollectionWatchdog } from "./health/collectionWatchdog.js";
 import { startGroupRecoveryProcessor } from "./commands/groupRecovery.js";
 import { startMessageReconcileProcessor, startMessageStoreSweepProcessor } from "./pipeline/reconcileRecentMessages.js";
 import { readLoops, recordLoopTick, registerLoop } from "./health/loopLiveness.js";
+import { maybePublishProcessStats } from "./health/serverStatsPublisher.js";
 import { logSystemEvent } from "./logging/logSystemEvent.js";
 import { startEscalationProcessor } from "./escalation/escalationProcessor.js";
 import { startMoodDetectionProcessor } from "./mood/moodProcessor.js";
@@ -196,6 +203,18 @@ async function main() {
     // are set AND an admin enabled the integration, same convention as Conversation Learning above.
     startForgeKnowledgeProcessor(),
     startForgeResearchProcessor(),
+    // System Log retention: OFF unless SYSTEM_LOG_RETENTION_DAYS is set (>= 30); never support-access or platform entries.
+    startSystemLogRetention(),
+    // Backup alerts: emails platform operators when the newest backup failed or the last success is stale (read-only).
+    startBackupWatch(),
+    // Inbox V3: reopens snoozed conversations when their time comes (a no-op unless UNIFIED_INBOX_V3 is on).
+    startInboxLifecycleProcessor(),
+    // Satisfaction surveys (CSAT.md): asks the PENDING surveys a resolution recorded, through each channel's
+    // one send queue. A no-op unless CSAT_SURVEYS is on and a channel is switched on in Settings.
+    startCsatSurveyProcessor(),
+    // Automatic routing: gives still-unassigned open conversations to an eligible person (a no-op unless
+    // AUTO_ROUTING and UNIFIED_INBOX_V3 are on and the project switched routing on).
+    startAutoRoutingProcessor(),
     // Google Sheets (GOOGLE_SHEETS.md, Phase 8): who changed a MONITORED sheet in Google directly.
     // A no-op until the server has an OAuth client and a project has the feature on.
     startGoogleExternalActivityProcessor(),
@@ -318,6 +337,10 @@ function startHeartbeat(state: WorkerHealthState, registry: ProviderRegistry): N
             create: { id: "global", loops: (readLoops() as unknown as Prisma.InputJsonValue), startedAt: new Date(state.startedAt) },
           })
           .catch((err) => console.error("[worker] loop-liveness snapshot failed", err));
+
+        // Memory, load, browsers and disk for Platform → Monitoring: once a minute, in the background, on
+        // its own guard, so it can never hold this heartbeat up (health/serverStatsPublisher.ts).
+        maybePublishProcessStats(state.startedAt);
       }
     })()
       .catch((err) => console.error("[worker] heartbeat failed", err))

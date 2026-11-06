@@ -74,8 +74,10 @@ platform's own billing for it is kept:
 
 The customer page then shows only that history.
 
-**Media files.** After the commit, `whatsapp/<projectId>/` and `outbound/<projectId>/` are removed
-from the media volume. This is best effort, and a failure is reported.
+**Media files.** After the commit, each workspace's `whatsapp/`, `outbound/`, `webchat/`,
+`webchat-brand/` and `social/` folders (`<area>/<projectId>/`) are removed from the media volume.
+This is best effort, and a failure is reported. One workspace alone can be deleted from the Main
+Admin portal (PROJECT_DELETION.md).
 
 **What it does not erase:** the WhatsApp session profiles on the worker's own volume. Their accounts
 no longer exist, so the worker releases them (`releaseDeletedAccounts`), but their folders remain

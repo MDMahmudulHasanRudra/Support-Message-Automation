@@ -123,9 +123,9 @@ export function AreaChart({
         {data.map((point, index) => (
           <span
             key={point.label}
-            className="flex-1 text-center text-[10px] text-[color:var(--color-muted-foreground)]"
+            className="min-w-0 flex-1 overflow-visible whitespace-nowrap text-center text-[11px] text-[color:var(--color-muted-foreground)]"
           >
-            {index % 2 === 1 ? point.label : " "}
+            <span className={index % 4 === 1 || index === data.length - 1 ? undefined : "max-sm:invisible"}>{index % 2 === 1 ? point.label : " "}</span>
           </span>
         ))}
       </div>

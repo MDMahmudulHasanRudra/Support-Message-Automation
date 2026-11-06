@@ -1,13 +1,20 @@
 import { prisma } from "@/server/db";
+import { loadConversationCsat, type ConversationCsatView } from "@/server/csat";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { activeProjectId } from "@/server/projectContext";
 import { hasPermission, userHoldsKey } from "@/server/permissions";
 import type { Session } from "@/server/auth";
 import {
   conversationRefColumns,
+  CONVERSATION_STATUS_LABELS,
+  isConversationStatus,
   type ConversationPriorityValue,
   type ConversationRef,
+  type ConversationStatus,
+  isAutoRoutingContext,
 } from "@support-automation/shared";
+import { loadLifecycle } from "@/server/conversationLifecycle";
+import { loadConversationFollowUps, type ConversationFollowUp } from "@/server/followUps";
 
 /**
  * The inbox workspace side panel (INBOX_WORKSPACE.md): internal notes, priority / tags, Team
@@ -27,6 +34,29 @@ export interface WorkspaceAccess {
   canWrite: boolean;
   collaboration: boolean;
   copilot: boolean;
+  /** Inbox V3 status, snooze and WhatsApp assignment (UNIFIED_INBOX_V3). */
+  lifecycle: boolean;
+  /** This conversation's follow-ups (FOLLOW_UPS.md). */
+  followUps: boolean;
+}
+
+/**
+ * Whether the conversation a ref names exists in THIS project and its module is on: a WhatsApp chat on one
+ * of the project's accounts (a group row, or a stored personal message), or a channel conversation. The
+ * project-scoped client makes another project's account or conversation simply not found.
+ */
+export async function conversationInProject(ref: ConversationRef, disabled: ReadonlySet<string>): Promise<boolean> {
+  if (ref.kind === "whatsapp") {
+    if (disabled.has("WHATSAPP_CHAT")) return false;
+    const account = await prisma.whatsAppAccount.findFirst({ where: { id: ref.accountId }, select: { id: true } });
+    if (!account) return false;
+    const exists = ref.chatId.endsWith("@g.us")
+      ? await prisma.whatsAppGroup.findFirst({ where: { accountId: ref.accountId, whatsappGroupId: ref.chatId }, select: { id: true } })
+      : await prisma.message.findFirst({ where: { accountId: ref.accountId, chatId: ref.chatId, groupId: null }, select: { id: true } });
+    return exists !== null;
+  }
+  if (disabled.has("OMNICHANNEL")) return false;
+  return (await prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { id: true } })) !== null;
 }
 
 /** Null when the conversation does not exist in this project or the viewer may not read it. */
@@ -34,25 +64,14 @@ export async function resolveWorkspaceAccess(session: Session, ref: Conversation
   const disabled = await activeDisabledFeatures();
   const collaboration = !disabled.has("INBOX_COLLABORATION");
   const copilot = !disabled.has("AI_COPILOT");
-  if (!collaboration && !copilot) return null;
+  const lifecycle = !disabled.has("UNIFIED_INBOX_V3");
+  const followUps = !disabled.has("FOLLOW_UPS");
+  if (!collaboration && !copilot && !lifecycle && !followUps) return null;
 
-  if (ref.kind === "whatsapp") {
-    if (disabled.has("WHATSAPP_CHAT")) return null;
-    const account = await prisma.whatsAppAccount.findFirst({ where: { id: ref.accountId }, select: { id: true } });
-    if (!account) return null;
-    const exists = ref.chatId.endsWith("@g.us")
-      ? await prisma.whatsAppGroup.findFirst({ where: { accountId: ref.accountId, whatsappGroupId: ref.chatId }, select: { id: true } })
-      : await prisma.message.findFirst({ where: { accountId: ref.accountId, chatId: ref.chatId, groupId: null }, select: { id: true } });
-    if (!exists) return null;
-    if (!(await hasPermission(session, "messages.view"))) return null;
-    return { ref, canRead: true, canWrite: await hasPermission(session, "messages.reply"), collaboration, copilot };
-  }
-
-  if (disabled.has("OMNICHANNEL")) return null;
-  const conversation = await prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { id: true } });
-  if (!conversation) return null;
+  if (!(await conversationInProject(ref, disabled))) return null;
   if (!(await hasPermission(session, "messages.view"))) return null;
-  return { ref, canRead: true, canWrite: await hasPermission(session, "conversations.reply"), collaboration, copilot };
+  const canWrite = await hasPermission(session, ref.kind === "whatsapp" ? "messages.reply" : "conversations.reply");
+  return { ref, canRead: true, canWrite, collaboration, copilot, lifecycle, followUps };
 }
 
 /** The `where` that selects rows about exactly this conversation. */
@@ -111,9 +130,15 @@ export interface WorkspaceData {
   /** Channel conversations: the person handling it. */
   assignedUserId: string | null;
   /** Channel conversations: assignment / status history, newest first. */
-  history: { id: string; kind: string; from: string | null; to: string | null; actorName: string | null; at: string }[];
+  history: { id: string; kind: string; from: string | null; to: string | null; actorName: string | null; /** Given by automatic routing (AUTO_ROUTING.md). */ auto: boolean; at: string }[];
   /** WhatsApp groups: the owner set on the Groups page (read here, changed there). */
   groupOwner: { name: string; groupName: string } | null;
+  /** This conversation's open follow-ups (FOLLOW_UPS). Null while the feature is off. */
+  followUps: ConversationFollowUp[] | null;
+  /** Inbox V3 (UNIFIED_INBOX_V3): the conversation status. Null while the feature is off. */
+  lifecycle: { status: ConversationStatus; snoozedUntil: string | null; statusChangedAt: string | null } | null;
+  /** Satisfaction surveys of this conversation, newest first (CSAT.md). Empty while CSAT_SURVEYS is off. */
+  csat: ConversationCsatView[];
   viewerId: string;
 }
 
@@ -214,27 +239,35 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     ref.kind === "channel" && access.collaboration
       ? prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { assignedTeamId: true, assignedUserId: true } })
       : null,
-    ref.kind === "channel" && access.collaboration ? prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }) : null,
+    (ref.kind === "channel" && access.collaboration) || access.lifecycle ? prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }) : null,
   ]);
-  const [events, group] = await Promise.all([
-    ref.kind === "channel" && access.collaboration
+  const [events, group, lifecycle, lifecyclePeople, csat] = await Promise.all([
+    access.collaboration || access.lifecycle
       ? prisma.conversationEvent.findMany({
-          where: { channelConversationId: ref.conversationId },
+          where: ref.kind === "channel" ? { channelConversationId: ref.conversationId } : { accountId: ref.accountId, chatId: ref.chatId },
           orderBy: { createdAt: "desc" },
           take: 20,
-          select: { id: true, kind: true, fromValue: true, toValue: true, createdAt: true, actor: { select: { name: true } } },
+          select: { id: true, kind: true, fromValue: true, toValue: true, context: true, createdAt: true, actor: { select: { name: true } } },
         })
       : [],
     ref.kind === "whatsapp" && ref.chatId.endsWith("@g.us") && access.collaboration
       ? prisma.whatsAppGroup.findFirst({ where: { accountId: ref.accountId, whatsappGroupId: ref.chatId }, select: { id: true, name: true, assignedTeamMember: { select: { name: true } } } })
       : null,
+    access.lifecycle ? loadLifecycle(ref) : null,
+    access.lifecycle && !access.collaboration ? mentionablePeople(session) : null,
+    loadConversationCsat(ref, access.canRead),
   ]);
+  const followUps = access.followUps ? await loadConversationFollowUps(ref) : null;
+  const assignable = lifecyclePeople ?? people;
   // Names for the ids history refers to (people and Teams of this project).
-  const names = new Map<string, string>([...people.map((p) => [p.id, p.name] as const), ...(teams ?? []).map((t) => [t.id, t.name] as const)]);
-  const nameOf = (kind: string, v: string | null) => (v === null ? null : kind === "STATUS" ? (v === "CLOSED" ? "Closed" : "Open") : (names.get(v) ?? "someone no longer here"));
+  const names = new Map<string, string>([...assignable.map((p) => [p.id, p.name] as const), ...(teams ?? []).map((t) => [t.id, t.name] as const)]);
+  // Status kinds carry a status (older rows: OPEN / CLOSED; V3 rows: the lifecycle names); the rest carry ids.
+  const STATUS_KINDS = new Set(["STATUS", "REOPEN", "PENDING", "RESOLVE", "SNOOZE", "UNSNOOZE"]);
+  const statusName = (v: string) => (v === "CLOSED" ? "Resolved" : isConversationStatus(v) ? CONVERSATION_STATUS_LABELS[v] : v);
+  const nameOf = (kind: string, v: string | null) => (v === null ? null : STATUS_KINDS.has(kind) ? statusName(v) : (names.get(v) ?? "someone no longer here"));
 
   return {
-    access: { canRead: access.canRead, canWrite: access.canWrite, collaboration: access.collaboration, copilot: access.copilot },
+    access: { canRead: access.canRead, canWrite: access.canWrite, collaboration: access.collaboration, copilot: access.copilot, lifecycle: access.lifecycle, followUps: access.followUps },
     ref,
     priority: label?.priority ?? "NONE",
     tags: label?.tags ?? [],
@@ -248,12 +281,17 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
       createdAt: n.createdAt.toISOString(),
     })),
     drafts,
-    people,
+    people: assignable,
     teams,
-    assignedTeamId: channel?.assignedTeamId ?? null,
-    assignedUserId: channel?.assignedUserId ?? null,
-    history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, at: e.createdAt.toISOString() })),
+    assignedTeamId: lifecycle ? lifecycle.assignedTeamId : (channel?.assignedTeamId ?? null),
+    assignedUserId: lifecycle ? lifecycle.assignedUserId : (channel?.assignedUserId ?? null),
+    history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, auto: isAutoRoutingContext(e.context), at: e.createdAt.toISOString() })),
     groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
+    followUps,
+    lifecycle: lifecycle
+      ? { status: lifecycle.status, snoozedUntil: lifecycle.snoozedUntil?.toISOString() ?? null, statusChangedAt: lifecycle.statusChangedAt?.toISOString() ?? null }
+      : null,
+    csat,
     viewerId: session.userId,
   };
 }

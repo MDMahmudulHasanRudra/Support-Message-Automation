@@ -28,7 +28,13 @@ export interface WebchatVisitorCard {
   lastSeenAt: string;
   typing: boolean;
   /** null = not shown to this viewer (module off or no permission). */
-  clients: Array<{ id: string; name: string; code: string; matchedBy: "email" | "phone"; verified: boolean }> | null;
+  clients: CustomerRecords["clients"];
+  orders: CustomerRecords["orders"];
+}
+
+/** A client or order this customer's identifiers lead to. null = not shown to this viewer (module off or no permission). */
+export interface CustomerRecords {
+  clients: Array<{ id: string; name: string; code: string; matchedBy: "email" | "phone" | "link"; verified: boolean }> | null;
   orders: Array<{ id: string; number: string; status: string; total: string; createdAt: string; matchedBy: "email" | "phone"; verified: boolean }> | null;
 }
 
@@ -52,9 +58,32 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
   const email = visitor.email ? normalizeChannelValue("EMAIL", visitor.email) : null;
   // A phone is stored only with its own valid signature, so it is always verified.
   const phone = visitor.phone ? normalizePhoneNumber(visitor.phone) : null;
+  const { clients, orders } = await lookupCustomerRecords(session, { email, phone, verified });
+
+  return {
+    name: visitor.name,
+    email: visitor.email,
+    phone,
+    verified,
+    pageUrl: visitor.pageUrl,
+    firstSeenAt: visitor.createdAt.toISOString(),
+    lastSeenAt: visitor.lastSeenAt.toISOString(),
+    typing: Boolean(visitor.typingAt && now.getTime() - visitor.typingAt.getTime() < VISITOR_TYPING_MS),
+    clients,
+    orders,
+  };
+}
+
+/**
+ * Clients and orders by email and phone, each only for a viewer who could open that module. The caller says
+ * whether the email can be trusted (a phone reaching here is always one the provider or the site vouched for).
+ */
+export async function lookupCustomerRecords(session: Session, identity: { email: string | null; phone: string | null; verified: boolean }): Promise<CustomerRecords> {
+  const { email, verified } = identity;
+  const phone = identity.phone ? normalizePhoneNumber(identity.phone) : null;
   const disabled = await activeDisabledFeatures();
 
-  let clients: WebchatVisitorCard["clients"] = null;
+  let clients: CustomerRecords["clients"] = null;
   if (!disabled.has("CLIENT_CENTER") && (await hasPermission(session, "clients.view"))) {
     const phoneValue = phone ? normalizeChannelValue("PHONE", phone) : null;
     const or = [
@@ -68,7 +97,7 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
         select: { kind: true, client: { select: { id: true, name: true, code: true } } },
         take: 20,
       });
-      const seen = new Map<string, NonNullable<WebchatVisitorCard["clients"]>[number]>();
+      const seen = new Map<string, NonNullable<CustomerRecords["clients"]>[number]>();
       // A phone match is signed; an email match is only as good as the visitor's identity.
       for (const r of rows.sort((a, b) => Number(a.kind === "EMAIL") - Number(b.kind === "EMAIL"))) {
         if (seen.has(r.client.id)) continue;
@@ -79,7 +108,7 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
     }
   }
 
-  let orders: WebchatVisitorCard["orders"] = null;
+  let orders: CustomerRecords["orders"] = null;
   if (!disabled.has("ORDERS") && (await hasPermission(session, "orders.view"))) {
     orders = [];
     const found = new Map<string, { matchedBy: "email" | "phone"; verified: boolean }>();
@@ -126,16 +155,5 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
     }
   }
 
-  return {
-    name: visitor.name,
-    email: visitor.email,
-    phone,
-    verified,
-    pageUrl: visitor.pageUrl,
-    firstSeenAt: visitor.createdAt.toISOString(),
-    lastSeenAt: visitor.lastSeenAt.toISOString(),
-    typing: Boolean(visitor.typingAt && now.getTime() - visitor.typingAt.getTime() < VISITOR_TYPING_MS),
-    clients,
-    orders,
-  };
+  return { clients, orders };
 }

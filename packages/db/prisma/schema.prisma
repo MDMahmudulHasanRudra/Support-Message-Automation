@@ -630,6 +630,7 @@ model Project {
   sandboxSessionRows                   SandboxSession[]
   sandboxTurnRows                      SandboxTurn[]
   messageRows                          Message[]
+  failedReplyActions                   FailedReplyAction[]
   outboundMessageRows                  OutboundMessage[]
   whatsAppGroupRows                    WhatsAppGroup[]
   automationExecutionRows              AutomationExecution[]
@@ -732,6 +733,14 @@ model Project {
   aiDrafts                             AiDraft[]
   inboxSavedViews                      InboxSavedView[]
   inboxMentions                        InboxMention[]
+  conversationPresence                 ConversationPresence[]
+  whatsAppConversationStates           WhatsAppConversationState[]
+  inboxLifecycleSettings               InboxLifecycleSettings?
+  csatSurveys                          CsatSurvey[]
+  csatSettings                         CsatSettings?
+  followUps                            FollowUp[]
+  followUpEvents                       FollowUpEvent[]
+  routingSettings                      RoutingSettings?
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -964,34 +973,39 @@ model User {
   listViewPreferences            ListViewPreference[]
   emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
-  projectAccess             ProjectAccess[]
-  projectMemberRoles        ProjectMemberRole[]
+  projectAccess                 ProjectAccess[]
+  projectMemberRoles            ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee                  Employee?
+  employee                      Employee?
   /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
-  googleAccountsConnected   GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
-  googleSheetMemberships    GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
-  googleSheetMembersAdded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
-  googleSheetMembersEnded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  googleAccountsConnected       GoogleIntegrationAccount[]  @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships        GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded       GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded       GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberEndedBy")
   /// Google identities this person proved are theirs by signing in with Google (Phase 4).
-  googleIdentities          UserGoogleIdentity[]
-  googleSheetActivities     GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
-  googleSheetWorkSessions   GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
+  googleIdentities              UserGoogleIdentity[]
+  googleSheetActivities         GoogleSheetActivity[]       @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions       GoogleSheetWorkSession[]    @relation("GoogleSheetWorkSessionUser")
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
-  customerId                String?
-  customer                  Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
+  customerId                    String?
+  customer                      Customer?                   @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
   /// Set on the support identity a RELQIVO operator uses inside this customer's workspace (never a
   /// person's account; no password works for it; shown as "RELQIVO Support").
-  supportOperatorId         String?
-  supportOperator           PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
-  conversationNotes         ConversationNote[]         @relation("ConversationNoteAuthor")
-  aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
-  conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
-  inboxSavedViews           InboxSavedView[]           @relation("InboxSavedViewOwner")
-  listSavedViews            ListSavedView[]            @relation("ListSavedViewOwner")
-  inboxMentions             InboxMention[]             @relation("InboxMentionUser")
-  conversationEvents        ConversationEvent[]        @relation("ConversationEventActor")
+  supportOperatorId             String?
+  supportOperator               PlatformOperator?           @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  conversationNotes             ConversationNote[]          @relation("ConversationNoteAuthor")
+  aiDraftsRequested             AiDraft[]                   @relation("AiDraftRequester")
+  conversationLabelsUpdated     ConversationLabel[]         @relation("ConversationLabelUpdater")
+  inboxSavedViews               InboxSavedView[]            @relation("InboxSavedViewOwner")
+  listSavedViews                ListSavedView[]             @relation("ListSavedViewOwner")
+  inboxMentions                 InboxMention[]              @relation("InboxMentionUser")
+  conversationPresence          ConversationPresence[]
+  whatsAppConversationsAssigned WhatsAppConversationState[] @relation("WhatsAppConversationAssignee")
+  conversationEvents            ConversationEvent[]         @relation("ConversationEventActor")
+  followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
+  followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
+  followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
 
   @@index([customerId])
 }
@@ -1223,7 +1237,11 @@ model WhatsAppAccount {
   droppedMessages      MessageDropCounter[]
   personalChatReviews  PersonalChatReview[]
   pictures             WhatsAppPicture[]
-  scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
+  scopedKnowledge      AiKnowledgeItem[]           @relation("AiKnowledgeScopeAccount")
+  conversationStates   WhatsAppConversationState[]
+  conversationEvents   ConversationEvent[]         @relation("ConversationEventAccount")
+  csatSurveys          CsatSurvey[]
+  followUps            FollowUp[]
   conversationLabels   ConversationLabel[]
   conversationNotes    ConversationNote[]
   aiDrafts             AiDraft[]
@@ -1597,12 +1615,14 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members                      InternalTeamMember[]
-  memberships                  TeamMembership[]
-  supportEpisodes              SupportResponseEpisode[]
-  assignedClients              Client[]
-  soldSubscriptions            ClientSubscription[]
-  assignedChannelConversations ChannelConversation[]    @relation("ChannelConversationTeam")
+  members                       InternalTeamMember[]
+  memberships                   TeamMembership[]
+  supportEpisodes               SupportResponseEpisode[]
+  assignedClients               Client[]
+  soldSubscriptions             ClientSubscription[]
+  assignedWhatsAppConversations WhatsAppConversationState[] @relation("WhatsAppConversationTeam")
+  followUps                     FollowUp[]
+  assignedChannelConversations  ChannelConversation[]       @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -1866,6 +1886,21 @@ model OutboundMessage {
   providerMessageId String?
   createdById       String?
   createdBy         User?              @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// Stamped immediately before the call into WhatsApp Web; null = never handed over (FAILED_REPLIES.md).
+  sendStartedAt       DateTime?
+  /// The send began and never answered, so it may have arrived. Never retried by itself.
+  deliveryUncertain   Boolean                @default(false)
+  /// Failed Replies: retries a person asked for, and how they settled it.
+  manualRetryCount    Int                    @default(0)
+  lastManualRetryAt   DateTime?
+  replyResolution     FailedReplyResolution?
+  replyResolvedAt     DateTime?
+  replyResolvedById   String?
+  replyResolutionNote String?
+  failedReplyActions  FailedReplyAction[]
+  /// The satisfaction survey this message asked (CSAT.md), if it was one.
+  csatSurvey          CsatSurvey?
 
   aiFallbackDecision AiFallbackDecision?
 
@@ -3207,6 +3242,13 @@ model AiSettings {
   commerceShowStockCount   Boolean  @default(false)
   /// Hand a request to buy, cancel, return or change an order straight to a person.
   commerceHandoverRequests Boolean  @default(true)
+  /// Customer account answers (AI_CLIENT_ANSWERS.md): a verified customer's own package, its state and expiry,
+  /// from Client Management. Works only while Client Management and its Subscriptions are on. Off by default.
+  clientAccountAnswers     Boolean  @default(false)
+  /// What a verified customer still owes, per currency. Needs clientAccountAnswers and Billing on. Off by default.
+  clientDueAnswers         Boolean  @default(false)
+  /// AI answers a verified customer's own account question by itself in a one-to-one WhatsApp chat (AI_CLIENT_ANSWERS.md).
+  clientAccountAutoReply   Boolean  @default(false)
   updatedAt                DateTime @updatedAt
 }
 
@@ -6399,6 +6441,8 @@ enum ChannelThreadKind {
 enum ChannelConversationStatus {
   OPEN
   CLOSED
+  PENDING
+  SNOOZED
 }
 
 enum ChannelAiOutcome {
@@ -6541,6 +6585,11 @@ model ChannelConversation {
   aiSuppressedUntil    DateTime?
   /// Website chat: when an agent last typed in this conversation; the widget shows "typing…" briefly.
   agentTypingAt        DateTime?
+  /// Inbox V3 (conversationLifecycle.ts): when a SNOOZED conversation reopens by itself.
+  snoozedUntil         DateTime?
+  statusChangedAt      DateTime?
+  /// Who resolved (CLOSED) it, when a person did. A plain id: history keeps its own actor.
+  resolvedById         String?
   closedAt             DateTime?
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
@@ -6550,6 +6599,8 @@ model ChannelConversation {
   notes             ConversationNote[]
   aiDrafts          AiDraft[]
   events            ConversationEvent[]
+  csatSurveys       CsatSurvey[]
+  followUps         FollowUp[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -6612,6 +6663,17 @@ model ChannelMessage {
   aiModelId        String?
   /// The AI reply this message received (an outbound row's id).
   aiReplyMessageId String?
+
+  // ─ Failed Replies (FAILED_REPLIES.md) ─
+  manualRetryCount    Int                    @default(0)
+  lastManualRetryAt   DateTime?
+  replyResolution     FailedReplyResolution?
+  replyResolvedAt     DateTime?
+  replyResolvedById   String?
+  replyResolutionNote String?
+  failedReplyActions  FailedReplyAction[]
+  /// The satisfaction survey this message asked (CSAT.md), if it was one.
+  csatSurvey          CsatSurvey?
 
   @@unique([projectId, connectionId, externalMessageId])
   @@unique([projectId, idempotencyKey])
@@ -6784,6 +6846,7 @@ model Client {
   renewalOffers      ClientRenewalOffer[]
   renewalOfferEvents ClientRenewalOfferEvent[]
   messages           ClientMessage[]
+  followUps          FollowUp[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -8093,6 +8156,11 @@ model AiDraft {
   tokensUsed            Int?
   requestedById         String?
   requestedBy           User?                @relation("AiDraftRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// What the requester may see of a client's account (AI_CLIENT_ANSWERS.md), decided by the web's own
+  /// permission check (`clients.view` / `clients.view_billing`) when the request was made. The worker only
+  /// ever narrows by these; false (every older row) = no account data in the draft.
+  clientAccountAllowed  Boolean              @default(false)
+  clientDuesAllowed     Boolean              @default(false)
   /// Set when the agent put the text into the composer.
   usedAt                DateTime?
   /// UP | DOWN — the agent's rating.
@@ -8149,20 +8217,29 @@ model InboxMention {
 /// What happened to a Messenger / Instagram / Telegram conversation's ownership and state: the
 /// assignment history. WhatsApp group ownership history stays in GroupResponsibilityChange.
 model ConversationEvent {
-  id                    String              @id @default(cuid())
-  projectId             String              @default(dbgenerated("project_id_required()"))
-  project               Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  channelConversationId String
-  channelConversation   ChannelConversation @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
-  /// ASSIGNEE | TEAM | STATUS
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Exactly one conversation: a channel conversation, or a WhatsApp chat (accountId + chatId). CHECK.
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  accountId             String?
+  account               WhatsAppAccount?     @relation("ConversationEventAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  /// ASSIGNEE | TEAM | STATUS (older rows), and the Inbox V3 kinds in conversationLifecycle.ts
   kind                  String
   /// User id / Team id / status before and after (null = none).
   fromValue             String?
   toValue               String?
   actorId               String?
-  actor                 User?               @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
-  createdAt             DateTime            @default(now())
+  actor                 User?                @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  /// Why and how, never message text: e.g. { reason: "CUSTOMER_MESSAGE" } or { snoozedUntil }.
+  context               Json?
+  createdAt             DateTime             @default(now())
+  /// The satisfaction survey a RESOLVE event led to (CSAT.md): at most one per resolution.
+  csatSurvey            CsatSurvey?
 
+  @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
 }
 
@@ -9374,4 +9451,376 @@ model ClientDocumentAsset {
   createdAt  DateTime @default(now())
 
   @@unique([projectId, sha256])
+}
+
+enum FailedReplyResolution {
+  RESOLVED
+  CLOSED
+}
+
+enum FailedReplyActionKind {
+  RETRY
+  RESOLVE
+  CLOSE
+  REOPEN
+}
+
+/// Append-only history of what people did on Failed Replies (FAILED_REPLIES.md). Exactly one of the two
+/// message ids is set (CHECK). The actor is an id plus the username at that moment, with no foreign key:
+/// deleting a login must neither fail on nor rewrite this record.
+model FailedReplyAction {
+  id                 String                @id @default(cuid())
+  projectId          String                @default(dbgenerated("project_id_required()"))
+  project            Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  outboundMessageId  String?
+  outboundMessage    OutboundMessage?      @relation(fields: [outboundMessageId], references: [id], onDelete: Cascade)
+  channelMessageId   String?
+  channelMessage     ChannelMessage?       @relation(fields: [channelMessageId], references: [id], onDelete: Cascade)
+  action             FailedReplyActionKind
+  /// The status the message had when the person acted.
+  fromStatus         String
+  /// The failure recorded at that moment (already redacted).
+  failureReason      String?
+  /// A RETRY of an uncertain reply: the person confirmed they checked the chat.
+  confirmedUncertain Boolean               @default(false)
+  note               String?
+  actorUserId        String?
+  actorUsername      String?
+  createdAt          DateTime              @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([outboundMessageId, createdAt])
+  @@index([channelMessageId, createdAt])
+}
+
+enum BackupRunStatus {
+  SUCCEEDED
+  FAILED
+}
+
+/// One run of scripts/backup.sh, recorded by the script itself at its end (docs/get-assist-ultimate/19 §7).
+/// Platform data: no projectId, one installation's backups. Never a path, host or credential: `reason` is
+/// stripped of paths by the script and again when shown.
+model BackupRun {
+  id               String          @id @default(cuid())
+  status           BackupRunStatus
+  startedAt        DateTime
+  finishedAt       DateTime
+  databaseBytes    BigInt?
+  mediaBytes       BigInt?
+  sessionsIncluded Boolean         @default(false)
+  commitSha        String?
+  reason           String?
+  createdAt        DateTime        @default(now())
+
+  @@index([finishedAt])
+  @@index([status, finishedAt])
+}
+
+/// One backup alert to platform operators. The unique key ("FAILED:<last success id>" or "STALE:<…>",
+/// backupHealth.ts) makes it one alert per outage per kind, restarts included. Delivery is per recipient
+/// (BackupAlertDelivery). `attempts` / `nextAttemptAt` pace the retry when NOTHING could be tried (no platform
+/// email, no recipient, the mail host refused) — a confirmed non-delivery, retried on a bounded schedule.
+model BackupAlert {
+  id            String                @id @default(cuid())
+  key           String                @unique
+  kind          String
+  /// Recipients the alert reached (SENT).
+  recipients    Int                   @default(0)
+  delivered     Boolean               @default(false)
+  note          String?
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime?
+  createdAt     DateTime              @default(now())
+  deliveries    BackupAlertDelivery[]
+}
+
+/// One recipient of one backup alert. QUEUED → SENDING (claimed by a conditional update) → SENT, or FAILED
+/// (confirmed not delivered; retried at nextAttemptAt until attempts run out), or UNKNOWN (may have been
+/// delivered: SMTP could not say, or the worker stopped mid-send) — UNKNOWN is never sent again.
+model BackupAlertDelivery {
+  id            String      @id @default(cuid())
+  alertId       String
+  alert         BackupAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  recipient     String
+  status        String      @default("QUEUED")
+  attempts      Int         @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?
+  sendingAt     DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([alertId, recipient])
+  @@index([status, nextAttemptAt])
+}
+
+/// Inbox V3 status of a conversation (conversationLifecycle.ts). Channel conversations keep their own column.
+enum ConversationLifecycleStatus {
+  OPEN
+  PENDING
+  SNOOZED
+  RESOLVED
+}
+
+/// Inbox V3 lifecycle and ownership of ONE WhatsApp conversation (account + chat), created the first time a
+/// person acts on it. Nothing is copied from Message and no row exists for an untouched chat: no row = OPEN,
+/// unassigned. Priority and tags stay in ConversationLabel. Feature UNIFIED_INBOX_V3.
+model WhatsAppConversationState {
+  id                    String                      @id @default(cuid())
+  projectId             String                      @default(dbgenerated("project_id_required()"))
+  project               Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String
+  account               WhatsAppAccount             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String
+  /// GROUP or PERSONAL, from the chat id's WhatsApp domain (whatsAppConversationType).
+  conversationType      String
+  status                ConversationLifecycleStatus @default(OPEN)
+  snoozedUntil          DateTime?
+  statusChangedAt       DateTime                    @default(now())
+  assignedUserId        String?
+  assignedUser          User?                       @relation("WhatsAppConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?                       @relation("WhatsAppConversationTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  lastActivityAt        DateTime?
+  lastCustomerMessageAt DateTime?
+  resolvedAt            DateTime?
+  /// A plain id: deleting a login must not rewrite who resolved it.
+  resolvedById          String?
+  resolutionNote        String?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  @@unique([projectId, accountId, chatId])
+  @@index([projectId, status, snoozedUntil])
+  @@index([projectId, assignedUserId])
+}
+
+/// Inbox V3: what a customer message does to a resolved or snoozed conversation. No row = the defaults (both on).
+model InboxLifecycleSettings {
+  id                              String   @id @default(cuid())
+  projectId                       String   @unique @default(dbgenerated("project_id_required()"))
+  project                         Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  reopenResolvedOnCustomerMessage Boolean  @default(true)
+  reopenSnoozedOnCustomerMessage  Boolean  @default(true)
+  updatedById                     String?
+  updatedAt                       DateTime @updatedAt
+}
+
+/// Automatic conversation routing (AUTO_ROUTING.md; features AUTO_ROUTING + UNIFIED_INBOX_V3, both off by
+/// default). One row per project; no row = routing off. Who may receive a conversation is decided at the
+/// moment of routing (packages/shared autoRouting.ts) and never stored; only the round-robin pointer and a
+/// count-only note of the last time nobody could take one are kept here.
+model RoutingSettings {
+  id                    String    @id @default(cuid())
+  projectId             String    @unique @default(dbgenerated("project_id_required()"))
+  project               Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled               Boolean   @default(false)
+  /// When it was last switched on. Only conversations a customer wrote in since then are routed by
+  /// themselves, so switching it on never hands out an old backlog.
+  enabledAt             DateTime?
+  /// WEBCHAT | MESSENGER | INSTAGRAM | TELEGRAM | WHATSAPP_PERSONAL (ROUTING_CHANNELS).
+  channels              String[]  @default([])
+  /// WhatsApp groups, separately and off by default. A group with an owner
+  /// (WhatsAppGroup.assignedTeamMemberId, on any of our numbers' copies) is never routed.
+  includeWhatsAppGroups Boolean   @default(false)
+  /// ROUND_ROBIN | LEAST_OPEN (CHECK).
+  method                String    @default("ROUND_ROBIN")
+  /// The most OPEN + PENDING conversations one person may hold before routing passes them by.
+  maxOpenPerAgent       Int       @default(15)
+  /// The pool: people in these Teams at the moment of routing, plus these logins.
+  poolTeamIds           String[]  @default([])
+  poolUserIds           String[]  @default([])
+  /// Only people whose linked team member is on duty now by the roster.
+  onlyOnDuty            Boolean   @default(false)
+  /// Only people who used the dashboard within recentlySeenMinutes (their session's last use).
+  requireRecentlySeen   Boolean   @default(false)
+  recentlySeenMinutes   Int       @default(15)
+  /// Round-robin pointer: the last person routing picked. Moved only under the project's routing lock.
+  lastPickedUserId      String?
+  /// The last time a conversation could not be routed, and why: counts per reason, nothing else.
+  lastUnroutedAt        DateTime?
+  lastUnroutedReasons   Json?
+  updatedById           String?
+  updatedAt             DateTime  @updatedAt
+}
+
+/// Inbox V3 agent presence (V3-05): who has a conversation open, and who is typing in it, as a heartbeat.
+/// Expires by time (viewing 30 s, typing 8 s), never by a cleanup someone must run; rows past a day are
+/// pruned on the next heartbeat. Holds no message text. conversationKey is "wa:<accountId>:<chatId>" or
+/// "ch:<conversationId>" (presenceKey in conversationLifecycle.ts).
+model ConversationPresence {
+  id              String    @id @default(cuid())
+  projectId       String    @default(dbgenerated("project_id_required()"))
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conversationKey String
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seenAt          DateTime
+  typingAt        DateTime?
+
+  @@unique([projectId, conversationKey, userId])
+  @@index([projectId, conversationKey, seenAt])
+  @@index([projectId, seenAt])
+}
+
+/// CSAT.md: where a satisfaction survey was asked. A WhatsApp group is never one of them (CHECK on chatId too).
+enum CsatChannel {
+  WHATSAPP_PERSONAL
+  WEBCHAT
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+}
+
+enum CsatSurveyStatus {
+  /// Recorded when a person resolved the conversation; the worker has not decided yet.
+  PENDING
+  /// Asked: the message was queued through the channel's one send queue, or the website chat card is showing.
+  SENT
+  /// Not asked, with the reason (cooldown, team member, outside the reply window, automation paused…).
+  SKIPPED
+}
+
+/// One "How did we do? 1–5" per resolution of one conversation (feature CSAT_SURVEYS, CSAT.md). Exactly one
+/// conversation, the ConversationEvent shape: a channel conversation, or a WhatsApp personal chat
+/// (accountId + chatId). The answer is append-only: once answered, rating, comment and answeredAt never change
+/// (a database trigger refuses it). No message text is copied here except the customer's own optional comment.
+model CsatSurvey {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  channel               CsatChannel
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  /// The RESOLVE event this survey is about. Unique: one survey per resolution, however often it is replayed.
+  resolutionEventId     String               @unique
+  resolutionEvent       ConversationEvent    @relation(fields: [resolutionEventId], references: [id], onDelete: Cascade)
+  /// Who the cooldown counts against (csatCustomerKey): "wa:<chatId>" or "ch:<connectionId>:<threadId>".
+  customerKey           String
+  resolvedAt            DateTime
+  /// The person who resolved it, and the conversation's Team then. Plain ids: history keeps its owner.
+  resolvedById          String?
+  teamId                String?
+  status                CsatSurveyStatus     @default(PENDING)
+  skipReason            String?
+  /// The question exactly as asked.
+  question              String?
+  sentAt                DateTime?
+  /// WhatsApp: the queued survey message. Channels: the queued ChannelMessage. Website chat: neither (a card).
+  outboundMessageId     String?              @unique
+  outboundMessage       OutboundMessage?     @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  channelMessageId      String?              @unique
+  channelMessage        ChannelMessage?      @relation(fields: [channelMessageId], references: [id], onDelete: SetNull)
+  /// When the customer's next message (rating or not) arrived, or the answer: no later message is read as one.
+  answerClosedAt        DateTime?
+  answeredAt            DateTime?
+  rating                Int?
+  comment               String?
+  /// WIDGET (website chat card) or MESSAGE (the customer's next message was a rating).
+  answerSource          String?
+  /// The Message / ChannelMessage that carried the rating (plain id, for the audit trail).
+  answerMessageId       String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([projectId, status, createdAt])
+  @@index([projectId, sentAt])
+  @@index([projectId, customerKey, sentAt])
+  @@index([projectId, accountId, chatId, sentAt])
+  @@index([channelConversationId, sentAt])
+}
+
+/// CSAT.md: which channels ask, the question and the per-customer cooldown. No row = every channel off.
+model CsatSettings {
+  id                      String   @id @default(cuid())
+  projectId               String   @unique @default(dbgenerated("project_id_required()"))
+  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  whatsappPersonalEnabled Boolean  @default(false)
+  webchatEnabled          Boolean  @default(false)
+  messengerEnabled        Boolean  @default(false)
+  instagramEnabled        Boolean  @default(false)
+  telegramEnabled         Boolean  @default(false)
+  /// Null = the built-in Bangla/English question (packages/shared csat.ts), so Reset is "forget my edit".
+  questionText            String?
+  /// At most one survey per customer within this many days. 0 = after every resolution.
+  cooldownDays            Int      @default(7)
+  updatedById             String?
+  updatedAt               DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Follow-ups (FOLLOW_UPS.md, feature FOLLOW_UPS): call-backs, technician visits and promised replies.
+// Internal work only: nothing here is read by any send path, and nothing is ever sent to a customer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum FollowUpStatus {
+  OPEN
+  DONE
+  DISCARDED
+}
+
+/// One follow-up: what, when, for whom, and (optionally) which conversation and/or client it is about.
+/// The conversation is the ConversationRef shape — a WhatsApp chat (accountId + chatId) OR a channel
+/// conversation, never both (CHECK). Every change is a conditional update with its FollowUpEvent in the
+/// same transaction.
+model FollowUp {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  title                 String
+  note                  String?
+  dueAt                 DateTime
+  priority              ConversationPriority @default(NONE)
+  status                FollowUpStatus       @default(OPEN)
+  assignedUserId        String?
+  assignedUser          User?                @relation("FollowUpAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?                @relation(fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  clientId              String?
+  client                Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdBy             User?                @relation("FollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  completedAt           DateTime?
+  completedById         String?
+  completedBy           User?                @relation("FollowUpCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  events                FollowUpEvent[]
+
+  @@index([projectId, status, dueAt])
+  @@index([projectId, assignedUserId, status, dueAt])
+  @@index([projectId, assignedTeamId, status, dueAt])
+  @@index([projectId, accountId, chatId])
+  @@index([channelConversationId])
+  @@index([clientId])
+}
+
+/// Append-only history of one follow-up (a trigger refuses UPDATE). The actor is a plain id plus the name
+/// at that moment — no foreign key, so deleting a login never has to rewrite history.
+model FollowUpEvent {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  followUpId  String
+  followUp    FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  /// CREATED | EDITED | REASSIGNED | RESCHEDULED | DONE | DISCARDED | REOPENED (CHECK).
+  kind        String
+  fromValue   String?
+  toValue     String?
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime @default(now())
+
+  @@index([followUpId, createdAt])
+  @@index([projectId, createdAt])
 }

@@ -1,9 +1,9 @@
 import { decryptSecret } from "@support-automation/db";
 import { assertNeverProvider, CHANNEL_PROVIDERS, channelRetryDelayMs, decideReplyWindow, providerForChannelType, type ChannelType } from "@support-automation/shared";
-import { prisma } from "../db.js";
+import { platformPrisma, prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
-import { forEachProject } from "../project/context.js";
+import { currentProjectId, forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
 import { metaAppSecretFor, sendMetaText, sendTelegramText, type FetchImpl, type SendOutcome } from "./providerApi.js";
@@ -66,19 +66,40 @@ async function recoverStuckSends(now: Date): Promise<void> {
   });
 }
 
+/**
+ * Claims the oldest due reply of the current project: QUEUED → SENDING, attempts + 1. Null when nothing is
+ * due; `won: false` when the conditional update lost (the row changed between the lock and the update).
+ *
+ * FOR UPDATE SKIP LOCKED (P1-13): this queue only makes HTTP calls, so it is the one a second, browserless
+ * worker could share; a row another claimer holds is skipped, never sent twice. One worker: same row, same
+ * order as before. The conditional update stays as the second guard. The transaction holds only the claim;
+ * the send happens after it commits.
+ */
+export async function claimNextChannelMessage(now: Date): Promise<{ id: string; won: boolean } | null> {
+  const projectId = currentProjectId();
+  return platformPrisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT m.id FROM "ChannelMessage" m
+      WHERE m."projectId" = ${projectId} AND m."deliveryStatus" = 'QUEUED' AND (m."nextAttemptAt" IS NULL OR m."nextAttemptAt" <= ${now})
+      ORDER BY m."createdAt" ASC, m.id ASC
+      LIMIT 1
+      FOR UPDATE OF m SKIP LOCKED`;
+    const found = rows[0];
+    if (!found) return null;
+    const claim = await tx.channelMessage.updateMany({
+      where: { id: found.id, projectId, deliveryStatus: "QUEUED" },
+      data: { deliveryStatus: "SENDING", sendingStartedAt: now, attempts: { increment: 1 } },
+    });
+    return { id: found.id, won: claim.count === 1 };
+  });
+}
+
 /** Claim and send the oldest due reply in the current project. False when there was nothing to send. */
 export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImpl = fetch): Promise<boolean> {
-  const candidate = await prisma.channelMessage.findFirst({
-    where: { deliveryStatus: "QUEUED", OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
-  if (!candidate) return false;
-  const claim = await prisma.channelMessage.updateMany({
-    where: { id: candidate.id, deliveryStatus: "QUEUED" },
-    data: { deliveryStatus: "SENDING", sendingStartedAt: now, attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return true;
+  const claimed = await claimNextChannelMessage(now);
+  if (!claimed) return false;
+  if (!claimed.won) return true;
+  const candidate = { id: claimed.id };
 
   const message = await prisma.channelMessage.findUniqueOrThrow({
     where: { id: candidate.id },

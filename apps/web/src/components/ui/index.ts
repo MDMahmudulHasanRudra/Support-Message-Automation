@@ -18,6 +18,7 @@ export * from "./ProgressBar";
 export * from "./SearchField";
 export * from "./Sparkline";
 export * from "./StatTile";
+export * from "./HeroKpi";
 export * from "./StepIndicator";
 export * from "./Switch";
 export * from "./Table";

@@ -1,5 +1,5 @@
 import { prisma } from "../db.js";
-import { MOOD_CUSTOMER_MESSAGE_VARIANT, UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
+import { CSAT_SURVEY_VARIANT, MOOD_CUSTOMER_MESSAGE_VARIANT, UNABLE_TO_UNDERSTAND_VARIANT } from "@support-automation/shared";
 
 /**
  * True if this client already has a reply for this rule in flight or sent
@@ -63,6 +63,8 @@ export async function isCooldownActive(params: {
       NOT: [
         { idempotencyKey: { endsWith: `:${UNABLE_TO_UNDERSTAND_VARIANT}` } },
         { idempotencyKey: { endsWith: `:${MOOD_CUSTOMER_MESSAGE_VARIANT}` } },
+        // A satisfaction survey (CSAT.md) is asked after the conversation was resolved: not an answer either.
+        { idempotencyKey: { endsWith: `:${CSAT_SURVEY_VARIANT}` } },
       ],
       status: { in: ["PENDING", "PROCESSING", "SENT"] },
       createdAt: { gte: since },

@@ -12,8 +12,15 @@ import {
   type ProjectAccessLevelValue,
   type ProjectStatusValue,
 } from "@support-automation/shared";
-import { Badge, Button, ConfirmDialog, Field, Input, Select, Switch, Textarea, useToast } from "@/components/ui";
-import { setProjectAccess, setProjectStatus, updateProjectDetails, type ProjectDetailsState } from "@/server/actions/projects";
+import { Alert, Badge, Button, ConfirmDialog, Field, Input, Select, Switch, Textarea, useToast } from "@/components/ui";
+import {
+  deleteProject,
+  setProjectAccess,
+  setProjectStatus,
+  updateProjectDetails,
+  type ProjectDeletionState,
+  type ProjectDetailsState,
+} from "@/server/actions/projects";
 import { setUserAccessLevel } from "@/server/actions/adminUsers";
 
 const VERB: Record<ProjectStatusValue, string> = {
@@ -44,7 +51,11 @@ export function ProjectStatusControl({ projectId, projectName, status }: { proje
   }
 
   if (next.length === 0) {
-    return <p className="text-[13px] text-[color:var(--color-muted-foreground)]">An archived project cannot be changed from the portal. Nothing in it has been deleted.</p>;
+    return (
+      <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
+        An archived project cannot be reopened from the portal. Nothing in it has been deleted; it can be deleted permanently below.
+      </p>
+    );
   }
 
   return (
@@ -77,6 +88,52 @@ export function ProjectStatusControl({ projectId, projectName, status }: { proje
         ) : null}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/**
+ * Delete an archived project permanently: its exact name typed and the person's own password. Shown only for
+ * an archived project; the action checks everything again.
+ */
+export function ProjectDeletePanel({ projectId, projectName }: { projectId: string; projectName: string }) {
+  const router = useRouter();
+  const { showToast } = useToast();
+  const [state, formAction, pending] = useActionState(deleteProject.bind(null, projectId), {} as ProjectDeletionState);
+
+  useEffect(() => {
+    if (!state.done) return;
+    showToast({ tone: "success", title: state.done });
+    router.push("/admin/projects");
+  }, [state.done, showToast, router]);
+
+  // Submitted from onSubmit so a refusal keeps what was typed (see ProjectDetailsForm).
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    startActionTransition(() => formAction(formData));
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+        Erases this project and everything in it: WhatsApp numbers and groups, messages, clients, reports, settings, files and its
+        System Log. It cannot be undone. Logins, roles and your other projects are not touched.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={`Type the project's name: ${projectName}`} htmlFor="pd-name" error={state.fieldErrors?.confirmName}>
+          <Input id="pd-name" name="confirmName" autoComplete="off" spellCheck={false} required />
+        </Field>
+        <Field label="Your password" htmlFor="pd-pass" error={state.fieldErrors?.password}>
+          <Input id="pd-pass" name="password" type="password" autoComplete="current-password" required />
+        </Field>
+      </div>
+      {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
+      <div className="flex justify-end">
+        <Button type="submit" variant="danger" loading={pending}>
+          Delete permanently
+        </Button>
+      </div>
+    </form>
   );
 }
 

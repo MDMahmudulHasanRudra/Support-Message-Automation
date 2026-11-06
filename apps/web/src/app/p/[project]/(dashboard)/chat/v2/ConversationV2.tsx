@@ -14,6 +14,7 @@ import { decideOnArrival, distanceFromBottom, NEAR_BOTTOM_PX, scrollTopAfterPrep
 import { formatDateTime } from "@/lib/date";
 import type { SavedReplyOption } from "../SavedReplyPicker";
 import { continues, dayFormat } from "../threadPresentation";
+import { ComposerShell } from "../../inbox/ComposerShell";
 import { ComposerV2, type ReplyTarget } from "./ComposerV2";
 import { ForwardDialog } from "./ForwardDialog";
 import { GalleryLightbox, type GalleryImage } from "./GalleryLightbox";
@@ -293,6 +294,19 @@ export function ConversationV2({
     },
     [merged, hasMoreOlder, loadOlder],
   );
+
+  // Opened from an All Conversations message-search hit (`?msg=<id>`): jump to it once, through the same bounded path.
+  const jumpedFromUrl = useRef(false);
+  useEffect(() => {
+    if (jumpedFromUrl.current) return;
+    const id = new URLSearchParams(window.location.search).get("msg");
+    if (!id || !/^[\w-]{1,64}$/.test(id)) return;
+    const timer = setTimeout(() => {
+      jumpedFromUrl.current = true;
+      void jumpTo(id);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [jumpTo]);
 
   // ---- Search ----------------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false);
@@ -638,6 +652,7 @@ export function ConversationV2({
         </div>
 
         {belowThread}
+        <ComposerShell>
         <ComposerV2
           conversation={conversation}
           draftId={draftId}
@@ -652,6 +667,7 @@ export function ConversationV2({
           insertRequest={insertRequest}
           onSent={() => scrollToBottom()}
         />
+        </ComposerShell>
       </div>
 
       {forwarding ? (

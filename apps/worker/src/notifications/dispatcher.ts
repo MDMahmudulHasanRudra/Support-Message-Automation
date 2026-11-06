@@ -1,7 +1,9 @@
 import { trackTick } from "../lifecycle.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
+import { correlationForMessage } from "../logging/correlation.js";
+import { logEvent } from "@support-automation/shared";
 import { platformPrisma, prisma } from "../db.js";
-import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
+import { accountInCurrentProject, OPERATING_PROJECT_STATUSES, withProject } from "../project/context.js";
 import type { Notification } from "@prisma/client";
 import type { NotificationProvider } from "./NotificationProvider.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -35,23 +37,28 @@ export async function recoverStuckNotifications(): Promise<number> {
  * is being claimed, so the count moves atomically instead of being written back from a value read
  * before the provider call.
  */
-async function claimNextNotification() {
+export async function claimNextNotification() {
   // One shared queue in one global order (see claimNextOutboundMessage); the rest of the work runs
-  // inside the claimed row's own project.
-  const candidate = await platformPrisma.notification.findFirst({
-    // A suspended or archived project's alerts are held, like its outbound messages.
-    where: { status: "PENDING", project: OPERATING_PROJECT_FILTER },
-    orderBy: { createdAt: "asc" },
+  // inside the claimed row's own project. SKIP LOCKED for the same reason (P1-13). A suspended or
+  // archived project's alerts are held, like its outbound messages.
+  const id = await platformPrisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT n.id FROM "Notification" n
+      JOIN "Project" p ON p.id = n."projectId"
+      WHERE n.status = 'PENDING'
+        AND p.status::text = ANY(${[...OPERATING_PROJECT_STATUSES]}) AND p."billingHoldAt" IS NULL
+      ORDER BY n."createdAt" ASC
+      LIMIT 1
+      FOR UPDATE OF n SKIP LOCKED`;
+    const candidate = rows[0];
+    if (!candidate) return null;
+    const claim = await tx.notification.updateMany({
+      where: { id: candidate.id, status: "PENDING" },
+      data: { status: "RETRYING", lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
+    });
+    return claim.count === 1 ? candidate.id : null;
   });
-  if (!candidate) return null;
-
-  const claim = await platformPrisma.notification.updateMany({
-    where: { id: candidate.id, status: "PENDING" },
-    data: { status: "RETRYING", lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
-  });
-  if (claim.count === 0) return null;
-
-  return platformPrisma.notification.findUniqueOrThrow({ where: { id: candidate.id } });
+  return id ? platformPrisma.notification.findUniqueOrThrow({ where: { id } }) : null;
 }
 
 /**
@@ -108,16 +115,24 @@ async function dispatchClaimedNotification(
         where: { id: notification.id },
         data: { status: "SENT", sentAt: new Date() },
       });
+      // One line per delivered alert (P1-07); messageId is the customer message it is about, when there is one.
+      logEvent("info", "notifications", "SENT", {
+        notificationId: notification.id,
+        messageId: notification.relatedMessageId ?? undefined,
+        type: notification.type,
+        event: notification.event ?? undefined,
+        attempt: attemptCount,
+      });
     } else {
-      await handleFailure(notification.id, attemptCount, result.error ?? "Unknown notification error");
+      await handleFailure(notification.id, attemptCount, result.error ?? "Unknown notification error", notification.relatedMessageId);
     }
   } catch (err) {
-    await handleFailure(notification.id, attemptCount, (err as Error).message);
+    await handleFailure(notification.id, attemptCount, (err as Error).message, notification.relatedMessageId);
   }
   return true;
 }
 
-async function handleFailure(id: string, attemptCount: number, failureReason: string): Promise<void> {
+async function handleFailure(id: string, attemptCount: number, failureReason: string, relatedMessageId: string | null): Promise<void> {
   const givingUp = attemptCount >= MAX_NOTIFICATION_ATTEMPTS;
   await prisma.notification.update({
     where: { id },
@@ -130,11 +145,15 @@ async function handleFailure(id: string, attemptCount: number, failureReason: st
   // Retries in progress stay console-quiet, because a transient webhook failure that then succeeds
   // is not an event.
   if (givingUp) {
-    await logSystemEvent("ERROR", "notifications", "Gave up delivering a notification after every retry", {
-      notificationId: id,
-      attemptCount,
-      failureReason,
-    }).catch(() => undefined);
+    logEvent("error", "notifications", "GAVE_UP", { notificationId: id, messageId: relatedMessageId ?? undefined, attempts: attemptCount });
+    // In the trail of the customer message the alert was about, beside its AI decision (P1-07).
+    await logSystemEvent(
+      "ERROR",
+      "notifications",
+      "Gave up delivering a notification after every retry",
+      { notificationId: id, attemptCount, failureReason },
+      { targetType: "Notification", targetId: id, correlationId: await correlationForMessage(relatedMessageId) },
+    ).catch(() => undefined);
   }
 }
 

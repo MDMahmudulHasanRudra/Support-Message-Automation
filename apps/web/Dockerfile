@@ -41,7 +41,11 @@ RUN pnpm --filter @support-automation/shared build
 RUN pnpm --filter @support-automation/engine build
 RUN pnpm --filter @support-automation/forge-client build
 RUN pnpm --filter @support-automation/media-storage build
-RUN pnpm --filter @support-automation/web build
+# next build type-checks the whole app, which needs about 2.4 GB. Node sets its default heap from the memory it can
+# see, so a 7.6 GB Docker Desktop stops at 2 GB and the build dies out of memory while every other machine passes.
+# Stated here, for this one step: it does not carry into the runtime image.
+ARG WEB_BUILD_HEAP_MB=4096
+RUN NODE_OPTIONS=--max-old-space-size=${WEB_BUILD_HEAP_MB} pnpm --filter @support-automation/web build
 
 # ---------------------------------------------------------------------------
 FROM base AS runtime

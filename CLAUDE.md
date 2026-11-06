@@ -1091,6 +1091,13 @@ write another identifier→member map. Rules worth not undoing:
     (rules permitting, last 365 days) and records per-member what it found; Team Members shows
     "Syncing history…" then "History synced: N messages in G groups" (`getMemberHistorySync`).
 
+### Failed Replies and delivery uncertainty (`FAILED_REPLIES.md`, 5 Nov 2026)
+
+Messages → Failed replies lists customer replies (WhatsApp AUTO_REPLY/MANUAL_REPLY, channel replies) that did not go out. Rules worth not undoing:
+- **An unknown outcome is never retried by itself.** `sendStartedAt` is stamped right before the call into WhatsApp Web; a send that throws (`SendResult.uncertain`) is FAILED + `deliveryUncertain`; crash recovery requeues a stranded row only when it was never stamped. A refusal the provider RETURNS keeps its automatic retries.
+- **A retry is the same row and key**, through a conditional update with its `FailedReplyAction` history row in the same transaction (append-only, actor stored without an FK). An uncertain one needs the person's confirmation and is refused when an echo of it is in the chat; bulk retry and broadcast "Retry failed" skip uncertain rows.
+- State is derived (`failedReplyState`), with an SQL twin pinned by a test. The broadcast and notification failure views are unchanged.
+
 ### Support response tracking — Messages → Unanswered Groups / Response Time (`apps/worker/src/supportResponse/`, `SUPPORT_RESPONSE.md`)
 
 - **One record per wait.** `SupportResponseEpisode` has one row per wait per group row (account +
@@ -1628,7 +1635,7 @@ owns who is online, engaged time and first-response stats; this one owns **sched
 
 Fires only when `packages/engine`'s `evaluate()` genuinely misses on a real customer message
 (`finalDecision === "NO_MATCH"`) **and** the message's group has opted in
-(`WhatsAppGroup.aiAutomationEnabled`, default false). `checkAiFallbackEligibility()` gates on the
+(`WhatsAppGroup.aiAutomationEnabled`, default false), or it is a one-to-one account question behind `clientAccountAutoReply` (`AI_CLIENT_ANSWERS.md`). `checkAiFallbackEligibility()` gates on the
 kill switch, automation mode, group opt-in, and `AiSettings.aiEngineEnabled` before
 `runAiFallback()` ever calls `resolveAiClient("RESPONSE")` — reuses `checkAutoReplySafety()`,
 `enqueueOutboundMessage`, and `enqueueNotification` exactly as the deterministic pipeline does,
@@ -2913,6 +2920,40 @@ A side panel on every WhatsApp Chat and All Conversations conversation, behind `
 anything: "Use in reply" only fills the composer through `lib/composerBridge.ts`. The Copilot reuses the
 production prompt/parser and verified-only retrieval in the worker; never add a second AI path for it.
 
+### Inbox V3 — conversation lifecycle (`packages/shared/src/conversationLifecycle.ts`, 6 Nov 2026)
+
+Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker exactly as before. Rules worth not undoing:
+- **OPEN / PENDING / SNOOZED / RESOLVED, one pure rule set** (`decideTransition`, `statusAfterCustomerMessage`, `snoozeHasEnded`) shared by the actions, the worker hook and the snooze loop. Channel conversations store RESOLVED as their existing CLOSED (`channelStatusOf` / `channelStorageOf`), so every old close/reopen path works; legacy views read anything not CLOSED as OPEN.
+- **A WhatsApp conversation state row is created only when a person acts, or when automatic routing assigns the chat** (`WhatsAppConversationState`, unique per project + account + chat). No row = OPEN, unassigned; no Message is copied, and the worker creates a row for nothing else. Priority and tags stay in `ConversationLabel`.
+- **Every change is a conditional update with its `ConversationEvent` in the same transaction**, so replays and concurrent calls give one change and one event. Events carry statuses, times and a reason (`CUSTOMER_MESSAGE`, `SNOOZE_ENDED`), never message text or the resolution note.
+- **The reopen policy is per project** (`InboxLifecycleSettings`, Settings → Inbox status, `settings.edit`): PENDING always reopens on a customer message; RESOLVED and SNOOZED by policy (both default on). A team member message never changes the status.
+- Writes check the conversation module reply key (`messages.reply` / `conversations.reply`) through `resolveWorkspaceAccess`, plus the feature; assignment re-checks the person (`mentionablePeople`) and the Team (scoped client; the database refuses another project Team).
+- **Bulk** (`bulkUpdateConversations`, op `lifecycle`) and the panel share `changeConversationStatus` / `assignWhatsAppConversation`; with V3 off WhatsApp rows keep the old skip. Priority/tag changes write PRIORITY / TAGS events (`recordLabelChange`, V3 on only).
+- **Presence** (`ConversationPresence`, `presenceHeartbeat`): one heartbeat hook per open conversation (`useConversationPresence`, visible tab only), viewing = 30 s, typing = 8 s, never yourself, never message text, pruned after a day by the next heartbeat. Polled: a refusal is an empty list.
+- **Message search** (`server/whatsAppMessageSearch.ts`, `INBOX_WORKSPACE.md` § Message search): full history through the trigram index `Message_body_search_idx` (build it CONCURRENTLY by hand before deploying its migration). Two phases: recent rows per account first, the index only for older history; only the window EVERY account was read through counts from phase 1. One core, 3 s timeout, ≥3 characters, 100 a page / 1,000 in all, snippets only, never revoked messages. With V3 off the search is names only.
+- **Triage** (`INBOX_WORKSPACE.md` § Triage): a waiting row shows the wait from the customer's FIRST message after our last reply (a failed send is no reply); Sort newest / oldest / longest waiting through one stable `orderInboxItems`; Last message from customer / us. Longest waiting must keep every unanswered conversation, never only the 300 most recent.
+
+### Satisfaction surveys (`CSAT.md`, 7 Nov 2026)
+
+Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every channel is off until switched on in Settings. A person's Resolve records one PENDING `CsatSurvey`, unique on its RESOLVE event; the worker's `csat-surveys` loop asks it through that channel's one send queue, or as a website chat card. Rules worth not undoing:
+- Never in a group (database CHECK for WhatsApp), never to a team member or our own number, at most once per customer per cooldown (advisory lock). The kill switch and MANUAL_ONLY stop every channel, the card too: `dispatchOne` is the only gate for the channels and the card.
+- A refusal is SKIPPED with its reason. Nothing is retried, and nothing goes out more than 30 minutes after the resolution.
+- The customer's next message is read once within 24 hours; only a message that is nothing but a rating counts (`parseCsatRating`). The message itself stays ordinary and the hooks never throw. An answer is final (trigger).
+- Channels use the automated window only, never the HUMAN_AGENT tag. A survey is not an AI answer, so the AI reply cooldown ignores its variant.
+
+### Follow-ups (`FOLLOW_UPS.md`, 7 Nov 2026)
+
+Feature `FOLLOW_UPS`, **off by default**: an internal to-do list for call-backs, visits and promised replies. It **never sends anything to a customer**. Rules worth not undoing: reading needs `messages.view`; changing one needs the reply key of the conversation it is about; a linked conversation, client, person or Team must be this project's; every change is a conditional update with its `FollowUpEvent` (append-only) in the same transaction; buckets split at Dhaka midnight by plain instants (`followUpBucketRange`), with no SQL day arithmetic.
+
+### Automatic routing (`AUTO_ROUTING.md`, 7 Nov 2026)
+
+Feature `AUTO_ROUTING`, **off by default**, needs `UNIFIED_INBOX_V3` and its own settings on. One function, `routeConversation` (packages/db), serves the message hooks, the 60 s sweep and "Distribute evenly". Rules worth not undoing:
+- Never replaces an assignee. Nobody eligible leaves it unassigned and records why, by counts. Never assigns in a held project.
+- The per-project advisory lock covers the pointer, the counts, the pick, the write and the event. A test fails without it.
+- Permission is the existing resolver (`resolveRoleKeys`, `levelAllows`, page selection), never a second one. Leave always excludes; the roster applies only with "only on duty".
+- A group with an owner is never routed; groups are off unless switched on separately; one copy assigned means the other copy is not routed.
+- `enabledAt` keeps an old backlog from being handed out. An assignment is an `ASSIGNEE` event with `{ reason: "AUTO_ROUTING" }` in its context.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
@@ -2923,7 +2964,7 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
   four tables (`ChannelConnection`, `ChannelConversation`, `ChannelMessage`, `ChannelInboundEvent`),
   because ~40 readers assume every `Message` is WhatsApp. The unified list merges `ChannelConversation`
   with WhatsApp Chat's own `getChatInbox` / `getChatConversations`, so "waiting" means the same in
-  both. A WhatsApp row opens WhatsApp Chat. Do not put channel rows into `Message`.
+  both. A WhatsApp row opens beside the list (`/conversations/<scope>/w/…`): the same view, send path and checks as WhatsApp Chat, and that path counts as the `/chat` page for project roles. Do not put channel rows into `Message`.
 - **The web records, the worker processes.** `/api/channels/<meta|telegram>/<webhookKey>` (no session)
   verifies the Meta HMAC (app secret, raw body) or the Telegram secret header, splits the body
   (`splitMetaWebhook` / `telegramDedupKey` in packages/shared), and inserts `ChannelInboundEvent`
@@ -3108,6 +3149,10 @@ imported orders never move our stock; webhooks in are accepted only with the pro
 project; API keys are stored as SHA-256 only and run inside their project; outbound webhooks are signed, at least
 once, and never sent to an address that resolves privately. Background work runs in the APP process
 (`server/integrationsProcessor.ts`, `INTEGRATIONS_PROCESSOR_DISABLED=true`).
+
+### Customer account answers (`AI_CLIENT_ANSWERS.md`, 7 Nov 2026)
+
+`AiSettings.clientAccountAnswers` / `clientDueAnswers` / `clientAccountAutoReply`, **off by default**. It reaches AI Copilot drafts in a one-to-one WhatsApp chat and, with the third switch, AI's own replies there; never a group or another channel. **`personalAccountGrounding` is the only way a direct message reaches the AI**: only a verified customer's own account question, with no person having just replied. Anything else ends silently, with no AI call, decision row, alert or reply, and no holding reply is sent there. Rules worth not undoing: a verified `@c.us` number matching exactly one live client (or a person's chat link), never a LID, a group, a channel or the Sandbox; off means no query and a byte-identical prompt; a request to pay, renew, change or disconnect goes to a person; every amount in a reply must be one it was given. **An answer built from one person's account, dues or order never becomes a rule draft** (`isPersonalRecordEntry`): a rule answers everybody.
 
 ### Commerce-aware AI (`AI_COMMERCE.md`)
 

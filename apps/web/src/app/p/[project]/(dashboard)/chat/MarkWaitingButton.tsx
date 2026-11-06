@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { BellRing } from "lucide-react";
+import { BellRing, Check } from "lucide-react";
 import { useToast } from "@/components/ui";
 import { markChatWaiting, markPersonalChatWaiting } from "@/server/actions/chatOrganisation";
 
@@ -18,15 +18,16 @@ import { markChatWaiting, markPersonalChatWaiting } from "@/server/actions/chatO
  *
  * A group is named by its row id; a personal (1:1) chat, which has no row, by account and chat id.
  */
-export function MarkWaitingButton(props: { groupId: string } | { accountId: string; chatId: string }) {
+export function MarkWaitingButton({ labelled = false, ...props }: ({ groupId: string } | { accountId: string; chatId: string }) & { /** Inside a menu: a full row with its name. */ labelled?: boolean }) {
   const [pending, startTransition] = useTransition();
   const [done, setDone] = useState(false);
   const { showToast } = useToast();
 
   if (done) {
     return (
-      <span className="hidden text-[11px] text-[color:var(--color-muted-foreground)] sm:inline">
-        Back in the waiting list
+      <span title="Back in the waiting list" className="flex size-8 shrink-0 items-center justify-center text-[color:var(--color-success-fg)]">
+        <Check className="size-4" aria-hidden />
+        <span className="sr-only">Back in the waiting list</span>
       </span>
     );
   }
@@ -51,10 +52,15 @@ export function MarkWaitingButton(props: { groupId: string } | { accountId: stri
           });
         })
       }
-      className="flex h-8 cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] px-2.5 text-[11px] font-medium text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+      aria-label="Mark as waiting"
+      className={
+        labelled
+          ? "flex w-full cursor-pointer items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-2 text-left text-[13px] text-[color:var(--color-foreground)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50"
+          : "flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] disabled:opacity-50 max-sm:hidden"
+      }
     >
       <BellRing className="size-3.5" aria-hidden />
-      <span className="hidden sm:inline">Mark as waiting</span>
+      {labelled ? "Mark as waiting" : null}
     </button>
   );
 }

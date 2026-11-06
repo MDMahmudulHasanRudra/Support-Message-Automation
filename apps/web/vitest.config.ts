@@ -16,6 +16,7 @@ export default defineConfig({
     },
   },
   test: {
+    env: { NEXT_PUBLIC_MODULE_LOCKS: "on" },
     environment: "node",
     include: ["src/**/*.test.ts"],
     fileParallelism: false,

@@ -6,6 +6,7 @@ import { Info, Lock, Plus, RotateCcw, X } from "lucide-react";
 import {
   MODULE_CATEGORIES,
   moduleDefinition,
+  MODULE_LOCKS_ENFORCED,
   moduleEntitled,
   moduleSelectionDiff,
   plannedModulesFor,
@@ -355,8 +356,8 @@ export function ModuleBuilder(props: Props) {
                     </Badge>
                   ) : null}
                   {requiredBy.has(m.key) ? <Badge color="blue">Added: needed by {moduleDefinition(requiredBy.get(m.key)!)?.name}</Badge> : null}
-                  {hard > 0 ? <Badge color="gray">{hard} required</Badge> : null}
-                  {m.manualOnly && entitled ? <Badge color="gray">Approved by the platform</Badge> : null}
+                  {MODULE_LOCKS_ENFORCED && hard > 0 ? <Badge color="gray">{hard} required</Badge> : null}
+                  {MODULE_LOCKS_ENFORCED && m.manualOnly && entitled ? <Badge color="gray">Approved by the platform</Badge> : null}
                   {props.enabled.includes(m.key) && !on ? <Badge color="red">Will switch off</Badge> : null}
                   {!on && props.dataCounts[m.key] ? <Badge color="gray">Data kept: {props.dataCounts[m.key]}</Badge> : null}
                   {!props.enabled.includes(m.key) && on ? <Badge color="green">Will switch on</Badge> : null}
@@ -571,7 +572,7 @@ function ModuleInfoDialog({ module: m, onClose, enabled, entitled }: { module: M
         <div className="flex flex-wrap gap-1.5">
           <Badge color={m.status === "AVAILABLE" ? "green" : "gray"}>{m.status === "AVAILABLE" ? "Available" : "Coming soon"}</Badge>
           <Badge color={enabled ? "blue" : "gray"}>{enabled ? "On in this selection" : "Off in this selection"}</Badge>
-          {m.status === "AVAILABLE" ? <Badge color={entitled ? "green" : "yellow"}>{m.manualOnly ? (entitled ? "Approved by the platform" : "Needs platform approval") : entitled ? "Included in plan" : "Not in plan"}</Badge> : null}
+          {MODULE_LOCKS_ENFORCED && m.status === "AVAILABLE" ? <Badge color={entitled ? "green" : "yellow"}>{m.manualOnly ? (entitled ? "Approved by the platform" : "Needs platform approval") : entitled ? "Included in plan" : "Not in plan"}</Badge> : null}
           {m.hasBackgroundJobs ? <Badge color="gray">Runs background work</Badge> : null}
         </div>
         {m.benefits.length ? <InfoList title="Why use it" items={m.benefits} /> : null}

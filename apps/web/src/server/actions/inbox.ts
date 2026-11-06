@@ -1,5 +1,7 @@
 "use server";
 
+import { decideTransition, isConversationStatus, type LifecycleRequest } from "@support-automation/shared";
+import { assignWhatsAppConversation, changeConversationStatus, LifecycleChangeError, loadLifecycle, recordLabelChange } from "@/server/conversationLifecycle";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
@@ -7,6 +9,7 @@ import { activeProjectId } from "@/server/projectContext";
 import { hasPermission } from "@/server/permissions";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { mentionablePeople } from "@/server/inboxWorkspace";
+import { distributeConversations } from "@/server/autoRouting";
 import { assignChannelConversation, assignChannelConversationTeam, setChannelConversationStatus } from "@/server/channels/replies";
 import {
   conversationRefColumns,
@@ -224,7 +227,11 @@ export type BulkOp =
   | { op: "removeTag"; tag: string }
   | { op: "assignee"; userId: string | null }
   | { op: "team"; teamId: string | null }
-  | { op: "status"; status: "OPEN" | "CLOSED" };
+  | { op: "status"; status: "OPEN" | "CLOSED" }
+  /** Inbox V3 (UNIFIED_INBOX_V3): OPEN / PENDING / RESOLVED, or SNOOZED with `until` (ISO). */
+  | { op: "lifecycle"; to: string; until?: string }
+  /** Automatic routing (AUTO_ROUTING + UNIFIED_INBOX_V3): spread the unassigned ones round robin over the routing pool. */
+  | { op: "distribute" };
 
 export interface BulkResult {
   changed: number;
@@ -249,9 +256,17 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
   const refs = (Array.isArray(refsInput) ? refsInput : []).slice(0, BULK_MAX).map(parseConversationRef).filter((r): r is ConversationRef => r !== null);
   if (refs.length === 0) return { error: "Select at least one conversation." };
   const disabled = await activeDisabledFeatures();
-  if (disabled.has("INBOX_COLLABORATION") && (opInput.op === "priority" || opInput.op === "addTag" || opInput.op === "removeTag" || opInput.op === "team" || opInput.op === "assignee")) {
-    return { error: "Priority, tags and assignment are switched off for this project." };
+  const lifecycleOn = !disabled.has("UNIFIED_INBOX_V3");
+  if (disabled.has("INBOX_COLLABORATION") && (opInput.op === "priority" || opInput.op === "addTag" || opInput.op === "removeTag")) {
+    return { error: "Priority and tags are switched off for this project." };
   }
+  // Assignment comes with notes & tags, or with Inbox V3 (which also assigns WhatsApp conversations).
+  if (disabled.has("INBOX_COLLABORATION") && !lifecycleOn && (opInput.op === "team" || opInput.op === "assignee")) {
+    return { error: "Assignment is switched off for this project." };
+  }
+  if (opInput.op === "lifecycle" && !lifecycleOn) return { error: "Conversation status is switched off for this project." };
+  if (opInput.op === "distribute" && (!lifecycleOn || disabled.has("AUTO_ROUTING"))) return { error: "Automatic routing is switched off for this project." };
+  const toDistribute: ConversationRef[] = [];
 
   const canWhatsApp = !disabled.has("WHATSAPP_CHAT") && (await hasPermission(session, "messages.reply"));
   const canChannel = !disabled.has("OMNICHANNEL") && (await hasPermission(session, "conversations.reply"));
@@ -268,6 +283,13 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
   }
   if (opInput.op === "priority" && !isConversationPriority(opInput.value)) return { error: "Choose a priority." };
   if (opInput.op === "status" && opInput.status !== "OPEN" && opInput.status !== "CLOSED") return { error: "Unknown status." };
+  let lifecycleRequest: LifecycleRequest | null = null;
+  if (opInput.op === "lifecycle") {
+    if (!isConversationStatus(opInput.to)) return { error: "Unknown status." };
+    lifecycleRequest = opInput.to === "SNOOZED" ? { to: "SNOOZED", until: new Date(String(opInput.until ?? "")) } : { to: opInput.to };
+    const check = decideTransition("OPEN", lifecycleRequest!, new Date());
+    if (opInput.to === "SNOOZED" && !check.ok) return { error: check.reason };
+  }
   if (opInput.op === "assignee" && opInput.userId) {
     const people = await mentionablePeople(session);
     if (!people.some((p) => p.id === opInput.userId)) return { error: "That person cannot be assigned in this project." };
@@ -311,11 +333,21 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
           note("Your role cannot change WhatsApp conversations.");
           continue;
         }
-        if (opInput.op === "assignee" || opInput.op === "team" || opInput.op === "status") {
+        if (opInput.op === "status" || (!lifecycleOn && (opInput.op === "assignee" || opInput.op === "team"))) {
           result.skipped++;
-          note("WhatsApp conversations were left alone: their owner is set per group on the Groups page, and they have no open/closed state.");
+          note(
+            opInput.op === "status"
+              ? "WhatsApp conversations were left alone: Close / Reopen is for the other channels. Use the status (Pending, Resolve, Snooze) instead."
+              : "WhatsApp conversations were left alone: their owner is set per group on the Groups page.",
+          );
           continue;
         }
+      }
+
+      if (opInput.op === "distribute") {
+        // Checked for existence and permission above; routed together below, in the order selected.
+        toDistribute.push(ref);
+        continue;
       }
 
       if (opInput.op === "priority" || opInput.op === "addTag" || opInput.op === "removeTag") {
@@ -332,6 +364,7 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
           result.unchanged++;
           continue;
         }
+        await recordLabelChange(ref, before, next, session.userId);
         if (existing) await prisma.conversationLabel.update({ where: { id: existing.id }, data: { ...next, updatedById: session.userId } });
         else {
           try {
@@ -342,6 +375,27 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
           }
         }
         result.changed++;
+      } else if (opInput.op === "lifecycle" && lifecycleRequest) {
+        // Inbox V3, both kinds, through the same rules and writer as the side panel.
+        try {
+          await changeConversationStatus(ref, lifecycleRequest, session.userId);
+          result.changed++;
+        } catch (err) {
+          if (!(err instanceof LifecycleChangeError)) throw err;
+          if (/already/.test(err.message)) result.unchanged++;
+          else {
+            result.skipped++;
+            note(err.message);
+          }
+        }
+      } else if (ref.kind === "whatsapp" && (opInput.op === "assignee" || opInput.op === "team")) {
+        const current = await loadLifecycle(ref);
+        const same = opInput.op === "assignee" ? current.assignedUserId === opInput.userId : current.assignedTeamId === opInput.teamId;
+        if (same) result.unchanged++;
+        else {
+          await assignWhatsAppConversation(ref, opInput.op === "assignee" ? { userId: opInput.userId } : { teamId: opInput.teamId }, session.userId);
+          result.changed++;
+        }
       } else if (ref.kind === "channel") {
         const before = await prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { assignedUserId: true, assignedTeamId: true, status: true } });
         if (!before) {
@@ -373,6 +427,14 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
       result.failed++;
       note("Some changes failed; try those conversations again.");
     }
+  }
+  if (toDistribute.length) {
+    const spread = await distributeConversations(toDistribute, session.userId);
+    if ("error" in spread) return spread;
+    result.changed += spread.assigned;
+    result.unchanged += spread.alreadyAssigned;
+    result.skipped += spread.skipped;
+    for (const s of spread.notes) note(s);
   }
   return result;
 }

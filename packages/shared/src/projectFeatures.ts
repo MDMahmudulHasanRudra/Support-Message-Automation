@@ -260,6 +260,37 @@ export const PROJECT_FEATURES = [
     workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
   },
   {
+    key: "UNIFIED_INBOX_V3",
+    label: "Inbox V3 — conversation status, snooze and assignment",
+    description:
+      "Open / Pending / Snoozed / Resolved on every WhatsApp and channel conversation, snooze with automatic reopen, a reopen-on-customer-message policy, user and Team assignment for WhatsApp conversations, and their history. Off = the conversation views exactly as before; recorded states are kept.",
+    // A presentation and workflow switch over existing pages (messages.view to read, the reply keys to write).
+    defaultEnabled: false,
+    routes: ["/settings/inbox-status"],
+    permissionKeys: [],
+    workerEffect: "Stops reopening snoozed conversations and stops applying the reopen policy to new customer messages.",
+  },
+  {
+    key: "CSAT_SURVEYS",
+    label: "Satisfaction surveys (CSAT)",
+    description:
+      "\"How did we do? 1–5\" after a conversation is resolved, on the channels the project chooses (website chat card, Messenger, Instagram, Telegram, WhatsApp personal chats), with a CSAT report per agent and channel (CSAT.md). Never in a WhatsApp group, never to a team member, at most once per customer per cooldown. Needs Inbox V3. Off = nothing is asked; recorded answers are kept.",
+    defaultEnabled: false,
+    routes: ["/settings/csat", "/reports/csat", "/api/reports/csat"],
+    permissionKeys: [],
+    workerEffect: "Stops asking satisfaction surveys and stops reading ratings from customer messages; surveys waiting to go out are skipped.",
+  },
+  {
+    key: "AUTO_ROUTING",
+    label: "Automatic conversation routing",
+    description:
+      "Gives each new customer conversation to one person automatically — round robin or least busy — from a chosen pool, respecting each person's permission, the roster, leave and a limit of open conversations (AUTO_ROUTING.md). Needs Inbox V3. Off = nobody is assigned automatically; assignments already made are kept.",
+    defaultEnabled: false,
+    routes: ["/settings/auto-routing"],
+    permissionKeys: [],
+    workerEffect: "Stops assigning new conversations; nothing already assigned changes.",
+  },
+  {
     key: "PRODUCT_CATALOG",
     label: "Product Catalog",
     description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",
@@ -335,6 +366,18 @@ export const PROJECT_FEATURES = [
     permissionKeys: ["social.view", "social.edit", "social.approve", "social.publish", "social.manage"],
     workerEffect:
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
+  },
+  {
+    key: "FOLLOW_UPS",
+    label: "Follow-ups",
+    description:
+      "A personal and team to-do list for call-backs, technician visits and promised replies: due dates, a person or Team, priority, a link to the conversation or client, and Overdue / Due today reminders inside the app (FOLLOW_UPS.md). Nothing is ever sent to a customer.",
+    // Reading uses messages.view; changing one uses the reply key of the conversation it is about
+    // (messages.reply / conversations.reply). No key of its own.
+    defaultEnabled: false,
+    routes: ["/follow-ups"],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Follow-ups and their history are kept; the reminder badge disappears.",
   },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 

@@ -17,6 +17,12 @@ export interface AiFallbackEligibilityContext {
   /** Real wall-clock time, passed explicitly to keep this function pure/testable — never a
    * message-derived timestamp, which could be backdated on a replayed/retried event. */
   now: Date;
+  /**
+   * A one-to-one chat where the admin let AI answer a customer's own account question by itself
+   * (AiSettings.clientAccountAutoReply, AI_CLIENT_ANSWERS.md). Every other direct message stays ineligible, and
+   * the caller narrows this further: only a verified customer's account question goes on.
+   */
+  personalAccountAnswers?: boolean;
   /** The project's AI_REPLY entitlement (MULTI_PROJECT_PLAN.md §9). Absent means entitled. */
   aiReplyEntitled?: boolean;
 }
@@ -45,21 +51,21 @@ export function checkAiFallbackEligibility(ctx: AiFallbackEligibilityContext): A
   if (ctx.mode === "MANUAL_ONLY") {
     return { eligible: false, reason: "Automation mode is MANUAL_ONLY; AI fallback never runs." };
   }
-  if (!ctx.group) {
+  if (!ctx.group && !ctx.personalAccountAnswers) {
     return { eligible: false, reason: "Message has no monitored group (AI fallback is per-group opt-in only)." };
   }
-  if (!ctx.group.isMonitored) {
+  if (ctx.group && !ctx.group.isMonitored) {
     return { eligible: false, reason: "The message's group is not a monitored conversation." };
   }
   // Checked before the scope rules, never after: an explicit exclusion has to beat a broad
   // "answer everywhere" setting, or the switch would not be worth having.
-  if (ctx.group.aiAutomationExcluded) {
+  if (ctx.group?.aiAutomationExcluded) {
     return { eligible: false, reason: "This group is explicitly excluded from AI automation." };
   }
-  if (ctx.scope === "PER_GROUP" && !ctx.group.aiAutomationEnabled) {
+  if (ctx.group && ctx.scope === "PER_GROUP" && !ctx.group.aiAutomationEnabled) {
     return { eligible: false, reason: "AI Automation is not enabled for this group." };
   }
-  if (ctx.group.aiSuppressedUntil && ctx.group.aiSuppressedUntil > ctx.now) {
+  if (ctx.group?.aiSuppressedUntil && ctx.group.aiSuppressedUntil > ctx.now) {
     // Human takeover: a team member is actively handling this group right now — silent, same
     // zero-side-effect philosophy as every other gate. Deterministic rules/escalation are
     // completely unaffected; only the AI fallback stage is paused, and only for this one group.

@@ -2,7 +2,7 @@ import { projectHasFeature } from "../project/features.js";
 import { createAiFallbackDecision, createRuleProposalFromAiReply, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { isMediaOnlyBody, validateCommerceFigures } from "@support-automation/shared";
+import { isMediaOnlyBody, isPersonalChatId } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { checkAiFallbackEligibility } from "./eligibility.js";
@@ -10,6 +10,7 @@ import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { findCommerceGrounding, verifiedWhatsAppPhone } from "./commerceContext.js";
+import { findClientAccountGrounding, isPersonalRecordEntry, moneyFiguresGrounded, personalAccountGrounding } from "./clientAccountContext.js";
 import { buildEvidenceBundle, fingerprintOf, recordEvidenceSnapshot } from "./evidenceSnapshot.js";
 import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
@@ -33,7 +34,8 @@ import { getAiSettings } from "../ai/settings.js";
  * the prompt or the retrieval contract changes in a way that could move an answer.
  */
 // 2026-10-30.1: commerce rules and catalogue/order entries, present only when commerce answers are on.
-const PROMPT_VERSION = "2026-10-30.1";
+// 2026-11-07.1: customer account rules and entries, present only when account answers are on.
+const PROMPT_VERSION = "2026-11-07.1";
 const RETRIEVAL_VERSION = "bm25f.2026-09-18.1";
 
 export interface RunAiFallbackParams {
@@ -97,8 +99,23 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     scope: aiSettings.aiAutomationScope,
     now: new Date(),
     aiReplyEntitled: await projectHasFeature("AI_REPLY"),
+    personalAccountAnswers: !params.group && aiSettings.clientAccountAutoReply && isPersonalChatId(params.chatId),
   });
   if (!eligibility.eligible) return;
+
+  // A one-to-one chat reaches here only with the admin's switch on, and goes further only for a verified customer's
+  // own account question (AI_CLIENT_ANSWERS.md). Everything else ends here, before any decision row or alert.
+  const personalAccount = params.group
+    ? null
+    : await personalAccountGrounding({
+        text: params.message.body,
+        switches: aiSettings,
+        accountId: params.accountId,
+        chatId: params.chatId,
+        takeoverMinutes: aiSettings.humanTakeoverCooldownMinutes,
+        verifiedPhone: () => verifiedWhatsAppPhone(params.message.id),
+      });
+  if (!params.group && !personalAccount) return;
 
   // Resolved independently of the (possibly mocked, in tests) completion result — mirrors
   // aiAnalysisJob.ts's own pattern, and matters for correctness: AiFallbackDecision.aiProviderId
@@ -183,7 +200,8 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     // say — "we could not understand this, the support team will follow up". Runs only on the pass
     // that claimed the decision above, so a re-run can never send it twice; the throttle-caused
     // handovers never qualify (see packages/shared/src/unableToUnderstand.ts).
-    const holdingReplyId = await sendUnableToUnderstandReply({
+    // A one-to-one chat never gets one: AI spoke there only because it had the customer's own answer to give.
+    const holdingReplyId = !params.group ? null : await sendUnableToUnderstandReply({
       reason,
       aiSettings,
       automationSettings: params.automationSettings,
@@ -316,6 +334,25 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     await recordHumanFallback("COMMERCE_REQUEST");
     return;
   }
+  // The customer's own package, expiry and dues, when account answers are on (AI_CLIENT_ANSWERS.md). Off
+  // by default, and then nothing here runs and nothing below changes. Only a one-to-one chat with a
+  // number WhatsApp itself delivered can be a verified customer, so a group gets no account data. A
+  // request to pay, renew, change a package or disconnect goes to a person.
+  const account = personalAccount ?? await findClientAccountGrounding({
+    text: params.message.body,
+    switches: aiSettings,
+    customer: {
+      kind: "WHATSAPP",
+      accountId: params.accountId,
+      chatId: params.chatId,
+      isGroup: Boolean(params.group) || params.chatId.endsWith("@g.us"),
+      verifiedPhone: () => verifiedWhatsAppPhone(params.message.id),
+    },
+  });
+  if (account.handoverReason) {
+    await recordHumanFallback(account.handoverReason);
+    return;
+  }
 
   const conversation = await loadConversationContext({
     accountId: params.accountId,
@@ -344,7 +381,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
 
   // Catalogue and order entries go first: for a question they match, they are the most specific facts
   // there are. They are this team's own data, so they ground an answer like verified knowledge does.
-  if (commerce.snippets.length) knowledge = [...commerce.snippets, ...knowledge];
+  if (commerce.snippets.length || account.snippets.length) knowledge = [...commerce.snippets, ...account.snippets, ...knowledge];
 
   let deepAnswerReason: string | undefined;
   if (knowledge.length === 0 && mayResearch) {
@@ -404,6 +441,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
         conversation,
         planGuidance: renderAnswerPlan(plan),
         commerceRules: commerce.rules,
+        accountRules: account.rules,
       }),
     );
   } catch (err) {
@@ -501,9 +539,9 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     return;
   }
 
-  // "Never invent a price", checked mechanically: with commerce answers on, every money amount in the
-  // reply must be written in the catalogue or order entries it was given (AI_COMMERCE.md).
-  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) {
+  // "Never invent a price", checked mechanically: with commerce or account answers on, every money amount
+  // in the reply must be written in what it was given (AI_COMMERCE.md, AI_CLIENT_ANSWERS.md).
+  if (!moneyFiguresGrounded(parsed.responseText, commerce, account, knowledge)) {
     await recordHumanFallback("UNGROUNDED_PRICE", commonFields);
     return;
   }
@@ -584,6 +622,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     // model talking about the world, not this business stating its position, so it must never
     // harden into one — even when the model was confident.
     groundedInVerifiedKnowledge,
+    usedPersonalRecord: knowledge.some((k) => isPersonalRecordEntry(k.id)),
     customerMessage: params.message.body,
     replyText: parsed.responseText,
     confidence: parsed.confidence,
@@ -606,6 +645,8 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
 async function maybeDraftRuleFromReply(params: {
   aiSettings: AiSettings;
   groundedInVerifiedKnowledge: boolean;
+  /** The answer used one person's account, dues or order. It must never harden into a standing answer. */
+  usedPersonalRecord: boolean;
   customerMessage: string;
   replyText: string;
   confidence: number;
@@ -615,6 +656,7 @@ async function maybeDraftRuleFromReply(params: {
 }): Promise<void> {
   if (!params.aiSettings.aiRuleGenerationEnabled) return;
   if (!params.groundedInVerifiedKnowledge) return;
+  if (params.usedPersonalRecord) return;
   if (params.confidence < params.aiSettings.aiRuleGenerationMinConfidence) return;
 
   try {

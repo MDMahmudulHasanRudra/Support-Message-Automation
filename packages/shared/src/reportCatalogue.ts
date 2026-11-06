@@ -263,6 +263,17 @@ export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
     exports: BOTH,
     generic: true,
   },
+  {
+    // Its own page (CSAT.md): it reads satisfaction surveys, not the Team Report's message dataset.
+    id: "csat",
+    href: "/reports/csat",
+    label: "Customer Satisfaction (CSAT)",
+    category: "Support Performance",
+    description: "Answers to “How did we do? 1–5” after resolved conversations: CSAT (4–5 of the answered), response rate and average, per agent and per channel, with every rated conversation.",
+    question: "How satisfied are customers with how their conversations were resolved?",
+    exports: ["CSV"],
+    generic: false,
+  },
 ];
 
 export const GENERIC_REPORT_IDS = REPORT_CATALOGUE.filter((r) => r.generic).map((r) => r.id);

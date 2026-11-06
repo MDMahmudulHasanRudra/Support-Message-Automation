@@ -40,46 +40,46 @@
   color-scheme: light;
 
   /* Base surfaces — slate family (was zinc) */
-  --color-background: #f8fafc;
+  --color-background: #f3f7f7;
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
-  --color-surface-sunken: #f1f5f9;
-  --color-foreground: #0f172a;
-  --color-muted-foreground: #64748b;
-  --color-subtle-foreground: #94a3b8;
-  --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;
+  --color-surface-sunken: #eaf1f1;
+  --color-foreground: #0f2a2f;
+  --color-muted-foreground: #4d666b;
+  --color-subtle-foreground: #7a8f93;
+  --color-border: #dce6e6;
+  --color-border-strong: #c2d0d1;
 
   /* Primary action — the palette's own Primary navy. Solid, high contrast,
      no gradient: an operations console's main action is authority, not flair. */
-  --color-primary: #0f172a;
-  --color-primary-hover: #1e293b;
-  --color-primary-active: #020617;
-  --color-primary-soft: #e2e8f0;
-  --color-primary-softer: #eef2f6;
-  --color-on-primary: #f8fafc;
-  --gradient-primary: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  --color-primary: #0b3d45;
+  --color-primary-hover: #0e4c55;
+  --color-primary-active: #08303a;
+  --color-primary-soft: #d9e8e8;
+  --color-primary-softer: #ebf3f3;
+  --color-on-primary: #f2faf9;
+  --gradient-primary: linear-gradient(180deg, #0e4c55 0%, #0b3d45 100%);
 
   /* Accent — the palette's Secondary indigo. This is the ONE saturated brand
      hue in the whole console, and it is spent deliberately: the active-nav
      indicator, focus rings, links, and a single chart identity slot. It never
      appears in a status badge or an ordinary button — see the standards this
      app already had for why brand color and status color must stay separate. */
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
-  --color-accent-bg: #eef2ff;
-  --color-accent-border: #c7d2fe;
-  --color-accent-fg: #4338ca;
+  --color-accent: #0e7c86;
+  --color-accent-hover: #0b6a73;
+  --color-accent-bg: #e4f4f4;
+  --color-accent-border: #b4dcdd;
+  --color-accent-fg: #0a656e;
 
   /* Secondary accent — Cyan, the deliberately smaller 5% voice. A distinct
      token family from `--color-info` just below even though both sit in a
      blue-green family: this one is a BRAND accent (secondary buttons, a
      secondary badge tone, one "notable metric" highlight), not a status. */
-  --color-secondary: #0891b2;
-  --color-secondary-hover: #0e7490;
-  --color-secondary-bg: #ecfeff;
-  --color-secondary-border: #a5f3fc;
-  --color-secondary-fg: #0e7490;
+  --color-secondary: #d98a14;
+  --color-secondary-hover: #b97510;
+  --color-secondary-bg: #fdf3e0;
+  --color-secondary-border: #f5d9a0;
+  --color-secondary-fg: #8f5a05;
 
   /* Semantic status scale — used identically everywhere, unchanged by the
      rebrand: a status color's job is to mean the same thing on every theme. */
@@ -106,30 +106,30 @@
   --color-info-border: #bae6fd;
   --color-info-fg: #0369a1;
 
-  --color-neutral-bg: #f1f5f9;
-  --color-neutral-border: #e2e8f0;
-  --color-neutral-fg: #475569;
+  --color-neutral-bg: #edf3f3;
+  --color-neutral-border: #dce6e6;
+  --color-neutral-fg: #44595d;
 
-  --color-focus-ring: #4f46e5;
+  --color-focus-ring: #0e7c86;
 
   /* Chart palette — UNCHANGED. Already validated (lightness band, chroma
      floor, CVD separation, normal-vision floor) against this app's own
      surfaces; a rebrand is not grounds to re-risk an accessibility pass. */
-  --chart-1: #2a78d6;
-  --chart-2: #eb6834;
+  --chart-1: #0e8a94;
+  --chart-2: #eb7f34;
   --chart-3: #1baf7a;
   --chart-4: #eda100;
-  --chart-5: #e87ba4;
-  --chart-6: #008300;
-  --chart-grid: #ececef;
-  --chart-track: #f1f1f3;
+  --chart-5: #d9608f;
+  --chart-6: #3b6fd4;
+  --chart-grid: #e6eded;
+  --chart-track: #edf3f3;
 
   /* Radius scale — tighter on inner elements, softer on containers */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 18px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 
   /* Elevation — tinted with the neutral hue, never pure black, plus a hairline
      top highlight so every raised surface reads as one light source. */
@@ -182,39 +182,39 @@
     /* A dark navy ground (drawn from Primary's own hue), not a neutral black —
        the brand's anchor color IS the dark-mode canvas, which is the whole
        point of choosing a near-black "Primary" in the first place. */
-    --color-background: #0b1220;
-    --color-surface: #111a2e;
-    --color-surface-raised: #16213a;
-    --color-surface-sunken: #0a1120;
-    --color-foreground: #f1f5f9;
-    --color-muted-foreground: #94a3b8;
-    --color-subtle-foreground: #64748b;
-    --color-border: #223049;
-    --color-border-strong: #324563;
+    --color-background: #06191d;
+    --color-surface: #0b252a;
+    --color-surface-raised: #0f2e34;
+    --color-surface-sunken: #051418;
+    --color-foreground: #e6f2f2;
+    --color-muted-foreground: #93b0b4;
+    --color-subtle-foreground: #64838a;
+    --color-border: #173a40;
+    --color-border-strong: #24525a;
 
     /* Primary flips to light ink for contrast against the dark navy ground —
        same reason every dark theme inverts its "solid button" value. */
-    --color-primary: #f1f5f9;
+    --color-primary: #e6f2f2;
     --color-primary-hover: #ffffff;
-    --color-primary-active: #cbd5e1;
-    --color-primary-soft: #223049;
-    --color-primary-softer: #16213a;
-    --color-on-primary: #0b1220;
-    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+    --color-primary-active: #c0d6d6;
+    --color-primary-soft: #173a40;
+    --color-primary-softer: #0f2e34;
+    --color-on-primary: #06191d;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d5e6e6 100%);
 
     /* Accent stays the same indigo hue, lifted slightly for dark-ground contrast. */
-    --color-accent: #6366f1;
-    --color-accent-hover: #818cf8;
-    --color-accent-bg: #1e1b4b;
-    --color-accent-border: #3730a3;
-    --color-accent-fg: #a5b4fc;
+    --color-accent: #2bb3bd;
+    --color-accent-hover: #4fc8d0;
+    --color-accent-bg: #0a3338;
+    --color-accent-border: #125860;
+    --color-accent-fg: #6fd6dc;
 
     /* Secondary Cyan, lifted the same way as Accent for the same reason. */
-    --color-secondary: #22d3ee;
-    --color-secondary-hover: #67e8f9;
-    --color-secondary-bg: #083344;
-    --color-secondary-border: #155e75;
-    --color-secondary-fg: #67e8f9;
+    --color-secondary: #f2b54a;
+    --color-secondary-hover: #f7cb7a;
+    --color-secondary-bg: #2c1f08;
+    --color-secondary-border: #6b4a10;
+    --color-secondary-fg: #f7cb7a;
 
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
@@ -244,20 +244,20 @@
     --color-info-border: #075985;
     --color-info-fg: #7dd3fc;
 
-    --color-neutral-bg: #16213a;
-    --color-neutral-border: #263657;
-    --color-neutral-fg: #94a3b8;
+    --color-neutral-bg: #0f2e34;
+    --color-neutral-border: #1c434a;
+    --color-neutral-fg: #93b0b4;
 
-    --color-focus-ring: #818cf8;
+    --color-focus-ring: #4fc8d0;
 
-    --chart-1: #3987e5;
-    --chart-2: #d95926;
+    --chart-1: #2bb3bd;
+    --chart-2: #e07a30;
     --chart-3: #199e70;
     --chart-4: #c98500;
     --chart-5: #d55181;
-    --chart-6: #008300;
-    --chart-grid: #1c2740;
-    --chart-track: #16213a;
+    --chart-6: #5b8be0;
+    --chart-grid: #14353b;
+    --chart-track: #0f2e34;
     --texture-opacity: 0.35;
   }
 }
@@ -265,35 +265,35 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-background: #0b1220;
-  --color-surface: #111a2e;
-  --color-surface-raised: #16213a;
-  --color-surface-sunken: #0a1120;
-  --color-foreground: #f1f5f9;
-  --color-muted-foreground: #94a3b8;
-  --color-subtle-foreground: #64748b;
-  --color-border: #223049;
-  --color-border-strong: #324563;
+  --color-background: #06191d;
+  --color-surface: #0b252a;
+  --color-surface-raised: #0f2e34;
+  --color-surface-sunken: #051418;
+  --color-foreground: #e6f2f2;
+  --color-muted-foreground: #93b0b4;
+  --color-subtle-foreground: #64838a;
+  --color-border: #173a40;
+  --color-border-strong: #24525a;
 
-  --color-primary: #f1f5f9;
+  --color-primary: #e6f2f2;
   --color-primary-hover: #ffffff;
-  --color-primary-active: #cbd5e1;
-  --color-primary-soft: #223049;
-  --color-primary-softer: #16213a;
-  --color-on-primary: #0b1220;
-  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e2e8f0 100%);
+  --color-primary-active: #c0d6d6;
+  --color-primary-soft: #173a40;
+  --color-primary-softer: #0f2e34;
+  --color-on-primary: #06191d;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d5e6e6 100%);
 
-  --color-accent: #6366f1;
-  --color-accent-hover: #818cf8;
-  --color-accent-bg: #1e1b4b;
-  --color-accent-border: #3730a3;
-  --color-accent-fg: #a5b4fc;
+  --color-accent: #2bb3bd;
+  --color-accent-hover: #4fc8d0;
+  --color-accent-bg: #0a3338;
+  --color-accent-border: #125860;
+  --color-accent-fg: #6fd6dc;
 
-  --color-secondary: #22d3ee;
-  --color-secondary-hover: #67e8f9;
-  --color-secondary-bg: #083344;
-  --color-secondary-border: #155e75;
-  --color-secondary-fg: #67e8f9;
+  --color-secondary: #f2b54a;
+  --color-secondary-hover: #f7cb7a;
+  --color-secondary-bg: #2c1f08;
+  --color-secondary-border: #6b4a10;
+  --color-secondary-fg: #f7cb7a;
 
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.45), 0 1px 6px -2px rgb(0 0 0 / 0.4);
@@ -323,20 +323,20 @@
   --color-info-border: #075985;
   --color-info-fg: #7dd3fc;
 
-  --color-neutral-bg: #16213a;
-  --color-neutral-border: #263657;
-  --color-neutral-fg: #94a3b8;
+  --color-neutral-bg: #0f2e34;
+  --color-neutral-border: #1c434a;
+  --color-neutral-fg: #93b0b4;
 
-  --color-focus-ring: #818cf8;
+  --color-focus-ring: #4fc8d0;
 
-  --chart-1: #3987e5;
-  --chart-2: #d95926;
+  --chart-1: #2bb3bd;
+  --chart-2: #e07a30;
   --chart-3: #199e70;
   --chart-4: #c98500;
   --chart-5: #d55181;
-  --chart-6: #008300;
-  --chart-grid: #1c2740;
-  --chart-track: #16213a;
+  --chart-6: #5b8be0;
+  --chart-grid: #14353b;
+  --chart-track: #0f2e34;
   --texture-opacity: 0.35;
 }
 
@@ -431,6 +431,66 @@ body::before {
 
 .skip-link:focus-visible {
   transform: translateY(0);
+}
+
+/* The Tide Board: one deep field holds the header and the navigation, and the working sheet sits inside it.
+   The field re-scopes the ordinary tokens, so every component inside (nav, switcher, search, badges) needs no
+   special case and the sheet keeps its own. It stays deep in light and dark alike, and a white-label brand
+   colour moves it through the three --tide-* values (lib/branding.ts). */
+:root {
+  --tide-bg: #083138;
+  --tide-active: #0f6f79;
+  --tide-mark: #f2b54a;
+  --marigold: #f2b54a;
+}
+.tide-field {
+  color-scheme: dark;
+  --color-background: var(--tide-bg);
+  --color-surface: color-mix(in oklab, var(--tide-bg) 90%, white);
+  --color-surface-raised: color-mix(in oklab, var(--tide-bg) 85%, white);
+  --color-surface-sunken: color-mix(in oklab, var(--tide-bg) 88%, black);
+  --color-foreground: #f1f9f8;
+  --color-muted-foreground: #b4cfd1;
+  --color-subtle-foreground: #8bb0b4;
+  --color-border: color-mix(in oklab, var(--tide-bg) 80%, white);
+  --color-border-strong: color-mix(in oklab, var(--tide-bg) 68%, white);
+  --color-primary: #f1f9f8;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #cfe3e3;
+  --color-primary-soft: color-mix(in oklab, var(--tide-bg) 80%, white);
+  --color-primary-softer: color-mix(in oklab, var(--tide-bg) 90%, white);
+  --color-on-primary: var(--tide-bg);
+  --color-accent: var(--tide-mark);
+  --color-accent-hover: var(--tide-mark);
+  --color-accent-bg: rgb(255 255 255 / 0.1);
+  --color-accent-border: rgb(255 255 255 / 0.2);
+  --color-accent-fg: var(--tide-mark);
+  --color-neutral-bg: rgb(255 255 255 / 0.09);
+  --color-neutral-border: color-mix(in oklab, var(--tide-bg) 80%, white);
+  --color-neutral-fg: #cfe2e3;
+  --color-focus-ring: var(--tide-mark);
+  --color-success: #3fd08a;
+  --color-success-bg: rgb(63 208 138 / 0.14);
+  --color-success-border: rgb(63 208 138 / 0.35);
+  --color-success-fg: #7fe6b3;
+  --color-warning: #f2b54a;
+  --color-warning-bg: rgb(242 181 74 / 0.14);
+  --color-warning-border: rgb(242 181 74 / 0.35);
+  --color-warning-fg: #f7cb7a;
+  --color-danger: #ff8a7a;
+  --color-danger-bg: rgb(255 138 122 / 0.14);
+  --color-danger-border: rgb(255 138 122 / 0.35);
+  --color-danger-fg: #ffb3a7;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+/* A long list in a tool used all day: the scrollbar appears when the pane is pointed at, not before. */
+.scroll-quiet {
+  scrollbar-color: transparent transparent;
+}
+.scroll-quiet:hover,
+.scroll-quiet:focus-within {
+  scrollbar-color: var(--color-border-strong) transparent;
 }
 
 /* Slim, low-profile scrollbars that stay out of the way of dense dashboard content */

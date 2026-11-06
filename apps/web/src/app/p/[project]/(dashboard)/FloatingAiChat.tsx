@@ -7,7 +7,13 @@ import { sendAiAdminMessage, type AiAdminChatState } from "@/server/actions/aiAd
 
 const INITIAL_STATE: AiAdminChatState = { turns: [] };
 
-export function FloatingAiChat() {
+const OPEN_EVENT = "open-ai-assistant";
+/** Opens the assistant from a control outside it (the inbox's header, where a floating button would cover the composer). */
+export function openAiAssistant() {
+  window.dispatchEvent(new Event(OPEN_EVENT));
+}
+
+export function FloatingAiChat({ hideLauncher = false }: { hideLauncher?: boolean }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState(sendAiAdminMessage, INITIAL_STATE);
   const formRef = useRef<HTMLFormElement>(null);
@@ -21,7 +27,14 @@ export function FloatingAiChat() {
     formRef.current?.reset();
   }, [state.turns.length]);
 
+  useEffect(() => {
+    const onOpen = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_EVENT, onOpen);
+  }, []);
+
   if (!open) {
+    if (hideLauncher) return null;
     return (
       <button
         type="button"

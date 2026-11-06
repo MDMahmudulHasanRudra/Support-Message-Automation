@@ -3,7 +3,7 @@
 import { isInboxScope, parseInboxFilterSet } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
-import { loadInbox, type InboxResult } from "@/server/channels/inbox";
+import { loadInbox, loadMoreMessageMatches, type InboxItem, type InboxResult, type MessageSearchInfo } from "@/server/channels/inbox";
 import {
   assignChannelConversation,
   ChannelReplyError,
@@ -42,6 +42,13 @@ export async function listInboxAction(input: { scope: string; filters?: unknown 
   return loadInbox({ scope: input.scope, filters: parseInboxFilterSet(input.filters), viewerId: access.session.userId });
 }
 
+/** Inbox V3: the next page of conversations whose message text matches the search. Refuses as an empty page. */
+export async function moreMessageMatchesAction(input: { scope: string; filters?: unknown; cursor: string; seen?: unknown }): Promise<{ items: InboxItem[]; messageSearch: MessageSearchInfo | null }> {
+  const access = await checkPermission("messages.view", "OMNICHANNEL");
+  if ("denied" in access || !isInboxScope(input.scope) || typeof input.cursor !== "string") return { items: [], messageSearch: null };
+  return loadMoreMessageMatches({ scope: input.scope, filters: parseInboxFilterSet(input.filters), viewerId: access.session.userId, cursor: input.cursor, seen: Array.isArray(input.seen) ? input.seen.filter((k): k is string => typeof k === "string").slice(0, 1_000) : [] });
+}
+
 export async function sendChannelReplyAction(conversationId: string, text: string, nonce: string): Promise<InboxActionResult & { messageId?: string }> {
   const access = await checkPermission("conversations.reply");
   if ("denied" in access) return { error: access.denied };
@@ -57,7 +64,7 @@ export async function retryChannelReplyAction(messageId: string, confirmedUnknow
   const access = await checkPermission("conversations.reply");
   if ("denied" in access) return { error: access.denied };
   try {
-    await retryChannelReply({ messageId, confirmedUnknown });
+    await retryChannelReply({ messageId, confirmedUnknown, actor: { userId: access.session.userId, username: access.session.username } });
     await logSystemEvent("INFO", "channels", "A channel reply was queued again", { confirmedUnknown }, { actorUserId: access.session.userId, targetType: "ChannelMessage", targetId: messageId });
     return { success: "Queued again." };
   } catch (err) {

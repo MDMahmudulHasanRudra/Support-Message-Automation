@@ -117,6 +117,9 @@ export function contrastOnWhite(hex: string): number {
 export function accentStyleSheet(hex: string): string {
   const light = [
     `--color-accent:${hex}`,
+    `--tide-mark:color-mix(in oklab,${hex} 62%,white)`,
+    `--tide-bg:color-mix(in oklab,${hex} 26%,#04181d)`,
+    `--tide-active:color-mix(in oklab,${hex} 62%,#083138)`,
     `--color-accent-hover:color-mix(in oklab,${hex} 82%,black)`,
     `--color-accent-bg:color-mix(in oklab,${hex} 9%,white)`,
     `--color-accent-border:color-mix(in oklab,${hex} 32%,white)`,
@@ -126,8 +129,8 @@ export function accentStyleSheet(hex: string): string {
   const dark = [
     `--color-accent:color-mix(in oklab,${hex} 85%,white)`,
     `--color-accent-hover:color-mix(in oklab,${hex} 65%,white)`,
-    `--color-accent-bg:color-mix(in oklab,${hex} 22%,#0b1220)`,
-    `--color-accent-border:color-mix(in oklab,${hex} 55%,#0b1220)`,
+    `--color-accent-bg:color-mix(in oklab,${hex} 22%,#06191d)`,
+    `--color-accent-border:color-mix(in oklab,${hex} 55%,#06191d)`,
     `--color-accent-fg:color-mix(in oklab,${hex} 55%,white)`,
     `--color-focus-ring:color-mix(in oklab,${hex} 75%,white)`,
   ].join(";");

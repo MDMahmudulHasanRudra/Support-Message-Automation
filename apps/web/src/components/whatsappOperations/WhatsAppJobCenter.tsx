@@ -19,7 +19,7 @@ import { refreshWhatsAppOperations, useWhatsAppOperations } from "./operationsSt
  *
  * It never owns or drives a job. Closing it, navigating or refreshing changes nothing about the work.
  */
-export function WhatsAppJobCenter({ projectSlug, besideAiChat }: { projectSlug: string; besideAiChat: boolean }) {
+export function WhatsAppJobCenter({ projectSlug, besideAiChat, overInbox = false }: { projectSlug: string; besideAiChat: boolean; overInbox?: boolean }) {
   const { ops } = useWhatsAppOperations(projectSlug);
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -44,7 +44,8 @@ export function WhatsAppJobCenter({ projectSlug, besideAiChat }: { projectSlug: 
   const lead = active[0];
   const leadPercent = lead && lead.total > 0 ? Math.floor((lead.processed / lead.total) * 100) : null;
   // Beside the AI assistant's button rather than on top of it.
-  const right = besideAiChat ? "right-[5.25rem]" : "right-6";
+  // Over the inbox it sits on the conversation list's corner, never on the composer and its Send button.
+  const right = overInbox ? "lg:left-[calc(var(--sidebar-width-collapsed)+0.75rem)] right-6 lg:right-auto" : besideAiChat ? "right-[5.25rem]" : "right-6";
 
   return (
     <>

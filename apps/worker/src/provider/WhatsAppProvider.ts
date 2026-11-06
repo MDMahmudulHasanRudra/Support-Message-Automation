@@ -82,6 +82,12 @@ export interface SendResult {
   success: boolean;
   providerMessageId?: string;
   error?: string;
+  /**
+   * A failed send whose outcome is not known: the call into WhatsApp Web threw (a timeout, a closed page)
+   * after the message may already have been handed over. The queue never retries such a row by itself
+   * (FAILED_REPLIES.md); a refusal the provider RETURNED (not connected, quote missing) leaves it unset.
+   */
+  uncertain?: boolean;
 }
 
 export interface SendOptions {

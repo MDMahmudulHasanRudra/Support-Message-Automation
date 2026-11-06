@@ -1,6 +1,7 @@
 import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
+  AlarmClock,
   AlertCircle,
   AlertTriangle,
   BarChart3,
@@ -56,6 +57,7 @@ import {
   MessageSquareOff,
   MessageSquareQuote,
   MessagesSquare,
+  MessageSquareWarning,
   Network,
   PackageSearch,
   PhoneCall,
@@ -71,6 +73,9 @@ import {
   SlidersHorizontal,
   Smartphone,
   Smile,
+  Star,
+  CircleDot,
+  Shuffle,
   Sparkles,
   Terminal as ConsoleIcon,
   Timer,
@@ -206,6 +211,9 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/support-escalation/policies", label: "Escalation Policies", icon: ShieldAlert },
       { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
       { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
+      { href: "/settings/inbox-status", label: "Inbox status", icon: CircleDot },
+      { href: "/settings/csat", label: "Satisfaction surveys", icon: Star },
+      { href: "/settings/auto-routing", label: "Automatic routing", icon: Shuffle },
       { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
     ],
   },
@@ -340,6 +348,7 @@ const REPORT_PRESENTATION: Record<string, { icon: LucideIcon; module: string }> 
   heatmap: { icon: Grid3x3, module: "WhatsApp support" },
   calls: { icon: PhoneCall, module: "WhatsApp support" },
   distribution: { icon: PieChart, module: "WhatsApp support" },
+  csat: { icon: Star, module: "Inbox" },
 };
 
 export const REPORT_PAGES: ReportPage[] = REPORT_CATALOGUE.map((entry) => ({
@@ -395,6 +404,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { href: "/messages?decision=IGNORE", label: "Ignored", icon: EyeOff },
           { href: "/messages/unanswered", label: "Unanswered groups", icon: Hourglass },
           { href: "/messages/response-time", label: "Response time", icon: Timer },
+          { href: "/messages/failed-replies", label: "Failed replies", icon: MessageSquareWarning },
         ],
       },
       {
@@ -409,6 +419,8 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
+      // Call-backs, visits and promised replies (FOLLOW_UPS.md). A project feature that ships off.
+      { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
     ],
   },
   {
@@ -663,6 +675,8 @@ const NAV_KEY_EXACT: Record<string, string> = {
   "/team-management/settings": "team_management.manage",
   // Shows message text, so it needs the chat's key rather than the other reports' support_activity.view.
   "/reports/whatsapp-user-activity": "messages.view",
+  // Satisfaction surveys (CSAT.md): its own page, the other reports' key.
+  "/reports/csat": "support_activity.view",
 };
 
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
@@ -691,6 +705,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/sales", "sales.view"],
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
+  ["/follow-ups", "messages.view"],
   ["/support-activity", "support_activity.view"],
   ["/support-assignment", "support_assignment.view"],
   ["/team-report", "support_activity.view"],

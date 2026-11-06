@@ -98,6 +98,15 @@ Incremental sequence for A (each is its own work package, see `16`):
    cursor X" and the client re-reads. Polling remains the fallback.
 4. **Queue claims with `FOR UPDATE SKIP LOCKED`** — removes the single-worker assumption from the queues first,
    without touching sessions.
+   *Built (P1-13, branch `queue/p1-13-claims`):* the WhatsApp send queue, alerts, channel replies and the email
+   outbox claim with `FOR UPDATE … SKIP LOCKED` in a short transaction; the conditional update stays as the second
+   guard and the send runs after the commit. Email's per-project limits are counted inside the claim under a
+   per-project advisory lock, so concurrent claimers cannot pass them. `WorkerCommand` deliberately keeps its
+   serial claim. `queueClaims.integration.test.ts` pins all of it.
+   **This is not account ownership and does not make a second WhatsApp worker safe.** A WhatsApp send, and almost
+   every command, needs the live session of one account, which only the process holding that browser can use. A
+   second session worker therefore waits on step 5: exclusive per-account ownership, lease renewal, a fencing token
+   checked on every send and command, and recovery of expired leases. Until step 5 exists, run exactly one worker.
 5. **Session ownership leases** (`WhatsAppAccount.ownerWorkerId` + `leaseExpiresAt`, renewed by heartbeat) so a
    second worker host can own a disjoint set of accounts. Only after 4, and only when one VPS's RAM is the limit.
 6. **Split heavy non-session loops** (learning, knowledge, Forge, reports precompute if ever needed) into a second

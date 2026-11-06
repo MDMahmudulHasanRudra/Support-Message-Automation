@@ -1,9 +1,10 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
 
-import { PROJECT_FEATURES, resolveAiCommercePolicy } from "@support-automation/shared";
+import { PROJECT_FEATURES, resolveAiClientAnswerPolicy, resolveAiCommercePolicy } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { pageAccess } from "@/server/authorize";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
+import { getClientModuleSettings } from "@/server/clientModule";
 import { HelpButton, HelpSection, PageHeader, ViewOnlyNotice } from "@/components/ui";
 import { AiSettingsForm } from "./AiSettingsForm";
 
@@ -23,6 +24,11 @@ export default async function AiSettingsPage() {
   const commerce = {
     modules: { catalog: enabled.has("PRODUCT_CATALOG"), orders: enabled.has("ORDERS"), courier: enabled.has("COURIER") },
     policy: resolveAiCommercePolicy(enabled, settings),
+  };
+  const clientModules = await getClientModuleSettings();
+  const clientAnswers = {
+    modules: { clients: enabled.has("CLIENT_CENTER"), subscriptions: clientModules.subscriptions, billing: clientModules.billing },
+    policy: resolveAiClientAnswerPolicy(enabled, clientModules, settings),
   };
 
   return (
@@ -74,12 +80,22 @@ export default async function AiSettingsPage() {
                 changes these switches; an answer simply stops while its module is off.
               </p>
             </HelpSection>
+            <HelpSection title="Customer account answers">
+              <p>
+                With Client Management on, AI can tell a customer their own package and when it expires, and
+                (separately switched, with Billing on) what they still owe. Only in a one-to-one WhatsApp chat,
+                only when the number WhatsApp delivered matches exactly one client record (or a person linked the
+                chat to the client), and never in a group. AI cannot take a payment or change, renew or disconnect
+                a package: those requests go straight to a person, and a reply naming an amount that is not in the
+                customer's own record is handed over instead of sent.
+              </p>
+            </HelpSection>
           </HelpButton>
         }
       />
 
       {canManage ? null : <ViewOnlyNotice />}
-      <AiSettingsForm settings={settings} groups={groups} commerce={commerce} />
+      <AiSettingsForm settings={settings} groups={groups} commerce={commerce} clientAnswers={clientAnswers} />
     </div>
   );
 }

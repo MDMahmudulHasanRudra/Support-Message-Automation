@@ -93,11 +93,14 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/messages": { label: "All messages (needs attention, ignored)", also: ["/ignored", "/needs-attention", "/api/whatsapp/media"] },
   "/messages/unanswered": { write: ["messages.reply"], also: ["/api/messages/support-response"] },
   "/messages/response-time": { also: ["/api/messages/support-response"] },
+  "/messages/failed-replies": { write: ["messages.reply", "conversations.reply"] },
   "/support-assignment/unanswered": { write: ["support_assignment.assign"], also: ["/support-assignment"] },
   "/support-assignment/mine": { write: ["support_assignment.assign"], also: ["/support-assignment"] },
   "/support-assignment/completed": { write: ["support_assignment.assign"], also: ["/support-assignment"] },
   "/support-assignment/report": { also: ["/api/support-assignment/report"] },
   "/support-escalation": { write: ["escalations.manage"] },
+  // Changing a follow-up needs the reply key of the conversation it is about (FOLLOW_UPS.md).
+  "/follow-ups": { write: ["messages.reply", "conversations.reply"] },
   // Clients
   "/clients": {
     write: [
@@ -201,6 +204,10 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-escalation/policies": { write: ["escalations.manage"] },
   "/support-activity/settings": { write: ["support_activity.manage"], also: ["/support-activity/keywords", "/support-activity/rules"] },
   "/settings/mood-detection": { write: ["settings.edit"] },
+  "/settings/inbox-status": { write: ["settings.edit"] },
+  "/settings/csat": { write: ["settings.edit"] },
+  "/reports/csat": { also: ["/api/reports/csat"] },
+  "/settings/auto-routing": { write: ["settings.edit"] },
   "/support-assignment/settings": { write: ["support_assignment.manage"] },
   "/team-management/shifts": { fullOnly: true, read: ["team_management.view"] },
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },
@@ -367,7 +374,9 @@ function under(path: string, prefix: string): boolean {
 
 /** Which part of the catalogue a path belongs to — the longest matching prefix. */
 export function claimForPath(rawPath: string): PathClaim {
-  const path = pathOf(rawPath).replace(/\/+$/, "") || "/";
+  const raw = pathOf(rawPath).replace(/\/+$/, "") || "/";
+  // A WhatsApp conversation opened in the unified inbox is WhatsApp Chat at another address: its keys, its page.
+  const path = /^\/conversations\/[^/]+\/w(\/|$)/.test(raw) ? "/chat" : raw;
   if (path === "/" || path === OVERVIEW_LINK.href) return { kind: "OVERVIEW" };
   const prefix = CLAIM_PREFIXES.find((p) => under(path, p));
   if (!prefix) return { kind: "UNKNOWN" };

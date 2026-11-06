@@ -3,7 +3,7 @@ import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/d
 import { prisma } from "../db.js";
 import type { Prisma } from "@prisma/client";
 import { evaluate, type EngineRule } from "@support-automation/engine";
-import type { RuleAction } from "@support-automation/shared";
+import { logEvent, type LogFields, type RuleAction } from "@support-automation/shared";
 import type { AiClient } from "@support-automation/ai-client";
 import { enqueueOutboundMessage } from "./enqueueOutbound.js";
 import { buildExecutionIdempotencyKey } from "./idempotency.js";
@@ -29,8 +29,12 @@ import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { recordMessagePictures } from "../avatars/whatsappPictures.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { trackSupportAssignment } from "../supportAssignment/tracker.js";
+import { recordWhatsAppConversationActivity } from "../inbox/lifecycle.js";
+import { recordCsatAnswerFromWhatsApp } from "../csat/csatSurveys.js";
+import { routeWhatsAppConversationOnMessage } from "../routing/autoRouting.js";
 import { recordMoodSignal } from "../mood/moodDetection.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
+import { messageTraceId } from "../logging/logRef.js";
 
 interface ActionExecutionRecord {
   type: RuleAction["type"];
@@ -46,16 +50,22 @@ interface ActionExecutionRecord {
  * WHATSAPP ACCOUNT SAFETY AND ANTI-SPAM REQUIREMENTS.md.
  */
 /**
- * PHASE 6.1 — observability only, added for the real-message acceptance
- * test (no behavior change): `${accountId}:${whatsappMessageId}` is already
- * a natural, unique correlation ID (it's the same pair the DB's own
- * @@unique constraint uses), so it's reused here rather than minting a new
- * one. Logged to console/docker logs only, not SystemLog — this fires on
- * every single message, and writing that to the DB-backed Logs page would
- * be a lasting volume/behavior change, not a test-only addition.
+ * PHASE 6.1 — observability only (no behavior change). The trace id is `messageTraceId()`: a reference to
+ * the `${accountId}:${whatsappMessageId}` pair (the DB's own @@unique), never the pair itself, because a
+ * WhatsApp message id embeds the chat and sender (logging/logRef.ts). Details carry ids, booleans,
+ * decisions and lengths only — never the text, a phone number or a WhatsApp id (logPrivacy.test.ts).
+ * Logged to console/docker logs only, not SystemLog — this fires on every single message, and writing
+ * that to the DB-backed Logs page would be a lasting volume/behavior change, not a test-only addition.
+ *
+ * Written through the shared logger (logEvent, P1-07): `[pipeline] STAGE trace=m… key=value`, or JSON with
+ * LOG_FORMAT=json. A list or object detail is written as compact JSON text, redacted like any value.
  */
 function traceStage(traceId: string, stage: string, details?: Record<string, unknown>): void {
-  console.log(`[pipeline] [${traceId}] ${stage}${details ? " " + JSON.stringify(details) : ""}`);
+  const fields: LogFields = { trace: traceId };
+  for (const [key, value] of Object.entries(details ?? {})) {
+    fields[key] = value === null || ["string", "number", "boolean"].includes(typeof value) ? (value as LogFields[string]) : JSON.stringify(value);
+  }
+  logEvent("info", "pipeline", stage, fields);
 }
 
 /** `aiClientOverride` is a test-only seam (mirrors processOneAiAnalysisBatch's clientOverride) — production's sole caller never passes it. */
@@ -66,7 +76,7 @@ export async function processIncomingMessage(raw: RawIncomingMessage, aiClientOv
 }
 
 async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClientOverride?: AiClient): Promise<void> {
-  const traceId = `${raw.accountId}:${raw.whatsappMessageId}`;
+  const traceId = messageTraceId(raw.accountId, raw.whatsappMessageId);
 
   // Deleted for everyone: nothing is left to store or answer, so it only marks the stored original
   // (CHAT_RICH_MESSAGING.md §3) — and is not counted as a dropped message, because it is not one.
@@ -98,17 +108,14 @@ async function processIncomingMessageInProject(raw: RawIncomingMessage, aiClient
   // between our numbers. Stored as the business's own message, which every reader already treats
   // as a reply (inbox, escalation, reports); nothing automates it (ownAccounts.ts).
   if (await isOwnAccountMessage(raw)) {
-    traceStage(traceId, "OWN_ACCOUNT_MESSAGE", { senderPhone: raw.senderPhone });
+    traceStage(traceId, "OWN_ACCOUNT_MESSAGE");
     await storeNonAutomatedMessage({ ...raw, direction: "OUTGOING" });
     return;
   }
 
-  traceStage(traceId, "MESSAGE_NORMALIZED", {
-    chatId: raw.chatId,
-    senderPhone: raw.senderPhone,
-    isGroup: Boolean(raw.whatsappGroupId),
-    bodyPreview: raw.body.slice(0, 80),
-  });
+  const isGroup = Boolean(raw.whatsappGroupId);
+  const bodyLength = raw.body.length;
+  traceStage(traceId, "MESSAGE_NORMALIZED", { isGroup, bodyLength, hasMedia: Boolean(raw.media) });
 
   // A suspended or archived project (§8) still STORES every message — collection is a push, and a
   // message not stored now is gone — but runs no rules and no AI, exactly like a message recovered
@@ -323,7 +330,6 @@ async function runAutomationStageInProject(
       select: { id: true, label: true },
     });
     if (primaryAccount && primaryAccount.id !== raw.accountId) {
-      const why = `it arrived on an account that is not Primary ("${primaryAccount.label}" is).`;
       traceStage(traceId, "AUTOMATION_RULE_CHECK", { matched: false, matchedRuleType: null });
       // Settled exactly as the ordinary no-match path does: PROCESSED, and the checkpoint moved.
       // Leaving it PENDING would make `recoverStrandedMessages` re-run it every few hours, and the
@@ -343,7 +349,7 @@ async function runAutomationStageInProject(
           lastProcessedTimestampWa: raw.timestampWa,
         },
       });
-      console.log(`[pipeline] [${traceId}] AUTOMATION_SKIPPED_NOT_PRIMARY ${why}`);
+      traceStage(traceId, "AUTOMATION_SKIPPED_NOT_PRIMARY", { primaryAccountId: primaryAccount.id });
       return;
     }
 
@@ -550,7 +556,7 @@ async function persistIncomingMessage(
 
   const group = await resolveGroup(raw);
   if (traceId && raw.whatsappGroupId) {
-    traceStage(traceId, "GROUP_RESOLVED", { whatsappGroupId: raw.whatsappGroupId, resolvedGroupId: group?.id ?? null });
+    traceStage(traceId, "GROUP_RESOLVED", { resolvedGroupId: group?.id ?? null });
   }
 
   // Fetch the previous message in this chat BEFORE inserting the current
@@ -642,6 +648,18 @@ async function persistIncomingMessage(
     hasMedia: Boolean(raw.media),
     timestampWa: raw.timestampWa,
   });
+
+  // Inbox V3 (inbox/lifecycle.ts): a customer's message reopens a recorded WhatsApp conversation by the
+  // project's policy. A no-op while UNIFIED_INBOX_V3 is off or nobody has acted on this chat. Never throws.
+  await recordWhatsAppConversationActivity({ accountId: raw.accountId, chatId: raw.chatId, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
+  // Automatic routing (routing/autoRouting.ts): an OPEN, unassigned conversation goes to one eligible person.
+  // A no-op unless AUTO_ROUTING and UNIFIED_INBOX_V3 are on and routing covers this chat. Never throws.
+  await routeWhatsAppConversationOnMessage({ accountId: raw.accountId, chatId: raw.chatId, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
+
+  // Satisfaction surveys (CSAT.md): a customer's next message after a survey is read once; if it is nothing but
+  // a rating it is also recorded as the answer. The message is processed exactly as before. A no-op while
+  // CSAT_SURVEYS is off or nothing was asked in this chat. Never throws.
+  await recordCsatAnswerFromWhatsApp({ accountId: raw.accountId, chatId: raw.chatId, messageId: message.id, body: raw.body, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
 
   return { message, group, isFromTeamMember, quotedMessage, previous };
 }
