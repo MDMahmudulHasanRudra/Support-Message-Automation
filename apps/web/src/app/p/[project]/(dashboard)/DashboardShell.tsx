@@ -1,7 +1,7 @@
 "use client";
 
 import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
-import { ChevronRight, LogOut, Menu, Search, UserRound } from "lucide-react";
+import { Bot, ChevronRight, LogOut, Menu, Search, UserRound } from "lucide-react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
@@ -11,7 +11,7 @@ import { featuresOffEverywhere, isGlobalPage, workspaceOpenHref, type WorkspaceP
 import { featureForPath } from "@support-automation/shared";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { CommandPalette } from "./CommandPalette";
-import { FloatingAiChat } from "./FloatingAiChat";
+import { FloatingAiChat, openAiAssistant } from "./FloatingAiChat";
 import { useBranding } from "@/components/BrandingProvider";
 import { WhatsAppJobCenter } from "@/components/whatsappOperations/WhatsAppJobCenter";
 import { FollowUpBadge } from "@/components/followUps/FollowUpBadge";
@@ -201,7 +201,9 @@ export function DashboardShell({
   const { productName } = useBranding();
   // WhatsApp Chat on a phone is a full-screen app, not a page in a card: no padding around it, and
   // nothing floating over its composer (see the content div and the floating controls below).
-  const isChatPage = pathname === "/chat" || pathname.startsWith("/chat/");
+  // The same goes for the unified inbox, and on a desktop both fill the window: three panes in a page card
+  // left the conversation itself a few letters wide.
+  const isChatPage = pathname === "/chat" || pathname.startsWith("/chat/") || pathname === "/conversations" || pathname.startsWith("/conversations/");
   const phoneChat = isChatPage && !inWorkspace;
   const searchParams = useSearchParams();
   const location = resolveNavLocation(pathname, searchParams);
@@ -283,9 +285,9 @@ export function DashboardShell({
                 Main Admin
               </NextLink>
             ) : (
-              <span className="max-w-[10rem] shrink-0 truncate font-medium text-[color:var(--color-accent)]">{project.name}</span>
+              <span className={`max-w-[10rem] shrink-0 truncate font-medium text-[color:var(--color-accent)] ${isChatPage ? "max-sm:hidden" : ""}`}>{project.name}</span>
             )}
-            <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
+            <ChevronRight className={`size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)] ${isChatPage ? "max-sm:hidden" : ""}`} aria-hidden />
             {location && location.group !== "Dashboard" ? (
               <>
                 <span className="hidden truncate text-[color:var(--color-muted-foreground)] sm:inline">
@@ -316,6 +318,19 @@ export function DashboardShell({
             </kbd>
           </button>
 
+          {/* The inbox has no room for a floating button over its composer, so the assistant opens from here. */}
+          {isChatPage && granted.has("ai_learning.view") ? (
+            <button
+              type="button"
+              onClick={openAiAssistant}
+              aria-label="Open AI Admin Assistant"
+              title="AI Admin Assistant"
+              className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+            >
+              <Bot className="size-4" aria-hidden />
+            </button>
+          ) : null}
+
           {/* My overdue + due-today follow-ups (FOLLOW_UPS.md); in-app only, renders nothing at zero. */}
           {granted.has("messages.view") && !featuresOff.has("FOLLOW_UPS") ? <FollowUpBadge /> : null}
 
@@ -324,7 +339,9 @@ export function DashboardShell({
 
         <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
           <div
-            key={pathname}
+            // A new page animates in, but moving between conversations must not: the list keeps its scroll,
+            // search and filters, and the reply box its draft.
+            key={isChatPage ? "inbox" : pathname}
             // In the workspace the project tabs sit above the page: full-height pages (the chat
             // inbox) read this to leave room for them.
             // On a phone (below `sm`) the chat drops the page padding and fills the screen under the
@@ -333,23 +350,24 @@ export function DashboardShell({
               inWorkspace
                 ? ({ "--chat-inset": "10rem", "--chat-inset-sm": "11.5rem" } as CSSProperties)
                 : phoneChat
-                  ? ({ "--chat-inset": "3.25rem" } as CSSProperties)
+                  ? ({ "--chat-inset": "3.25rem", "--chat-inset-sm": "3.25rem" } as CSSProperties)
                   : undefined
             }
-            className={`mx-auto w-full max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9 ${phoneChat ? "max-sm:p-0" : ""}`}
+            data-bleed={phoneChat ? "" : undefined}
+            className={phoneChat ? "group/page w-full" : `mx-auto w-full ${isChatPage ? "px-5 py-7 sm:px-8" : "max-w-[var(--space-content-max)] animate-fade-in-rise px-5 py-7 sm:px-8 sm:py-9"}`}
           >
             {workspaceProjects && workspaceCurrent ? (
               <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />
             ) : null}
             {billingNotice ? (
-              <div className="mb-5">
+              <div className={phoneChat ? "p-3" : "mb-5"}>
                 <Alert tone={billingNotice.tone} title={billingNotice.title}>
                   {billingNotice.message}
                 </Alert>
               </div>
             ) : null}
             {(project.status === "SUSPENDED" && billingNotice?.tone !== "danger") || project.status === "ARCHIVED" ? (
-              <div className="mb-5">
+              <div className={phoneChat ? "p-3" : "mb-5"}>
                 <Alert tone="warning" title={`${project.name} is ${project.status === "ARCHIVED" ? "archived" : "suspended"} — read-only`}>
                   You can look at everything, but changes are not saved
                   {project.status === "SUSPENDED" ? " and nothing is sent until a Main Admin makes the project active again." : "."}
@@ -379,14 +397,14 @@ export function DashboardShell({
           floating button on every page that always answers "not allowed" is worse than none. */}
       {granted.has("ai_learning.view") ? (
         <div className={isChatPage ? "max-sm:hidden" : undefined}>
-          <FloatingAiChat />
+          <FloatingAiChat hideLauncher={isChatPage} />
         </div>
       ) : null}
       {/* Long-running WhatsApp jobs stay visible on every page (Add Number to Groups, Groups Admin
           Maker). Offered to whoever may see those modules; the reader refuses everyone else anyway. */}
       {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") ? (
         <div className={isChatPage ? "max-sm:hidden" : undefined}>
-          <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} />
+          <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} overInbox={isChatPage} />
         </div>
       ) : null}
     </div>

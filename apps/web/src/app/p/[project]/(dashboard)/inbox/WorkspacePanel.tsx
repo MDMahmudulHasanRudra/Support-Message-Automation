@@ -2,31 +2,22 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import {
-  AlarmClock,
   AtSign,
   BookOpenCheck,
   Bot,
   Check,
-  ChevronsRight,
   Copy,
-  Flag,
-  History,
   Loader2,
   NotebookPen,
-  PanelRightOpen,
   Sparkles,
   Star,
   StickyNote,
-  Tag,
   ThumbsDown,
   ThumbsUp,
   Trash2,
   TriangleAlert,
-  UserRound,
-  Users,
   Wand2,
   X,
-  Paperclip,
 } from "lucide-react";
 import { FilesTab } from "./FilesTab";
 import {
@@ -57,8 +48,22 @@ import { setConversationAssignee, setConversationTeam } from "@/server/actions/i
 import { ConversationStatusSection } from "./ConversationStatusSection";
 import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
 import { FollowUpsSection } from "./FollowUpsSection";
+import { ContactOverview } from "./ContactOverview";
+import {
+  clearPanelTabRequest,
+  openPanel,
+  publishWorkspace,
+  setPanelSheetOpen,
+  togglePanel,
+  usePanelCollapsed,
+  usePanelSheetOpen,
+  usePanelTabRequest,
+  type PanelTab,
+} from "./panelStore";
 
-type TabKey = "details" | "notes" | "copilot" | "followups" | "files";
+type TabKey = PanelTab;
+
+const SECTION_TITLE = "mb-2 text-[12px] font-medium text-[color:var(--color-muted-foreground)]";
 
 const PRIORITY_DOT: Record<ConversationPriorityValue, string> = {
   NONE: "bg-[var(--color-border-strong)]",
@@ -68,39 +73,21 @@ const PRIORITY_DOT: Record<ConversationPriorityValue, string> = {
   URGENT: "bg-[var(--color-danger-fg)]",
 };
 
-// ── Collapsed preference (desktop), read without a render-time mismatch ─────────────────────────
-const COLLAPSE_KEY = "inbox-workspace-collapsed";
-const listeners = new Set<() => void>();
-function readCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-function writeCollapsed(value: boolean) {
-  try {
-    window.localStorage.setItem(COLLAPSE_KEY, value ? "1" : "0");
-  } catch {
-    /* private mode: the panel still works, it just does not remember */
-  }
-  listeners.forEach((l) => l());
-}
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
 // Desktop width, dragged by the panel's left edge and remembered per browser (280–480 px).
+const widthListeners = new Set<() => void>();
+function subscribe(listener: () => void) {
+  widthListeners.add(listener);
+  return () => widthListeners.delete(listener);
+}
 const WIDTH_KEY = "inbox-workspace-width";
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 480;
 function readWidth(): number {
   try {
     const n = Number(window.localStorage.getItem(WIDTH_KEY));
-    return n >= MIN_WIDTH && n <= MAX_WIDTH ? n : 340;
+    return n >= MIN_WIDTH && n <= MAX_WIDTH ? n : 320;
   } catch {
-    return 340;
+    return 320;
   }
 }
 function writeWidth(value: number) {
@@ -109,7 +96,7 @@ function writeWidth(value: number) {
   } catch {
     /* private mode */
   }
-  listeners.forEach((l) => l());
+  widthListeners.forEach((l) => l());
 }
 
 /**
@@ -121,29 +108,43 @@ function writeWidth(value: number) {
  * four-second refresh never makes a fresh note flicker away.
  */
 export function WorkspacePanel({ data }: { data: WorkspaceData }) {
-  const collapsed = useSyncExternalStore(subscribe, readCollapsed, () => false);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const collapsed = usePanelCollapsed();
+  const sheetOpen = usePanelSheetOpen();
+  const requestedTab = usePanelTabRequest();
   const hasDetails = data.access.collaboration || data.access.lifecycle;
   const firstTab: TabKey = hasDetails ? "details" : data.access.copilot ? "copilot" : "followups";
   const [tab, setTab] = useState<TabKey>(firstTab);
-  const width = useSyncExternalStore(subscribe, readWidth, () => 340);
+  const width = useSyncExternalStore(subscribe, readWidth, () => 320);
   const sheetRef = useRef<HTMLDivElement>(null);
   // Inbox V3 presence: one heartbeat per open conversation, whether the panel is open, collapsed or a sheet.
   const peers = useConversationPresence(data.ref, data.access.lifecycle);
 
+  // The header's toggle and the reply box read this; see panelStore.
+  useEffect(() => {
+    publishWorkspace(data);
+  }, [data]);
+  useEffect(() => () => publishWorkspace(null), []);
+
+  // Something outside the panel (the reply box's notes strip, a declined AI draft) asked for a tab.
+  useEffect(() => {
+    if (!requestedTab) return;
+    clearPanelTabRequest();
+    queueMicrotask(() => setTab(requestedTab));
+  }, [requestedTab]);
+
   const tabs = [
-    hasDetails ? { key: "details" as const, label: "Details", icon: Tag } : null,
-    data.access.collaboration ? { key: "notes" as const, label: "Notes", icon: StickyNote, count: data.notes.length } : null,
-    data.access.copilot ? { key: "copilot" as const, label: "Copilot", icon: Sparkles } : null,
-    data.access.followUps ? { key: "followups" as const, label: "Follow-ups", icon: AlarmClock, count: data.followUps?.length ?? 0 } : null,
-    data.access.lifecycle ? { key: "files" as const, label: "Files", icon: Paperclip } : null,
+    hasDetails ? { key: "details" as const, label: "Overview" } : null,
+    data.access.collaboration ? { key: "notes" as const, label: "Notes", count: data.notes.length } : null,
+    data.access.copilot ? { key: "copilot" as const, label: "AI" } : null,
+    data.access.followUps ? { key: "followups" as const, label: "Follow-ups", count: data.followUps?.length ?? 0 } : null,
+    data.access.lifecycle ? { key: "files" as const, label: "Files" } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
 
   // Keyboard: Alt+1/2/3/4 switch tabs (opening the panel or sheet), Escape closes the sheet.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && sheetOpen) {
-        setSheetOpen(false);
+        setPanelSheetOpen(false);
         return;
       }
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
@@ -152,8 +153,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
       if (!target) return;
       e.preventDefault();
       setTab(target.key);
-      if (window.matchMedia("(min-width: 1280px)").matches) writeCollapsed(false);
-      else setSheetOpen(true);
+      openPanel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -180,7 +180,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
       <PresenceBanner peers={peers} />
-      <div role="tablist" aria-label="Conversation workspace" className="flex shrink-0 items-center gap-1 border-b border-[var(--color-border)] px-2 py-1.5">
+      <div role="tablist" aria-label="Conversation workspace" className="flex h-11 shrink-0 items-stretch gap-3 border-b border-[var(--color-border)] pl-4 pr-2">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -190,25 +190,22 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
             aria-keyshortcuts={`Alt+${tabs.indexOf(t) + 1}`}
             title={`${t.label} (Alt+${tabs.indexOf(t) + 1})`}
             onClick={() => setTab(t.key)}
-            className={`inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
-              tab === t.key
-                ? "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)]"
-                : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+            className={`-mb-px inline-flex items-center gap-1 whitespace-nowrap border-b-2 text-[12.5px] font-medium transition-colors ${
+              tab === t.key ? "border-[var(--color-accent)] text-[color:var(--color-foreground)]" : "border-transparent text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
             }`}
           >
-            <t.icon className="size-3.5" aria-hidden />
             {t.label}
-            {"count" in t && t.count ? <span className="rounded-full bg-[var(--color-surface)] px-1.5 text-[10.5px] tabular-nums ring-1 ring-[var(--color-border)]">{t.count}</span> : null}
+            {"count" in t && t.count ? <span className="tabular text-[11px] text-[color:var(--color-subtle-foreground)]">{t.count}</span> : null}
           </button>
         ))}
         <span className="flex-1" />
         <button
           type="button"
-          onClick={() => (sheetOpen ? setSheetOpen(false) : writeCollapsed(true))}
+          onClick={togglePanel}
           aria-label="Close panel"
-          className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+          className="my-auto flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] xl:hidden"
         >
-          {sheetOpen ? <X className="size-4" aria-hidden /> : <ChevronsRight className="size-4" aria-hidden />}
+          <X className="size-4" aria-hidden />
         </button>
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
@@ -223,26 +220,8 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
 
   return (
     <>
-      {/* Desktop column */}
-      {collapsed ? (
-        <div className="hidden w-11 shrink-0 flex-col items-center gap-1 border-l border-[var(--color-border)] bg-[var(--color-surface)] py-2 xl:flex">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              title={t.label}
-              aria-label={`Open ${t.label}`}
-              onClick={() => {
-                setTab(t.key);
-                writeCollapsed(false);
-              }}
-              className="flex size-8 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
-            >
-              <t.icon className="size-4" aria-hidden />
-            </button>
-          ))}
-        </div>
-      ) : (
+      {/* Desktop column; the header's toggle hides it */}
+      {collapsed ? null : (
         <aside aria-label="Conversation workspace" style={{ width }} className="relative hidden shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] xl:flex">
           <div
             role="separator"
@@ -263,18 +242,10 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         </aside>
       )}
 
-      {/* Smaller screens: a button and a sheet */}
-      <button
-        type="button"
-        onClick={() => setSheetOpen(true)}
-        className="fixed bottom-24 right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3.5 py-2 text-[12.5px] font-medium text-[color:var(--color-foreground)] shadow-[var(--shadow-lg)] ring-1 ring-[var(--color-border)] xl:hidden"
-      >
-        <PanelRightOpen className="size-4" aria-hidden />
-        {data.access.copilot ? (data.access.collaboration ? "Notes & Copilot" : "Copilot") : data.access.collaboration ? "Notes" : hasDetails ? "Details" : "Follow-ups"}
-      </button>
+      {/* Smaller screens: the header's toggle opens it as a sheet */}
       {sheetOpen ? (
         <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="Conversation workspace">
-          <button type="button" aria-label="Close" className="absolute inset-0 bg-black/30" onClick={() => setSheetOpen(false)} />
+          <button type="button" aria-label="Close" className="absolute inset-0 bg-black/30" onClick={() => setPanelSheetOpen(false)} />
           <div ref={sheetRef} className="absolute inset-y-0 right-0 flex w-full max-w-[400px] flex-col bg-[var(--color-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-lg)]">
             {body}
           </div>
@@ -332,169 +303,146 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
     saveTags([...shownTags, value]);
   };
 
+  const saveTeam = (next: string | null) => {
+    setTeam(next);
+    start(async () => {
+      const r = data.access.lifecycle ? await setConversationTeam(data.ref, next) : await setChannelConversationTeam((data.ref as { conversationId: string }).conversationId, next);
+      if ("error" in r) {
+        setTeam(undefined);
+        fail(r.error);
+      }
+    });
+  };
+  const saveAssignee = (next: string | null) => {
+    setAssignee(next);
+    start(async () => {
+      const r = data.access.lifecycle ? await setConversationAssignee(data.ref, next) : await setChannelAssignee((data.ref as { conversationId: string }).conversationId, next);
+      if ("error" in r) {
+        setAssignee(undefined);
+        fail(r.error);
+      }
+    });
+  };
+  const selectClass = "h-8 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-[12.5px] disabled:opacity-60";
+
   return (
     <div className="space-y-5 p-4">
+      <ContactOverview conversation={data.ref} />
+
+      {data.teams ? (
+        <section className="space-y-2 border-t border-[var(--color-border)] pt-4">
+          <label className="flex items-center gap-3">
+            <span className="w-20 shrink-0 text-[12.5px] text-[color:var(--color-muted-foreground)]">Assigned to</span>
+            <select value={shownAssignee ?? ""} disabled={ro || pending} onChange={(e) => saveAssignee(e.target.value || null)} className={selectClass}>
+              <option value="">Nobody</option>
+              {data.people.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.id === data.viewerId ? `${p.name} (you)` : p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-3">
+            <span className="w-20 shrink-0 text-[12.5px] text-[color:var(--color-muted-foreground)]">Team</span>
+            <select value={shownTeam ?? ""} disabled={ro || pending} onChange={(e) => saveTeam(e.target.value || null)} className={selectClass}>
+              <option value="">No Team</option>
+              {data.teams.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+      ) : null}
+
       {data.lifecycle ? (
         <ConversationStatusSection conversationRef={data.ref} status={data.lifecycle.status} snoozedUntil={data.lifecycle.snoozedUntil} readOnly={ro} />
       ) : null}
 
       {data.access.collaboration ? (
-      <section>
-        <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-          <Flag className="size-3.5" aria-hidden />
-          Priority
-        </h3>
-        <div className="flex flex-wrap gap-1.5">
-          {CONVERSATION_PRIORITIES.map((p) => (
-            <button
-              key={p}
-              type="button"
-              disabled={ro || pending}
-              aria-pressed={shownPriority === p}
-              onClick={() => choosePriority(p)}
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] ring-1 transition-colors disabled:cursor-not-allowed ${
-                shownPriority === p
-                  ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)] ring-[var(--color-border-strong)]"
-                  : "text-[color:var(--color-muted-foreground)] ring-[var(--color-border)] hover:text-[color:var(--color-foreground)]"
-              }`}
-            >
-              <span className={`size-2 rounded-full ${PRIORITY_DOT[p]}`} aria-hidden />
-              {p === "NONE" ? "None" : CONVERSATION_PRIORITY_LABEL[p]}
-            </button>
-          ))}
-        </div>
-      </section>
-      ) : null}
-
-      {data.access.collaboration ? (
-      <section>
-        <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-          <Tag className="size-3.5" aria-hidden />
-          Tags
-        </h3>
-        <div className="flex flex-wrap gap-1.5">
-          {shownTags.length === 0 ? <span className="text-[12px] text-[color:var(--color-subtle-foreground)]">No tags yet.</span> : null}
-          {shownTags.map((t) => (
-            <span key={t} className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-info-bg)] px-2 py-0.5 text-[12px] text-[color:var(--color-info-fg)]">
-              #{t}
-              {!ro ? (
-                <button type="button" aria-label={`Remove tag ${t}`} onClick={() => saveTags(shownTags.filter((x) => x !== t))} className="opacity-70 hover:opacity-100">
-                  <X className="size-3" aria-hidden />
-                </button>
-              ) : null}
-            </span>
-          ))}
-        </div>
-        {!ro ? (
-          <form
-            className="mt-2 flex gap-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              addTag();
-            }}
-          >
-            <input
-              value={draftTag}
-              onChange={(e) => setDraftTag(e.target.value)}
-              list="inbox-known-tags"
-              placeholder="Add a tag, e.g. billing"
-              maxLength={40}
-              className="min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
-            />
-            <datalist id="inbox-known-tags">
-              {data.knownTags.filter((t) => !shownTags.includes(t)).map((t) => (
-                <option key={t} value={t} />
-              ))}
-            </datalist>
-            <button type="submit" disabled={pending || !draftTag.trim()} className="rounded-[var(--radius-md)] px-2.5 text-[12.5px] font-medium ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
-              Add
-            </button>
-          </form>
-        ) : null}
-      </section>
-      ) : null}
-
-      {data.teams ? (
         <section>
-          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-            <Users className="size-3.5" aria-hidden />
-            Team
-          </h3>
-          <select
-            value={shownTeam ?? ""}
-            disabled={ro || pending}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setTeam(next);
-              start(async () => {
-                const r = data.access.lifecycle
-                  ? await setConversationTeam(data.ref, next)
-                  : await setChannelConversationTeam((data.ref as { conversationId: string }).conversationId, next);
-                if ("error" in r) {
-                  setTeam(undefined);
-                  fail(r.error);
-                }
-              });
-            }}
-            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12.5px]"
-          >
-            <option value="">No Team</option>
-            {data.teams.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
+          <h3 className={SECTION_TITLE}>Priority</h3>
+          <div className="grid grid-cols-5 gap-1">
+            {CONVERSATION_PRIORITIES.map((p) => (
+              <button
+                key={p}
+                type="button"
+                disabled={ro || pending}
+                aria-pressed={shownPriority === p}
+                onClick={() => choosePriority(p)}
+                className={`inline-flex h-7 items-center justify-center gap-1 rounded-[var(--radius-md)] px-0.5 text-[11.5px] ring-1 ring-inset transition-colors disabled:cursor-not-allowed ${
+                  shownPriority === p
+                    ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)] ring-[var(--color-border-strong)]"
+                    : "text-[color:var(--color-muted-foreground)] ring-[var(--color-border)] hover:text-[color:var(--color-foreground)]"
+                }`}
+              >
+                <span className={`size-2 rounded-full ${PRIORITY_DOT[p]}`} aria-hidden />
+                {p === "NONE" ? "None" : CONVERSATION_PRIORITY_LABEL[p]}
+              </button>
             ))}
-          </select>
+          </div>
         </section>
       ) : null}
 
-      {data.teams ? (
+      {data.access.collaboration ? (
         <section>
-          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-            <UserRound className="size-3.5" aria-hidden />
-            Assigned to
-          </h3>
-          <select
-            value={shownAssignee ?? ""}
-            disabled={ro || pending}
-            onChange={(e) => {
-              const next = e.target.value || null;
-              setAssignee(next);
-              start(async () => {
-                const r = data.access.lifecycle
-                  ? await setConversationAssignee(data.ref, next)
-                  : await setChannelAssignee((data.ref as { conversationId: string }).conversationId, next);
-                if ("error" in r) {
-                  setAssignee(undefined);
-                  fail(r.error);
-                }
-              });
-            }}
-            className="w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12.5px]"
-          >
-            <option value="">Nobody</option>
-            {data.people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.id === data.viewerId ? `${p.name} (you)` : p.name}
-              </option>
-            ))}
-          </select>
+          <h3 className={SECTION_TITLE}>Tags</h3>
+          {shownTags.length > 0 ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {shownTags.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-info-bg)] px-2 py-0.5 text-[12px] text-[color:var(--color-info-fg)]">
+                  #{t}
+                  {!ro ? (
+                    <button type="button" aria-label={`Remove tag ${t}`} onClick={() => saveTags(shownTags.filter((x) => x !== t))} className="opacity-70 hover:opacity-100">
+                      <X className="size-3" aria-hidden />
+                    </button>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+          ) : ro ? (
+            <p className="text-[12px] text-[color:var(--color-subtle-foreground)]">No tags yet.</p>
+          ) : null}
+          {!ro ? (
+            <form
+              className="flex gap-1.5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                addTag();
+              }}
+            >
+              <input
+                value={draftTag}
+                onChange={(e) => setDraftTag(e.target.value)}
+                list="inbox-known-tags"
+                placeholder="Add a tag, e.g. billing"
+                maxLength={40}
+                className="h-8 min-w-0 flex-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[12.5px] outline-none focus:border-[var(--color-accent)]"
+              />
+              <datalist id="inbox-known-tags">
+                {data.knownTags.filter((t) => !shownTags.includes(t)).map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <button type="submit" disabled={pending || !draftTag.trim()} className="h-8 rounded-[var(--radius-md)] px-2.5 text-[12.5px] font-medium ring-1 ring-inset ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+                Add
+              </button>
+            </form>
+          ) : null}
         </section>
       ) : null}
 
       {data.groupOwner ? (
         <section>
-          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-            <UserRound className="size-3.5" aria-hidden />
-            Group owner
-          </h3>
+          <h3 className={SECTION_TITLE}>Group owner</h3>
           <p className="text-[12.5px]">{data.groupOwner.name || <span className="text-[color:var(--color-muted-foreground)]">Nobody</span>}</p>
-          <p className="mt-1 text-[11px] text-[color:var(--color-subtle-foreground)]">
-            Set per group on the{" "}
+          <p className="mt-1 text-[11.5px] text-[color:var(--color-subtle-foreground)]">
+            Set on the{" "}
             <Link href={`/groups?search=${encodeURIComponent(data.groupOwner.groupName)}`} className="link">
               Groups page
-            </Link>{" "}
-            — it also decides who a missed reply is charged to in the Team Report.
+            </Link>
+            . Missed replies in the Team Report are charged to them.
           </p>
         </section>
       ) : null}
@@ -502,23 +450,20 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
       {data.csat.length ? <CsatSection surveys={data.csat} /> : null}
 
       {data.history.length ? (
-        <section>
-          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-            <History className="size-3.5" aria-hidden />
+        <details className="group/history">
+          <summary className="flex cursor-pointer list-none items-center justify-between text-[12px] font-medium text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
             History
-          </h3>
-          <ol className="space-y-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
+            <span className="tabular text-[11px] text-[color:var(--color-subtle-foreground)]">{data.history.length}</span>
+          </summary>
+          <ol className="mt-2 space-y-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
             {data.history.map((h) => (
               <li key={h.id}>
-                <span className="text-[color:var(--color-foreground)]">{h.actorName ?? (h.auto ? "Automatic routing" : "Someone")}</span>{" "}
-                {describeHistory(h)} · <RelTime iso={h.at} />
-                {h.auto ? (
-                  <span className="ml-1.5 rounded-[var(--radius-sm)] px-1 text-[10.5px] ring-1 ring-[var(--color-border)]">Auto</span>
-                ) : null}
+                <span className="text-[color:var(--color-foreground)]">{h.actorName ?? (h.auto ? "Automatic routing" : "Someone")}</span> {describeHistory(h)} · <RelTime iso={h.at} />
+                {h.auto ? <span className="ml-1.5 rounded-[var(--radius-sm)] px-1 text-[10.5px] ring-1 ring-[var(--color-border)]">Auto</span> : null}
               </li>
             ))}
           </ol>
-        </section>
+        </details>
       ) : null}
 
       {ro ? <p className="text-[11.5px] text-[color:var(--color-subtle-foreground)]">Your role can read this conversation but not change it.</p> : null}

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Bot, CheckCircle2, RotateCcw, RotateCw, UserCheck, UserMinus } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Button, ConfirmDialog, useToast } from "@/components/ui";
+import { useWorkspaceInfo } from "../inbox/panelStore";
 import {
   assignChannelConversationAction,
   resumeChannelAiAction,
@@ -31,6 +32,8 @@ export function ConversationControls({
   const router = useRouter();
   const { showToast } = useToast();
   const [pending, startTransition] = useTransition();
+  // With Inbox V3 the header's Resolve and assign stand in for Close and Assign; only Resume AI is left here.
+  const lifecycle = Boolean(useWorkspaceInfo()?.lifecycle);
   if (!canReply) return null;
 
   const run = (action: () => Promise<InboxActionResult>) =>
@@ -41,13 +44,15 @@ export function ConversationControls({
     });
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {aiPaused ? (
         <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => resumeChannelAiAction(conversationId))} title="AI is paused because a person replied. Let it answer the next message.">
           <Bot className="size-3.5" aria-hidden />
           Resume AI
         </Button>
       ) : null}
+      {lifecycle ? null : (
+      <>
       <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => assignChannelConversationAction(conversationId, !assignedToMe))}>
         {assignedToMe ? <UserMinus className="size-3.5" aria-hidden /> : <UserCheck className="size-3.5" aria-hidden />}
         {assignedToMe ? "Unassign" : assigned ? "Take over" : "Assign to me"}
@@ -56,6 +61,8 @@ export function ConversationControls({
         {status === "OPEN" ? <CheckCircle2 className="size-3.5" aria-hidden /> : <RotateCcw className="size-3.5" aria-hidden />}
         {status === "OPEN" ? "Close" : "Reopen"}
       </Button>
+      </>
+      )}
     </div>
   );
 }

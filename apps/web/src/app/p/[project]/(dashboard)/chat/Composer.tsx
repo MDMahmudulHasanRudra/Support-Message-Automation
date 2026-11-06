@@ -199,7 +199,7 @@ export function Composer({
 
   if (disabledReason) {
     return (
-      <div className="border-t border-[var(--color-border)] p-4 sm:px-6">
+      <div className="p-4 sm:px-6">
         <Alert tone="warning">{disabledReason}</Alert>
         {/* The other way to answer: switch to another of our numbers in this group. A link that
             changes the selected account, so the operator always sees who they are replying as. */}
@@ -223,7 +223,7 @@ export function Composer({
   }
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:px-6 sm:py-4">
+    <div className="bg-[var(--color-surface)] p-3 sm:px-6 sm:py-4">
       {state.error ? (
         <div className="mb-3">
           <Alert tone="danger">{state.error}</Alert>

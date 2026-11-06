@@ -47,7 +47,7 @@ export default async function ChatAccountLayout({
   return (
     // `data-v2` marks the container only when CHAT_UI_V2 is on; the list's v2 styling keys off it
     // (`group-data-[v2]/chat:`), so with the feature off no v2 class can match and v1 is untouched.
-    <div data-v2={v2 ? "" : undefined} className="group/chat flex h-[calc(var(--chat-dvh,100dvh)_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(var(--chat-dvh,100dvh)_-_var(--chat-inset-sm,8.25rem))]">
+    <div data-v2={v2 ? "" : undefined} className="group/chat flex h-[calc(var(--chat-dvh,100dvh)_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] group-data-[bleed]/page:rounded-none group-data-[bleed]/page:border-0 group-data-[bleed]/page:shadow-none max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(var(--chat-dvh,100dvh)_-_var(--chat-inset-sm,8.25rem))]">
       {/* Polls the server tree so new messages and delivery-state changes appear without a
           manual reload. Four seconds sits close enough to the outbound queue's own 2s tick
           that a reply's queued → sent transition is visible almost immediately. */}

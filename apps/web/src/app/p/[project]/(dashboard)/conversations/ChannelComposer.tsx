@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { registerComposer } from "@/lib/composerBridge";
-import { ImagePlus, Lock, SendHorizontal, X } from "lucide-react";
+import { ImagePlus, Lock, SendHorizontal, Smile, X } from "lucide-react";
 import { CHANNELS, validateChannelText, type ChannelType } from "@support-automation/shared";
 import { useProjectHref, useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { Button, useToast } from "@/components/ui";
 import { sendChannelReplyAction } from "@/server/actions/channelInbox";
 import { markAgentTyping } from "@/server/actions/webchatAgent";
+import { SavedReplyManager } from "../chat/SavedReplyManager";
+import { SavedReplyPicker, type SavedReplyOption } from "../chat/SavedReplyPicker";
+import { EmojiPicker } from "../chat/v2/EmojiPicker";
 
 /**
  * The reply box for a Messenger / Instagram / Telegram conversation (OMNICHANNEL.md §8).
@@ -45,12 +48,14 @@ export function ChannelComposer({
   via,
   disabledReason,
   humanAgentReply,
+  savedReplies = [],
 }: {
   conversationId: string;
   type: ChannelType;
   via: string;
   disabledReason: string | null;
   humanAgentReply: boolean;
+  savedReplies?: SavedReplyOption[];
 }) {
   const router = useRouter();
   const { showToast } = useToast();
@@ -63,6 +68,8 @@ export function ChannelComposer({
   const setText = setEdited;
   const [nonce, setNonce] = useState(newNonce);
   const [pending, startTransition] = useTransition();
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [managingReplies, setManagingReplies] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   const latest = useRef(text);
   // Website chat only: the visitor sees "typing…" while somebody writes, pinged at most every 3 seconds.
@@ -105,6 +112,20 @@ export function ChannelComposer({
     setPhoto(null);
   };
 
+  // At the cursor, never replacing what is typed; it inserts, and sending stays the Send button.
+  const insert = (value: string) => {
+    const el = box.current;
+    const at = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? at;
+    const next = text.slice(0, at) + value + text.slice(end);
+    setText(next);
+    writeDraft(conversationId, next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(at + value.length, at + value.length);
+    });
+  };
+
   const send = () => {
     if (pending || disabledReason || problem || (!text.trim() && !photo)) return;
     const body = text;
@@ -143,7 +164,7 @@ export function ChannelComposer({
 
   if (disabledReason) {
     return (
-      <div className="flex shrink-0 items-start gap-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-5 py-3.5 text-[12.5px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+      <div className="flex shrink-0 items-start gap-2.5 bg-[var(--color-surface-sunken)] px-5 py-3.5 text-[12.5px] leading-relaxed text-[color:var(--color-muted-foreground)]">
         <Lock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
         <p>{disabledReason}</p>
       </div>
@@ -151,8 +172,9 @@ export function ChannelComposer({
   }
 
   return (
+    <>
     <form
-      className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 pb-3 pt-2.5 sm:px-5"
+      className="shrink-0 bg-[var(--color-surface)] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 sm:px-5"
       onSubmit={(e) => {
         e.preventDefault();
         send();
@@ -173,31 +195,15 @@ export function ChannelComposer({
           </button>
         </div>
       ) : null}
-      <div className="flex items-end gap-2">
-        {type === "WEBCHAT" ? (
-          <>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(e) => {
-                pickPhoto(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-            <Button type="button" variant="ghost" size="md" disabled={pending} onClick={() => fileInput.current?.click()} aria-label="Send a photo">
-              <ImagePlus className="size-4" aria-hidden />
-            </Button>
-          </>
-        ) : null}
-        <label className="min-w-0 flex-1">
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] transition-[border-color,box-shadow] focus-within:border-[var(--color-focus-ring)] focus-within:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-focus-ring)_22%,transparent)]">
+        <label className="block">
           <span className="sr-only">Reply on {def.label}</span>
           <textarea
             ref={box}
             rows={2}
             value={text}
             disabled={pending}
+            dir="auto"
             onChange={(e) => {
               setText(e.target.value);
               writeDraft(conversationId, e.target.value);
@@ -221,21 +227,55 @@ export function ChannelComposer({
               }
             }}
             placeholder={photo ? "Add a caption (optional)…" : `Reply on ${def.label} as ${via}…`}
-            className="block max-h-48 min-h-[2.75rem] w-full resize-y rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[13.5px] leading-relaxed text-[color:var(--color-foreground)] placeholder:text-[color:var(--color-subtle-foreground)] focus:border-[var(--color-focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]/30 disabled:opacity-60"
+            className="block max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-[13.5px] leading-relaxed text-[color:var(--color-foreground)] outline-none placeholder:text-[color:var(--color-subtle-foreground)] disabled:opacity-60"
           />
         </label>
-        <Button type="submit" size="md" disabled={(!text.trim() && !photo) || Boolean(problem)} loading={pending} aria-label="Send reply">
-          {pending ? null : <SendHorizontal className="size-4" aria-hidden />}
-          Send
-        </Button>
-      </div>
-      <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-[color:var(--color-subtle-foreground)]">
-        <span>Enter to send · Shift+Enter for a new line</span>
-        <span className={`tabular ${problem ? "font-medium text-[color:var(--color-danger-fg)]" : ""}`} title={problem ?? undefined}>
-          {size}/{def.maxText}
-          {def.maxTextUnit === "bytes" ? " bytes" : ""}
-        </span>
+        <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+          {type === "WEBCHAT" ? (
+            <>
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  pickPhoto(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              <button type="button" disabled={pending} onClick={() => fileInput.current?.click()} aria-label="Send a photo" title="Send a photo" className="flex size-8 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]">
+                <ImagePlus className="size-4" aria-hidden />
+              </button>
+            </>
+          ) : null}
+          <div className="relative max-sm:hidden">
+            <button type="button" onClick={() => setEmojiOpen((v) => !v)} aria-label="Insert emoji" title="Insert emoji" aria-expanded={emojiOpen} className="flex size-8 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]">
+              <Smile className="size-4" aria-hidden />
+            </button>
+            {emojiOpen ? (
+              <EmojiPicker
+                className="absolute bottom-full left-0 mb-2"
+                onClose={() => setEmojiOpen(false)}
+                onPick={(emoji) => {
+                  insert(emoji);
+                  setEmojiOpen(false);
+                }}
+              />
+            ) : null}
+          </div>
+          <SavedReplyPicker quiet replies={savedReplies} onInsert={insert} onManage={() => setManagingReplies(true)} />
+          <span className="flex-1" />
+          <span className={`tabular px-2 text-[11px] ${problem ? "font-medium text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-subtle-foreground)]"}`} title={problem ?? undefined}>
+            {size > 0 || problem ? `${size}/${def.maxText}${def.maxTextUnit === "bytes" ? " bytes" : ""}` : <span className="max-sm:hidden">Enter to send, Shift+Enter for a new line</span>}
+          </span>
+          <Button type="submit" size="sm" disabled={(!text.trim() && !photo) || Boolean(problem)} loading={pending} aria-label="Send reply">
+            {pending ? null : <SendHorizontal className="size-3.5" aria-hidden />}
+            Send
+          </Button>
+        </div>
       </div>
     </form>
+    <SavedReplyManager open={managingReplies} onClose={() => setManagingReplies(false)} replies={savedReplies} />
+    </>
   );
 }

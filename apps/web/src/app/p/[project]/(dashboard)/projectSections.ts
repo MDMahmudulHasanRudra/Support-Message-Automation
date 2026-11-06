@@ -374,7 +374,9 @@ function under(path: string, prefix: string): boolean {
 
 /** Which part of the catalogue a path belongs to — the longest matching prefix. */
 export function claimForPath(rawPath: string): PathClaim {
-  const path = pathOf(rawPath).replace(/\/+$/, "") || "/";
+  const raw = pathOf(rawPath).replace(/\/+$/, "") || "/";
+  // A WhatsApp conversation opened in the unified inbox is WhatsApp Chat at another address: its keys, its page.
+  const path = /^\/conversations\/[^/]+\/w(\/|$)/.test(raw) ? "/chat" : raw;
   if (path === "/" || path === OVERVIEW_LINK.href) return { kind: "OVERVIEW" };
   const prefix = CLAIM_PREFIXES.find((p) => under(path, p));
   if (!prefix) return { kind: "UNKNOWN" };

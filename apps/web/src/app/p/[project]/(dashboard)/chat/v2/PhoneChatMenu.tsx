@@ -1,7 +1,7 @@
 "use client";
 
 import { Archive, ArchiveRestore, Loader2, MoreVertical, Pin, PinOff, Smartphone } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { readRichCommand, setWhatsAppChatState } from "@/server/actions/chatRich";
 import type { ConversationRef } from "@/server/chatThreadV2";
 
@@ -13,7 +13,7 @@ import type { ConversationRef } from "@/server/chatThreadV2";
  * WhatsApp does not tell this connection whether a chat is pinned or archived until asked, so both
  * directions are offered and the answer says what happened ("already pinned" included).
  */
-export function PhoneChatMenu({ conversation, accountLabel }: { conversation: ConversationRef; accountLabel: string }) {
+export function PhoneChatMenu({ conversation, accountLabel, extra }: { conversation: ConversationRef; accountLabel: string; /** A row only a phone needs here: its header has no room for the button. */ extra?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<{ text: string; tone: "info" | "bad" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,6 +88,7 @@ export function PhoneChatMenu({ conversation, accountLabel }: { conversation: Co
             <Smartphone className="size-3" aria-hidden />
             On {accountLabel}&apos;s WhatsApp phone
           </p>
+          {extra ? <div className="sm:hidden">{extra}</div> : null}
           <button type="button" role="menuitem" className={item} onClick={() => run({ pin: true }, { doing: "Pinning", done: "Pinned on the phone.", already: "It was already pinned (WhatsApp allows three pinned chats)." })}>
             <Pin className="size-4 text-[color:var(--color-muted-foreground)]" aria-hidden />
             Pin chat

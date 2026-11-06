@@ -6,7 +6,7 @@ import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, Layo
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { OVERVIEW_LINK, isGroupActive, isLinkActive, isNavActive, type NavGroup, type NavLink } from "./navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -197,8 +197,15 @@ export function Sidebar({
 }) {
   const pathname = stripProjectPrefix(usePathname());
   const searchParams = useSearchParams();
-  const collapsed = useSyncExternalStore(subscribeCollapse, collapseSnapshot, collapseServerSnapshot);
-  const toggleCollapsed = useCallback(() => writeCollapse(!collapseSnapshot()), []);
+  const storedCollapsed = useSyncExternalStore(subscribeCollapse, collapseSnapshot, collapseServerSnapshot);
+  // The inbox needs the width for the conversation, so the navigation stays icons there until somebody opens it.
+  const inInbox = pathname === "/chat" || pathname.startsWith("/chat/") || pathname === "/conversations" || pathname.startsWith("/conversations/");
+  const [inboxNavOpen, setInboxNavOpen] = useState(false);
+  const collapsed = !mobileOpen && (inInbox ? !inboxNavOpen : storedCollapsed);
+  const toggleCollapsed = () => {
+    if (inInbox) setInboxNavOpen((v) => !v);
+    else writeCollapse(!collapseSnapshot());
+  };
   const openGroupsRaw = useSyncExternalStore(subscribeOpenGroups, openGroupsSnapshot, openGroupsServerSnapshot);
   const openGroups = useMemo(() => parseOpenGroups(openGroupsRaw), [openGroupsRaw]);
 

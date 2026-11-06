@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowUpRight,
   AtSign,
   Bookmark,
+  Bot,
+  CheckCircle2,
   CheckSquare,
+  Clock,
   Flag,
+  Inbox,
   ListFilter,
+  MoreHorizontal,
   Rows3,
   Rows4,
   Search,
@@ -18,6 +22,7 @@ import {
   UserRound,
   Users,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { Button, Dialog, useToast } from "@/components/ui";
@@ -88,17 +93,33 @@ const SCOPES: Array<{ scope: InboxScope; channel: InboxChannel | null; label: st
   { scope: "website", channel: "WEBCHAT", label: "Website" },
 ];
 
-const VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<InboxCounts, "byChannel">; collaboration?: boolean; lifecycle?: boolean }> = [
-  { view: "all", label: "Open", count: "all" },
-  { view: "mine", label: "My inbox", count: "mine" },
+/** The four views people live in, always on screen. Everything else is under More. */
+const MAIN_VIEWS: Array<{ view: InboxViewKey; label: string; icon: LucideIcon; count?: keyof Omit<InboxCounts, "byChannel"> }> = [
+  { view: "mine", label: "Mine", icon: UserRound, count: "mine" },
+  { view: "all", label: "Open", icon: Inbox, count: "all" },
+  { view: "needs-reply", label: "Waiting", icon: Clock, count: "needsReply" },
+  { view: "closed", label: "Closed", icon: CheckCircle2 },
+];
+const MORE_VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<InboxCounts, "byChannel">; collaboration?: boolean; lifecycle?: boolean }> = [
   { view: "unassigned", label: "Unassigned" },
   { view: "unread", label: "Unread", count: "unread" },
-  { view: "needs-reply", label: "Needs reply", count: "needsReply" },
   { view: "high", label: "High priority", collaboration: true },
   { view: "urgent", label: "Urgent", collaboration: true },
   { view: "ai", label: "AI is handling", lifecycle: true },
-  { view: "closed", label: "Closed", count: "closed" },
 ];
+
+/** A WhatsApp conversation opens beside the list too: the same view as WhatsApp Chat, at the inbox's own address. */
+function inboxHref(href: string, scope: InboxScope): string {
+  return href.startsWith("/chat/account/") ? `/conversations/${scope}/w/${href.slice("/chat/account/".length)}` : href;
+}
+function samePath(pathname: string, href: string): boolean {
+  const path = href.split("?")[0]!;
+  try {
+    return decodeURIComponent(pathname).endsWith(decodeURIComponent(path));
+  } catch {
+    return pathname.endsWith(path);
+  }
+}
 
 const PRIORITY_STYLE: Record<ConversationPriorityValue, string> = {
   NONE: "",
@@ -162,7 +183,7 @@ export function InboxWorkspace({
 }) {
   const pathname = usePathname();
   const { showToast } = useToast();
-  const threadOpen = /\/conversations\/[^/]+\/c\//.test(pathname);
+  const threadOpen = /\/conversations\/[^/]+\/(c|w)\//.test(pathname);
   const [filters, setFilters] = useState<InboxFilterSet>(EMPTY_INBOX_FILTERS);
   const [result, setResult] = useState<{ key: string; items: InboxItem[]; truncated: boolean; messageSearch: MessageSearchInfo | null } | null>(null);
   // Inbox V3 "More message matches": further pages of text matches for the query in `key`.
@@ -188,7 +209,8 @@ export function InboxWorkspace({
   );
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const key = inboxFilterKey(filters);
+  // With the scope: moving between channels keeps the filters, and an answer for the last channel is never shown under this one.
+  const key = `${scope}|${inboxFilterKey(filters)}`;
   const filtered = !isDefaultInboxFilters(filters);
 
   // Saved views and mentions once on arrival (and after each change); the default view applies once.
@@ -250,19 +272,18 @@ export function InboxWorkspace({
     const seen = held.flatMap((i) => (i.ref.kind === "whatsapp" ? [`${i.ref.accountId}|${i.ref.chatId}`] : []));
     const page = await moreMessageMatchesAction({ scope, filters, cursor: nextCursor, seen });
     setMore((m) => {
-      if (inboxFilterKey(filters) !== forKey) return m;
+      if (`${scope}|${inboxFilterKey(filters)}` !== forKey) return m;
       const kept = m?.key === forKey ? m.items : [];
       return { key: forKey, items: [...kept, ...page.items.filter((i) => !kept.some((k) => k.key === i.key))], nextCursor: page.messageSearch?.nextCursor ?? null, loading: false, limitReached: page.messageSearch?.limitReached ?? false };
     });
     if (page.messageSearch?.timedOut) showToast({ tone: "danger", title: "Message search took too long. Add another word to narrow it." });
   };
-  const activeKey = useMemo(() => pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null, [pathname]);
   const set = (patch: Partial<InboxFilterSet>) => {
     setFilters((f) => ({ ...f, ...patch }));
     setActiveViewId(null);
   };
   const extraFilters = [filters.teamId, filters.assigneeId, filters.tag, filters.account].filter(Boolean).length;
-  const visibleViews = VIEWS.filter((v) => (!v.collaboration || options.collaboration) && (!v.lifecycle || options.lifecycle));
+  const moreViews = MORE_VIEWS.filter((v) => (!v.collaboration || options.collaboration) && (!v.lifecycle || options.lifecycle));
 
   const runBulk = (op: BulkOp) => {
     const refs = (shown?.items ?? []).filter((i) => selected.has(i.key)).map((i) => i.ref);
@@ -302,27 +323,88 @@ export function InboxWorkspace({
   return (
     <div className="flex min-h-0 flex-1">
       <aside
-        className={`flex w-full min-w-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:w-[22rem] md:shrink-0 lg:w-[25rem] ${threadOpen ? "max-md:hidden" : ""}`}
+        className={`flex w-full min-w-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-[20rem] md:shrink-0 lg:w-[21.5rem] ${threadOpen ? "max-md:hidden" : ""}`}
         aria-label="Conversations"
       >
-        <div className="shrink-0 space-y-2.5 border-b border-[var(--color-border)] px-3.5 pb-3 pt-3.5">
-          <div className="flex items-center gap-2">
-            <nav className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]" aria-label="Channels">
+        <div className="relative shrink-0 border-b border-[var(--color-border)]">
+          <div role="tablist" aria-label="Views" className="flex items-stretch px-1.5 pt-1.5">
+            {MAIN_VIEWS.map((v) => {
+              const active = v.view === filters.view;
+              const n = v.count ? counts[v.count] : 0;
+              return (
+                <button
+                  key={v.view}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => set({ view: v.view })}
+                  className={`relative flex min-w-0 flex-1 flex-col items-center gap-0.5 border-b-2 px-0.5 pb-1.5 pt-1 text-[11.5px] font-medium transition-colors ${
+                    active ? "border-[var(--color-accent)] text-[color:var(--color-foreground)]" : "border-transparent text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+                  }`}
+                >
+                  <v.icon className="size-4" aria-hidden />
+                  <span className="flex items-baseline gap-1 whitespace-nowrap">
+                    {v.label}
+                    {n > 0 ? <span className={`tabular text-[10.5px] font-normal ${v.view === "needs-reply" ? "text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-subtle-foreground)]"}`}>{n > 999 ? "999+" : n}</span> : null}
+                  </span>
+                </button>
+              );
+            })}
+            <MoreViewsMenu views={moreViews} current={filters.view} counts={counts} onPick={(view) => set({ view })} />
+          </div>
+        </div>
+
+        <div className="relative shrink-0 space-y-2 border-b border-[var(--color-border)] px-3 py-2.5">
+          <div className="flex items-center gap-1">
+            <label className="relative block min-w-0 flex-1">
+              <span className="sr-only">Search conversations</span>
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[color:var(--color-subtle-foreground)]" aria-hidden />
+              <input
+                ref={searchRef}
+                type="search"
+                value={filters.search}
+                onChange={(e) => set({ search: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") set({ search: "" });
+                }}
+                placeholder="Search…"
+                className="h-8.5 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-8 text-[13px] text-[color:var(--color-foreground)] placeholder:text-[color:var(--color-subtle-foreground)] focus:border-[var(--color-focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]/30"
+              />
+              {filters.search ? (
+                <button type="button" onClick={() => set({ search: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[color:var(--color-subtle-foreground)] hover:text-[color:var(--color-foreground)]" aria-label="Clear search">
+                  <X className="size-3.5" aria-hidden />
+                </button>
+              ) : null}
+            </label>
+            <IconToggle label="Filters" active={showFilters || extraFilters > 0} onClick={() => setShowFilters((s) => !s)} badge={extraFilters || null}>
+              <ListFilter className="size-4" aria-hidden />
+            </IconToggle>
+            <IconToggle label={selecting ? "Done selecting" : "Select conversations"} active={selecting} onClick={() => (setSelecting((s) => !s), setSelected(new Set()))}>
+              <CheckSquare className="size-4" aria-hidden />
+            </IconToggle>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <nav className="flex min-w-0 flex-1 items-center gap-0.5" aria-label="Channels">
               {SCOPES.map((s) => {
                 const active = s.scope === scope;
                 const count = s.channel ? counts.byChannel[s.channel] : null;
+                const title = s.channel ? `${CHANNEL_PRESENTATION[s.channel].label}${count ? ` (${count})` : ""}` : "All channels";
+                const tint = s.channel ? CHANNEL_PRESENTATION[s.channel].tint : null;
+                const Icon = s.channel ? CHANNEL_PRESENTATION[s.channel].icon : null;
                 return (
                   <Link
                     key={s.scope}
                     href={`/conversations/${s.scope}`}
                     aria-current={active ? "page" : undefined}
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors ${
-                      active ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+                    aria-label={title}
+                    title={title}
+                    style={tint && active ? { background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint } : undefined}
+                    className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? "w-8" : "px-2.5"} ${
+                      active ? (s.channel ? "" : "bg-[var(--color-primary)] text-[var(--color-on-primary)]") : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
                     }`}
                   >
-                    {s.channel ? <ChannelMark channel={s.channel} size="xs" /> : null}
-                    {s.label}
-                    {scope === "all" && count ? <span className={`tabular text-[10.5px] ${active ? "opacity-80" : "opacity-70"}`}>{count}</span> : null}
+                    {Icon ? <Icon className="size-3.5" strokeWidth={2.2} aria-hidden /> : "All"}
                   </Link>
                 );
               })}
@@ -352,35 +434,6 @@ export function InboxWorkspace({
                 ) : null}
               </div>
             ) : null}
-          </div>
-
-          <div className="flex gap-1.5">
-            <label className="relative block min-w-0 flex-1">
-              <span className="sr-only">Search conversations</span>
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[color:var(--color-subtle-foreground)]" aria-hidden />
-              <input
-                ref={searchRef}
-                type="search"
-                value={filters.search}
-                onChange={(e) => set({ search: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") set({ search: "" });
-                }}
-                placeholder="Search names and messages   /"
-                className="h-8.5 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-8 text-[13px] text-[color:var(--color-foreground)] placeholder:text-[color:var(--color-subtle-foreground)] focus:border-[var(--color-focus-ring)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]/30"
-              />
-              {filters.search ? (
-                <button type="button" onClick={() => set({ search: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[color:var(--color-subtle-foreground)] hover:text-[color:var(--color-foreground)]" aria-label="Clear search">
-                  <X className="size-3.5" aria-hidden />
-                </button>
-              ) : null}
-            </label>
-            <IconToggle label="Filters" active={showFilters || extraFilters > 0} onClick={() => setShowFilters((s) => !s)} badge={extraFilters || null}>
-              <ListFilter className="size-4" aria-hidden />
-            </IconToggle>
-            <IconToggle label={selecting ? "Done selecting" : "Select conversations"} active={selecting} onClick={() => (setSelecting((s) => !s), setSelected(new Set()))}>
-              <CheckSquare className="size-4" aria-hidden />
-            </IconToggle>
             <IconToggle label={density === "compact" ? "Comfortable rows" : "Compact rows"} active={false} onClick={() => writeDensity(density === "compact" ? "comfortable" : "compact")}>
               {density === "compact" ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
             </IconToggle>
@@ -409,33 +462,8 @@ export function InboxWorkspace({
             </div>
           ) : null}
 
-          <div className="flex items-center gap-2">
-            <div className="-mx-1 flex min-w-0 flex-1 gap-1 overflow-x-auto px-1 [scrollbar-width:none]" role="tablist" aria-label="Views">
-              {visibleViews.map((v) => {
-                const active = v.view === filters.view;
-                const n = v.count ? counts[v.count] : 0;
-                return (
-                  <button
-                    key={v.view}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => set({ view: v.view })}
-                    className={`inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] font-medium transition-colors ${
-                      active ? "bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] ring-1 ring-inset ring-[var(--color-border)]" : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
-                    }`}
-                  >
-                    {v.view === "urgent" || v.view === "high" ? <Flag className={`size-3 ${v.view === "urgent" ? "text-[color:var(--color-danger-fg)]" : "text-[color:var(--color-warning-fg)]"}`} aria-hidden /> : null}
-                    {v.label}
-                    {n > 0 ? <span className={`tabular text-[10.5px] ${v.view === "unread" ? "text-[color:var(--color-warning-fg)]" : "opacity-70"}`}>{n}</span> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {showFilters ? (
-            <div className="grid grid-cols-2 gap-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-2">
+            <div className="absolute inset-x-2 top-full z-20 mt-1 grid grid-cols-2 gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-[var(--shadow-lg)]">
               <FilterSelect label="Account" value={filters.account} onChange={(v) => set({ account: v })} options={options.accounts.map((a) => ({ value: a.key, label: a.label }))} />
               <FilterSelect label="Last activity" value={filters.within} onChange={(v) => set({ within: v as InboxFilterSet["within"] })} options={[{ value: "24h", label: "Last 24 h" }, { value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }]} />
               <FilterSelect label="Assigned to" value={filters.assigneeId} onChange={(v) => set({ assigneeId: v })} options={options.people.map((p) => ({ value: p.id, label: p.name }))} />
@@ -535,12 +563,12 @@ export function InboxWorkspace({
           ) : null}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto" aria-busy={pending || !shown}>
+        <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto" aria-busy={pending || !shown}>
           {!shown ? (
             <ul aria-hidden>
               {Array.from({ length: 6 }, (_, i) => (
-                <li key={i} className="flex gap-3 border-b border-[var(--color-border)] px-3.5 py-3">
-                  <span className="size-9 shrink-0 animate-pulse rounded-[var(--radius-lg)] bg-[var(--color-neutral-bg)]" />
+                <li key={i} className="flex gap-3 px-3 py-2.5">
+                  <span className="size-10 shrink-0 animate-pulse rounded-full bg-[var(--color-neutral-bg)]" />
                   <span className="flex-1 space-y-2 pt-1">
                     <span className="block h-3 w-2/3 animate-pulse rounded bg-[var(--color-neutral-bg)]" />
                     <span className="block h-2.5 w-5/6 animate-pulse rounded bg-[var(--color-neutral-bg)]" />
@@ -553,14 +581,15 @@ export function InboxWorkspace({
               {filters.search ? `Nothing matches “${filters.search}”.` : !filtered ? "No conversations yet. They appear here as soon as a customer writes." : "Nothing matches these filters right now."}
             </p>
           ) : (
-            <ul>
+            <ul className="space-y-px p-1.5">
               {shown.items.map((item) => (
                 <InboxRow
                   key={item.key}
                   item={item}
                   term={filters.search}
                   compact={density === "compact"}
-                  active={item.key === `ch:${activeKey}`}
+                  href={inboxHref(item.href, scope)}
+                  active={samePath(pathname, inboxHref(item.href, scope))}
                   selecting={selecting}
                   selected={selected.has(item.key)}
                   onToggle={() =>
@@ -602,6 +631,60 @@ export function InboxWorkspace({
             runBulk({ op: "addTag", tag });
           }}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/** The fifth tab: every other view, named on the tab while one of them is on. */
+function MoreViewsMenu({ views, current, counts, onPick }: { views: typeof MORE_VIEWS; current: InboxViewKey; counts: InboxCounts; onPick: (view: InboxViewKey) => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!root.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  const active = views.find((v) => v.view === current) ?? null;
+  return (
+    <div ref={root} className="relative flex min-w-0 flex-1">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full min-w-0 flex-col items-center gap-0.5 border-b-2 px-0.5 pb-1.5 pt-1 text-[11.5px] font-medium transition-colors ${
+          active ? "border-[var(--color-accent)] text-[color:var(--color-foreground)]" : "border-transparent text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+        }`}
+      >
+        <MoreHorizontal className="size-4" aria-hidden />
+        <span className="max-w-full truncate">{active?.label ?? "More"}</span>
+      </button>
+      {open ? (
+        <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-44 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-[var(--shadow-lg)]">
+          {views.map((v) => {
+            const n = v.count ? counts[v.count] : 0;
+            return (
+              <button
+                key={v.view}
+                type="button"
+                role="menuitemradio"
+                aria-checked={v.view === current}
+                onClick={() => {
+                  onPick(v.view);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-[12.5px] hover:bg-[var(--color-neutral-bg)] ${v.view === current ? "font-medium text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)]"}`}
+              >
+                {v.label}
+                {n > 0 ? <span className="tabular text-[11px] text-[color:var(--color-subtle-foreground)]">{n}</span> : null}
+              </button>
+            );
+          })}
+        </div>
       ) : null}
     </div>
   );
@@ -950,131 +1033,120 @@ function MentionsPopover({ data, onClose, onRead }: { data: { unread: number; it
   );
 }
 
-function InboxRow({ item, term, active, compact, selecting, selected, onToggle }: { item: InboxItem; term: string; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
+function InboxRow({ item, href, term, active, compact, selecting, selected, onToggle }: { item: InboxItem; href: string; term: string; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
   const avatar = conversationAvatar(item.key, item.title);
-  const external = item.channel === "WHATSAPP";
-  const rowClass = `group/row relative flex w-full gap-3 border-b border-[var(--color-border)] px-3.5 ${compact ? "py-2" : "py-3"} text-left transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)] ${
-    active || selected ? "bg-[var(--color-surface)]" : "hover:bg-[var(--color-neutral-bg)]/60"
+  const rowClass = `group/row relative flex w-full gap-2.5 rounded-[var(--radius-lg)] px-2.5 ${compact ? "py-1.5" : "py-2.5"} text-left transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)] ${
+    active || selected ? "bg-[var(--color-accent-bg)]" : "hover:bg-[var(--color-neutral-bg)]"
   }`;
+  const meta = compact
+    ? null
+    : {
+        status: item.lifecycleStatus ? (item.lifecycleStatus !== "OPEN" ? CONVERSATION_STATUS_LABELS[item.lifecycleStatus] : null) : item.status === "CLOSED" ? "Closed" : null,
+        assignee: item.assigneeName ? (item.assignedToMe ? "You" : item.assigneeName) : null,
+      };
+  const hasMeta = meta && (meta.status || meta.assignee || item.teamName || item.tags.length > 0 || item.connectionProblem);
 
   const body = (
     <>
-      {selecting ? <span className="flex shrink-0 items-center">{selected ? <CheckSquare className="size-4 text-[color:var(--color-primary)]" aria-hidden /> : <Square className="size-4 text-[color:var(--color-subtle-foreground)]" aria-hidden />}</span> : null}
-      <span className="relative shrink-0">
-        <span aria-hidden style={{ background: avatar.background, color: avatar.color }} className={`flex ${compact ? "size-7 text-[10.5px]" : "size-9 text-[12px]"} items-center justify-center rounded-[var(--radius-lg)] font-semibold tracking-[-0.01em] shadow-[var(--highlight-top)]`}>
-          {avatar.initials}
+      {selecting ? <span className="flex shrink-0 items-center">{selected ? <CheckSquare className="size-4 text-[color:var(--color-accent)]" aria-hidden /> : <Square className="size-4 text-[color:var(--color-subtle-foreground)]" aria-hidden />}</span> : null}
+      <span className="relative shrink-0 self-start">
+        <span aria-hidden style={{ background: avatar.background, color: avatar.color }} className={`flex ${compact ? "size-8 text-[11px]" : "size-10 text-[12.5px]"} items-center justify-center rounded-full font-semibold tracking-[-0.01em]`}>
+          {item.isGroup ? <Users className={compact ? "size-3.5" : "size-4.5"} aria-hidden /> : avatar.initials}
         </span>
-        <span className="absolute -bottom-1 -right-1 rounded-[5px] bg-[var(--color-surface-sunken)] p-px">
+        <span className={`absolute -bottom-0.5 -right-0.5 flex rounded-full p-px ${active || selected ? "bg-[var(--color-accent-bg)]" : "bg-[var(--color-surface)]"}`}>
           <ChannelMark channel={item.channel} size="xs" />
         </span>
-        {item.unread ? (
-          <>
-            <span aria-hidden className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-[var(--color-warning)] shadow-[0_0_0_2px_var(--color-surface-sunken)]" />
-            <span className="sr-only">Unread — a customer is waiting.</span>
-          </>
-        ) : item.needsReply ? (
-          <>
-            <span aria-hidden className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-[1.5px] border-[var(--color-warning)] bg-[var(--color-surface)] shadow-[0_0_0_2px_var(--color-surface-sunken)]" />
-            <span className="sr-only">Seen, still needs a reply.</span>
-          </>
-        ) : null}
       </span>
 
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="flex min-w-0 items-center gap-1">
             {item.priority === "HIGH" || item.priority === "URGENT" ? <Flag className={`size-3 shrink-0 ${PRIORITY_STYLE[item.priority]}`} aria-label={`${CONVERSATION_PRIORITY_LABEL[item.priority]} priority`} /> : null}
-            {item.isGroup ? <Users className="size-3 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Group chat" /> : null}
-            <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${item.unread ? "font-semibold" : "font-medium"}`}>{item.title}</span>
-            {external && !selecting ? <ArrowUpRight className="size-3 shrink-0 text-[color:var(--color-subtle-foreground)] opacity-0 transition-opacity group-hover/row:opacity-100" aria-hidden /> : null}
+            <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${item.unread ? "font-semibold" : "font-medium"}`} dir="auto" title={item.via}>
+              {item.title}
+            </span>
+            {item.aiOn ? <Bot className="size-3 shrink-0 text-[color:var(--color-accent-fg)]" aria-label="AI answers here" /> : null}
+          </span>
+          <span className={`tabular shrink-0 text-[11px] ${item.unread ? "font-medium text-[color:var(--color-accent-fg)]" : "text-[color:var(--color-subtle-foreground)]"}`} suppressHydrationWarning>
+            {relativeTime(item.lastMessageAt)}
+          </span>
+        </span>
+        <span className="mt-0.5 flex items-center gap-2">
+          <span className={`min-w-0 flex-1 truncate text-[12.5px] ${item.unread ? "font-medium text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)]"}`} dir="auto">
+            {item.lastSendFailed ? (
+              <span className="mr-1 inline-flex items-center gap-0.5 font-medium text-[color:var(--color-danger-fg)]">
+                <AlertTriangle className="size-3" aria-hidden />
+                Not sent ·
+              </span>
+            ) : null}
+            {item.messageMatch ? (
+              <>
+                <Search className="mr-1 inline size-3 align-[-2px] text-[color:var(--color-subtle-foreground)]" aria-label="Matching message" />
+                <Highlighted text={item.messageMatch.snippet} term={term} />
+              </>
+            ) : item.preview ? (
+              <>
+                {item.lastMessageOutgoing ? <span className="text-[color:var(--color-subtle-foreground)]">You: </span> : null}
+                {item.preview}
+              </>
+            ) : (
+              <span className="italic text-[color:var(--color-subtle-foreground)]">No messages yet</span>
+            )}
           </span>
           {item.needsReply && item.waitingSince ? (
             <span
-              className="tabular shrink-0 rounded-[var(--radius-sm)] bg-[var(--color-warning-bg)] px-1 text-[10.5px] font-medium text-[color:var(--color-warning-fg)]"
+              className="tabular shrink-0 text-[11px] font-medium text-[color:var(--color-warning-fg)]"
               title={`Waiting for a reply since ${new Date(item.waitingSince).toLocaleString("en-GB", { timeZone: "Asia/Dhaka" })}`}
               suppressHydrationWarning
             >
               <span className="sr-only">Waiting for a reply for </span>
               {waitedFor(item.waitingSince)}
             </span>
-          ) : (
-            <span className={`tabular shrink-0 text-[11px] ${item.unread ? "font-medium text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-muted-foreground)]"}`} suppressHydrationWarning>
-              {relativeTime(item.lastMessageAt)}
-            </span>
-          )}
-        </span>
-        <span className={`mt-0.5 block truncate text-[12px] ${item.unread ? "text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)]"}`}>
-          {item.lastSendFailed ? (
-            <span className="mr-1 inline-flex items-center gap-0.5 font-medium text-[color:var(--color-danger-fg)]">
-              <AlertTriangle className="size-3" aria-hidden />
-              Not sent ·
-            </span>
           ) : null}
-          {item.messageMatch ? (
+          {item.unread ? (
             <>
-              <Search className="mr-1 inline size-3 align-[-2px] text-[color:var(--color-subtle-foreground)]" aria-label="Matching message" />
-              <Highlighted text={item.messageMatch.snippet} term={term} />
+              <span aria-hidden className="size-2 shrink-0 rounded-full bg-[var(--color-accent)]" />
+              <span className="sr-only">Unread. A customer is waiting.</span>
             </>
-          ) : item.preview ? (
-            <>
-              {item.lastMessageOutgoing ? <span className="text-[color:var(--color-subtle-foreground)]">You: </span> : null}
-              {item.preview}
-            </>
-          ) : (
-            <span className="italic text-[color:var(--color-subtle-foreground)]">No messages yet</span>
-          )}
+          ) : null}
         </span>
-        {compact ? null : (
-          <span className="mt-1 flex flex-wrap items-center gap-1">
-            <span className="text-[10.5px] text-[color:var(--color-subtle-foreground)]">
-              {CHANNEL_PRESENTATION[item.channel].short} · {item.via}
-            </span>
-            {item.lifecycleStatus ? (
-              item.lifecycleStatus !== "OPEN" ? <Chip>{CONVERSATION_STATUS_LABELS[item.lifecycleStatus]}</Chip> : null
-            ) : item.status === "CLOSED" ? (
-              <Chip>Closed</Chip>
-            ) : null}
-            {item.assigneeName ? (
+        {hasMeta ? (
+          <span className="mt-1 flex items-center gap-1 overflow-hidden whitespace-nowrap">
+            {meta.status ? <Chip>{meta.status}</Chip> : null}
+            {meta.assignee ? (
               <Chip>
                 <UserRound className="size-2.5" aria-hidden />
-                {item.assignedToMe ? "You" : item.assigneeName}
+                {meta.assignee}
               </Chip>
             ) : null}
-            {item.teamName ? (
-              <Chip>
-                <Users className="size-2.5" aria-hidden />
-                {item.teamName}
-              </Chip>
-            ) : null}
+            {item.teamName ? <Chip>{item.teamName}</Chip> : null}
             {item.tags.slice(0, 2).map((t) => (
-              <span key={t} className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-info-fg)]">
+              <span key={t} className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10.5px] text-[color:var(--color-info-fg)]">
                 #{t}
               </span>
             ))}
-            {item.tags.length > 2 ? <span className="text-[10px] text-[color:var(--color-subtle-foreground)]">+{item.tags.length - 2}</span> : null}
-            {item.aiOn ? <span className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10px] font-medium text-[color:var(--color-info-fg)]">AI on</span> : null}
+            {item.tags.length > 2 ? <span className="text-[10.5px] text-[color:var(--color-subtle-foreground)]">+{item.tags.length - 2}</span> : null}
             {item.connectionProblem ? (
-              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[color:var(--color-danger-fg)]" title={item.connectionProblem}>
+              <span className="inline-flex items-center gap-0.5 text-[10.5px] font-medium text-[color:var(--color-danger-fg)]" title={item.connectionProblem}>
                 <AlertTriangle className="size-2.5" aria-hidden />
                 Can&apos;t reply
               </span>
             ) : null}
           </span>
-        )}
+        ) : null}
       </span>
     </>
   );
 
   return (
     <li className="relative">
-      {active ? <span aria-hidden className="absolute inset-y-0 left-0 z-[1] w-[3px] bg-[var(--color-primary)]" /> : null}
       {selecting ? (
         // A button while selecting, never a link with an intercepted click: middle-click must not navigate away and lose the selection.
         <button type="button" onClick={onToggle} aria-pressed={selected} className={rowClass}>
           {body}
         </button>
       ) : (
-        <Link href={item.messageMatch ? `${item.href}${item.href.includes("?") ? "&" : "?"}msg=${encodeURIComponent(item.messageMatch.messageId)}` : item.href} aria-current={active ? "page" : undefined} title={external ? "Opens in WhatsApp Chat" : undefined} className={`${rowClass} active:translate-y-px`}>
+        <Link href={item.messageMatch ? `${href}${href.includes("?") ? "&" : "?"}msg=${encodeURIComponent(item.messageMatch.messageId)}` : href} aria-current={active ? "page" : undefined} className={rowClass}>
           {body}
         </Link>
       )}
@@ -1083,7 +1155,7 @@ function InboxRow({ item, term, active, compact, selecting, selected, onToggle }
 }
 
 function Chip({ children }: { children: React.ReactNode }) {
-  return <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]">{children}</span>;
+  return <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10.5px] text-[color:var(--color-neutral-fg)]">{children}</span>;
 }
 
 /** The term marked inside a snippet. Plain text only: the snippet is never rendered as HTML. */

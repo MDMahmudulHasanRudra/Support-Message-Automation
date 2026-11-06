@@ -2964,7 +2964,7 @@ Messaging Channels. Feature `OMNICHANNEL`, **off by default**; keys `channels.vi
   four tables (`ChannelConnection`, `ChannelConversation`, `ChannelMessage`, `ChannelInboundEvent`),
   because ~40 readers assume every `Message` is WhatsApp. The unified list merges `ChannelConversation`
   with WhatsApp Chat's own `getChatInbox` / `getChatConversations`, so "waiting" means the same in
-  both. A WhatsApp row opens WhatsApp Chat. Do not put channel rows into `Message`.
+  both. A WhatsApp row opens beside the list (`/conversations/<scope>/w/…`): the same view, send path and checks as WhatsApp Chat, and that path counts as the `/chat` page for project roles. Do not put channel rows into `Message`.
 - **The web records, the worker processes.** `/api/channels/<meta|telegram>/<webhookKey>` (no session)
   verifies the Meta HMAC (app secret, raw body) or the Telegram secret header, splits the body
   (`splitMetaWebhook` / `telegramDedupKey` in packages/shared), and inserts `ChannelInboundEvent`

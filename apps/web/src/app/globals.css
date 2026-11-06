@@ -433,6 +433,15 @@ body::before {
   transform: translateY(0);
 }
 
+/* A long list in a tool used all day: the scrollbar appears when the pane is pointed at, not before. */
+.scroll-quiet {
+  scrollbar-color: transparent transparent;
+}
+.scroll-quiet:hover,
+.scroll-quiet:focus-within {
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
 /* Slim, low-profile scrollbars that stay out of the way of dense dashboard content */
 * {
   scrollbar-width: thin;

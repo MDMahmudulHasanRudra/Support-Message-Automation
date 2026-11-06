@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { AlarmClock, CheckCircle2, CircleDot, Hourglass, RotateCcw } from "lucide-react";
+import { AlarmClock, CheckCircle2, Hourglass, RotateCcw } from "lucide-react";
 import { CONVERSATION_STATUS_LABELS, type ConversationRef, type ConversationStatus } from "@support-automation/shared";
 import { useToast } from "@/components/ui";
 import { useProjectRouter } from "@/components/ProjectLink";
@@ -80,10 +80,7 @@ export function ConversationStatusSection({
 
   return (
     <section>
-      <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-        <CircleDot className="size-3.5" aria-hidden />
-        Status
-      </h3>
+      <h3 className="mb-2 text-[12px] font-medium text-[color:var(--color-muted-foreground)]">Status</h3>
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-full px-2.5 py-0.5 text-[12px] font-medium ${TONE[current]}`}>{CONVERSATION_STATUS_LABELS[current]}</span>
         {current === "SNOOZED" && snoozedUntil && shown === null ? (

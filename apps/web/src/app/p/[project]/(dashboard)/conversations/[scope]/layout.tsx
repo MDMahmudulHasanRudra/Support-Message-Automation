@@ -18,9 +18,10 @@ import { InboxWorkspace } from "../InboxWorkspace";
  * WhatsApp Chat.
  */
 export default async function InboxLayout({ children, params }: { children: React.ReactNode; params: Promise<{ scope: string }> }) {
-  const session = await requireAccess("messages.view", "OMNICHANNEL");
   const { scope } = await params;
   if (!isInboxScope(scope)) notFound();
+  // Named explicitly: a WhatsApp thread below counts as WhatsApp Chat, and that alone must not open this list.
+  const session = await requireAccess("messages.view", { feature: "OMNICHANNEL", sections: [`/conversations/${scope}`] });
   const [inbox, filterOptions, people, disabled, canShare] = await Promise.all([
     loadInbox({ scope, viewerId: session.userId }),
     inboxFilterOptions(),
@@ -31,9 +32,9 @@ export default async function InboxLayout({ children, params }: { children: Reac
   const options = { ...filterOptions, people: people.map((p) => ({ id: p.id, name: p.name })), collaboration: !disabled.has("INBOX_COLLABORATION"), lifecycle: !disabled.has("UNIFIED_INBOX_V3"), autoRouting: !disabled.has("UNIFIED_INBOX_V3") && !disabled.has("AUTO_ROUTING"), canShare };
 
   return (
-    <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
+    <div data-v2="" className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] group-data-[bleed]/page:rounded-none group-data-[bleed]/page:border-0 group-data-[bleed]/page:shadow-none max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
       <AutoRefresh intervalMs={4000} />
-      <InboxWorkspace key={scope} scope={scope} items={inbox.items} counts={inbox.counts} truncated={inbox.truncated} options={options}>
+      <InboxWorkspace scope={scope} items={inbox.items} counts={inbox.counts} truncated={inbox.truncated} options={options}>
         {children}
       </InboxWorkspace>
     </div>

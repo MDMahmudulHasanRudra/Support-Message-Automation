@@ -1,6 +1,7 @@
 "use server";
 
 import { loadConversationFiles, type ConversationFile } from "@/server/conversationFiles";
+import { loadConversationContact, type ConversationContact } from "@/server/conversationContact";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
@@ -77,6 +78,17 @@ export async function readConversationFiles(refInput: unknown): Promise<{ files:
   const access = await resolveWorkspaceAccess(granted.session, ref);
   if (!access?.lifecycle) return { error: "That conversation could not be found." };
   return { files: await loadConversationFiles(ref) };
+}
+
+/** Who this conversation is with, for the panel's Overview. Loaded when it opens; refuses as a sentence, never a redirect. */
+export async function readConversationContact(refInput: unknown): Promise<{ contact: ConversationContact | null } | Fail> {
+  const ref = parseConversationRef(refInput);
+  if (!ref) return { error: "That conversation could not be found." };
+  const granted = await checkPermission("messages.view");
+  if ("denied" in granted) return { error: granted.denied };
+  const access = await resolveWorkspaceAccess(granted.session, ref);
+  if (!access) return { error: "That conversation could not be found." };
+  return { contact: await loadConversationContact(granted.session, ref) };
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────────────────────────

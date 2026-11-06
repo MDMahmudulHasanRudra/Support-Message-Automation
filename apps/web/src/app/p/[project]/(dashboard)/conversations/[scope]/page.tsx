@@ -48,9 +48,12 @@ export default async function InboxEmptyPane({ params }: { params: Promise<{ sco
       <span className="flex size-11 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-neutral-bg)] text-[color:var(--color-muted-foreground)]">
         <MessagesSquare className="size-5" aria-hidden />
       </span>
-      <p className="max-w-xs text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-        Choose a conversation. WhatsApp conversations open in WhatsApp Chat; Messenger, Instagram, Telegram and Website chat open here.
-      </p>
+      <div className="max-w-xs space-y-1">
+        <h2 className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Choose a conversation</h2>
+        <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+          Every channel opens right here. Press <kbd className="rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[11px]">/</kbd> to search names and messages.
+        </p>
+      </div>
     </div>
   );
 }

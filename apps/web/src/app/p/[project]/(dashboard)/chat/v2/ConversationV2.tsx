@@ -14,6 +14,7 @@ import { decideOnArrival, distanceFromBottom, NEAR_BOTTOM_PX, scrollTopAfterPrep
 import { formatDateTime } from "@/lib/date";
 import type { SavedReplyOption } from "../SavedReplyPicker";
 import { continues, dayFormat } from "../threadPresentation";
+import { ComposerShell } from "../../inbox/ComposerShell";
 import { ComposerV2, type ReplyTarget } from "./ComposerV2";
 import { ForwardDialog } from "./ForwardDialog";
 import { GalleryLightbox, type GalleryImage } from "./GalleryLightbox";
@@ -651,6 +652,7 @@ export function ConversationV2({
         </div>
 
         {belowThread}
+        <ComposerShell>
         <ComposerV2
           conversation={conversation}
           draftId={draftId}
@@ -665,6 +667,7 @@ export function ConversationV2({
           insertRequest={insertRequest}
           onSent={() => scrollToBottom()}
         />
+        </ComposerShell>
       </div>
 
       {forwarding ? (
