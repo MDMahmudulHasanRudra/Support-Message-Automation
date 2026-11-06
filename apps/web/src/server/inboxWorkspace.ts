@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db";
+import { loadConversationCsat, type ConversationCsatView } from "@/server/csat";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { activeProjectId } from "@/server/projectContext";
 import { hasPermission, userHoldsKey } from "@/server/permissions";
@@ -123,6 +124,8 @@ export interface WorkspaceData {
   groupOwner: { name: string; groupName: string } | null;
   /** Inbox V3 (UNIFIED_INBOX_V3): the conversation status. Null while the feature is off. */
   lifecycle: { status: ConversationStatus; snoozedUntil: string | null; statusChangedAt: string | null } | null;
+  /** Satisfaction surveys of this conversation, newest first (CSAT.md). Empty while CSAT_SURVEYS is off. */
+  csat: ConversationCsatView[];
   viewerId: string;
 }
 
@@ -225,7 +228,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
       : null,
     (ref.kind === "channel" && access.collaboration) || access.lifecycle ? prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }) : null,
   ]);
-  const [events, group, lifecycle, lifecyclePeople] = await Promise.all([
+  const [events, group, lifecycle, lifecyclePeople, csat] = await Promise.all([
     access.collaboration || access.lifecycle
       ? prisma.conversationEvent.findMany({
           where: ref.kind === "channel" ? { channelConversationId: ref.conversationId } : { accountId: ref.accountId, chatId: ref.chatId },
@@ -239,6 +242,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
       : null,
     access.lifecycle ? loadLifecycle(ref) : null,
     access.lifecycle && !access.collaboration ? mentionablePeople(session) : null,
+    loadConversationCsat(ref, access.canRead),
   ]);
   const assignable = lifecyclePeople ?? people;
   // Names for the ids history refers to (people and Teams of this project).
@@ -272,6 +276,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     lifecycle: lifecycle
       ? { status: lifecycle.status, snoozedUntil: lifecycle.snoozedUntil?.toISOString() ?? null, statusChangedAt: lifecycle.statusChangedAt?.toISOString() ?? null }
       : null,
+    csat,
     viewerId: session.userId,
   };
 }

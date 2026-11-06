@@ -11,6 +11,7 @@ import {
   planOutgoingFile,
   validateOutgoingFileContent,
   MOOD_CUSTOMER_MESSAGE_VARIANT,
+  CSAT_SURVEY_VARIANT,
   STICKER_MAX_BYTES,
   validateLocation,
   validatePoll,
@@ -396,12 +397,15 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
   const cooldownSeconds = message.ruleId
     ? (await prisma.automationRule.findUnique({ where: { id: message.ruleId }, select: { cooldownSeconds: true } }))
         ?.cooldownSeconds ?? null
-    : message.actionType === "AUTO_REPLY" && !message.idempotencyKey.endsWith(`:${MOOD_CUSTOMER_MESSAGE_VARIANT}`)
+    : message.actionType === "AUTO_REPLY" &&
+        !message.idempotencyKey.endsWith(`:${MOOD_CUSTOMER_MESSAGE_VARIANT}`) &&
+        !message.idempotencyKey.endsWith(`:${CSAT_SURVEY_VARIANT}`)
       ? (await getAiSettings()).aiReplyCooldownSeconds
       : null;
   // (Mood Detection's message to an upset customer is excluded: it is sent once per mood alert
   // BECAUSE a person is needed, so an AI answer moments earlier must not cancel it on the way out.
-  // Kill switch, MANUAL_ONLY, rate limits and membership are all still checked.)
+  // Kill switch, MANUAL_ONLY, rate limits and membership are all still checked. A satisfaction survey (CSAT.md)
+  // is excluded for the same reason: the AI's last answer before the resolution must not cancel it.)
 
   // Test mode lifts cooldowns at enqueue time (safety.ts); it has to lift them here too, or an
   // approved test group could queue a reply and then have it cancelled on the way out.

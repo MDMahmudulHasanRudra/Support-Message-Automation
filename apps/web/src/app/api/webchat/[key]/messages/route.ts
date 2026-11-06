@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { recordVisitorMessage, visitorConversation, visitorFromToken, WebchatError } from "@/server/channels/webchat";
+import { visitorCsatPrompt } from "@/server/channels/webchatCsat";
 import { json, preflight, readJson, withWidget } from "../http";
 
 /**
@@ -19,7 +20,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!visitor) throw new WebchatError("Chat session not found or expired.", 401);
     const after = request.nextUrl.searchParams.get("after");
     const seen = request.nextUrl.searchParams.get("seen") === "1";
-    return json(await visitorConversation(widget, visitor, after && after.length <= 40 ? after : null, seen), 200, cors);
+    const [conversation, csat] = await Promise.all([
+      visitorConversation(widget, visitor, after && after.length <= 40 ? after : null, seen),
+      // A satisfaction survey card for this visitor's resolved conversation (CSAT.md), or null.
+      visitorCsatPrompt(widget, visitor),
+    ]);
+    return json({ ...conversation, csat }, 200, cors);
   });
 }
 

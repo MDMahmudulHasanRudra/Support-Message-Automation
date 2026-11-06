@@ -14,6 +14,7 @@ import {
   NotebookPen,
   PanelRightOpen,
   Sparkles,
+  Star,
   StickyNote,
   Tag,
   ThumbsDown,
@@ -490,6 +491,8 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
         </section>
       ) : null}
 
+      {data.csat.length ? <CsatSection surveys={data.csat} /> : null}
+
       {data.history.length ? (
         <section>
           <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
@@ -509,6 +512,38 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
 
       {ro ? <p className="text-[11.5px] text-[color:var(--color-subtle-foreground)]">Your role can read this conversation but not change it.</p> : null}
     </div>
+  );
+}
+
+/** Satisfaction surveys of this conversation (CSAT.md): what was asked after each resolution, and the answer. */
+function CsatSection({ surveys }: { surveys: WorkspaceData["csat"] }) {
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
+        <Star className="size-3.5" aria-hidden />
+        Satisfaction
+      </h3>
+      <ol className="space-y-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
+        {surveys.map((s) => (
+          <li key={s.id}>
+            {s.rating !== null ? (
+              <span className="text-[color:var(--color-foreground)]" aria-label={`Rated ${s.rating} out of 5`}>
+                {"★".repeat(s.rating)}
+                {"☆".repeat(5 - s.rating)} {s.rating}/5
+              </span>
+            ) : s.status === "SENT" ? (
+              <span>{s.closedUnanswered ? "Asked — the reply was not a rating" : "Asked — no answer yet"}</span>
+            ) : s.status === "PENDING" ? (
+              <span>Survey about to be asked</span>
+            ) : (
+              <span title={s.skipReason ?? undefined}>{s.skipReason ?? "Not asked"}</span>
+            )}{" "}
+            · <RelTime iso={s.answeredAt ?? s.sentAt ?? s.resolvedAt} />
+            {s.comment ? <span className="mt-0.5 block whitespace-pre-wrap break-words text-[color:var(--color-foreground)]">“{s.comment}”</span> : null}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

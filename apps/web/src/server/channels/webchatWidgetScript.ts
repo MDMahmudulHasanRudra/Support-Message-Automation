@@ -17,10 +17,14 @@ import { WIDGET_FONT_STACKS, widgetPathAllowed, widgetTeaserAllowed } from "@sup
  * by the server. Page targeting and the greeting's frequency rules are the shared functions themselves
  * (packages/shared webchat.ts), embedded as source, so the browser runs exactly what the tests check.
  *
+ * Satisfaction survey (CSAT.md, 3.1.0): after the team resolves the conversation, the poll may carry `csat`
+ * ({ id, question }); the widget then shows a rating card (1–5 and an optional comment) at the end of the
+ * conversation and posts the answer to `/csat` with the visitor's token. Answered ids are remembered per browser.
+ *
  * Preview (`data-preview="1"`, the settings page only): no network at all. The configuration and sample messages come
  * from window.GetAssistChatPreview and from postMessage by the parent page; nothing is sent, no visitor is created.
  */
-const VERSION = "3.0.0";
+const VERSION = "3.1.0";
 
 export const WIDGET_SCRIPT = String.raw`(function () {
   "use strict";
@@ -42,7 +46,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   var mqDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : { matches: false };
   var reduceMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
   var touch = window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : false;
-  var S = { token: null, open: false, msgs: [], pending: [], last: null, unread: 0, cfg: null, timer: null, starting: null, typingSent: 0, agentTyping: false, draft: null, failures: 0, shown: false, destroyed: false, userClosed: false, newBelow: false, view: null };
+  var S = { token: null, open: false, msgs: [], pending: [], last: null, unread: 0, cfg: null, timer: null, starting: null, typingSent: 0, agentTyping: false, draft: null, failures: 0, shown: false, destroyed: false, userClosed: false, newBelow: false, view: null, csat: null, csatPick: 0, csatComment: "", csatBusy: false, csatError: null, csatThanks: false };
   var blobs = {};
   var timers = [];
 
@@ -158,10 +162,15 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       ".dz{position:absolute;inset:0;background:rgba(37,99,235,.08);border:2px dashed " + p.brand + ";border-radius:" + r + "px;display:none;align-items:center;justify-content:center;font-weight:600;color:" + p.brand + ";z-index:3;pointer-events:none}.dz.on{display:flex}",
       ".lb{position:absolute;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:4;cursor:zoom-out}.lb.on{display:flex}.lb img{max-width:94%;max-height:90%;border-radius:8px}",
       ".pv{font-size:11px;text-align:center;color:" + p.muted + ";padding:2px 8px 6px}",
+      ".cs{align-self:stretch;margin:10px 2px 4px;padding:12px;border:1px solid " + p.border + ";border-radius:" + Math.max(8, r - 2) + "px;background:" + p.surface + ";color:" + p.text + ";display:flex;flex-direction:column;gap:8px}",
+      ".cs p{margin:0;font-size:13.5px;line-height:1.45;white-space:pre-wrap}.cs .st{display:flex;gap:4px}.cs .st button{flex:1;min-width:0;height:40px;border:1px solid " + p.border + ";border-radius:10px;background:transparent;cursor:pointer;font-size:18px;line-height:1;color:" + p.muted + "}",
+      ".cs .st button.on{background:" + p.brand + ";border-color:" + p.brand + ";color:" + p.brandInk + "}.cs .st button span{display:block;font-size:10.5px;margin-top:2px}",
+      ".cs textarea{resize:none;border:1px solid " + p.border + ";background:" + p.surface + ";color:" + p.text + ";border-radius:10px;padding:8px 10px;font-size:13.5px;min-height:56px;outline:none}.cs textarea:focus{border-color:" + p.brand + "}",
+      ".cs .go{align-self:flex-end;border:0;border-radius:10px;padding:8px 14px;background:" + p.brand + ";color:" + p.brandInk + ";font-weight:600;font-size:13px;cursor:pointer}.cs .go:disabled{opacity:.5;cursor:default}.cs .er{font-size:12px;color:#dc2626}",
       "@media (max-width:480px){" + (c.mobileFullscreen !== false
         ? ".p{position:fixed;inset:0;width:auto;height:100%;max-height:none;max-width:none;border-radius:0;border:0;padding-bottom:env(safe-area-inset-bottom)}.b.op{display:none}"
         : ".p{position:fixed;left:8px;right:8px;bottom:" + (size + 24) + "px;width:auto;height:min(" + h + "px,calc(100vh - " + (size + 48) + "px))}") +
-        ".f textarea,.pre input,.ep input{font-size:16px}.lab{display:none}.tz{max-width:calc(100vw - 100px)}}",
+        ".f textarea,.pre input,.ep input,.cs textarea{font-size:16px}.lab{display:none}.tz{max-width:calc(100vw - 100px)}}",
     ].join("");
   }
 
@@ -571,7 +580,10 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       if (seeing) markRead();
       var wasTyping = S.agentTyping;
       S.agentTyping = Boolean(r.agentTyping);
-      if (fresh.length) render(false, teamNew);
+      var card = r.csat && r.csat.id && !csatAnswered(r.csat.id) ? r.csat : null;
+      var cardChanged = (card ? card.id : null) !== (S.csat ? S.csat.id : null);
+      if (cardChanged) { S.csat = card; S.csatPick = 0; S.csatComment = ""; S.csatError = null; }
+      if (fresh.length || cardChanged) render(false, teamNew);
       else if (wasTyping !== S.agentTyping) drawTyping();
     }).catch(function (err) {
       if (err && (err.status === 401 || err.status === 404) && /expired|not found/i.test(err.message)) { S.token = null; save(); return; }
@@ -592,6 +604,45 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     if (!S.agentTyping) return;
     typingEl.appendChild(el("i")); typingEl.appendChild(el("i")); typingEl.appendChild(el("i"));
     typingEl.appendChild(document.createTextNode(" " + (S.cfg.name || "The team") + " is typing"));
+  }
+  // ── Satisfaction survey card (CSAT.md) ───────────────────────────────────────────────────────────
+  function csatAnswered(id) { var done = store("-csat"); return Array.isArray(done) && done.indexOf(id) > -1; }
+  function drawCsat() {
+    if (S.csatThanks && !S.csat) { var ty = el("div", "cs"); ty.appendChild(el("p", null, "Thank you for your feedback!")); list.appendChild(ty); return; }
+    if (!S.csat) return;
+    var card = el("div", "cs"); card.setAttribute("role", "group"); card.setAttribute("aria-label", "Rate this conversation");
+    card.appendChild(el("p", null, S.csat.question || "How did we do?"));
+    var row = el("div", "st");
+    [1, 2, 3, 4, 5].forEach(function (n) {
+      var b = el("button", n <= S.csatPick ? "on" : null); b.type = "button";
+      b.setAttribute("aria-label", n + " out of 5"); b.setAttribute("aria-pressed", n === S.csatPick ? "true" : "false");
+      b.appendChild(document.createTextNode("★")); b.appendChild(el("span", null, String(n)));
+      b.onclick = function () { S.csatPick = n; S.csatError = null; render(false); };
+      row.appendChild(b);
+    });
+    card.appendChild(row);
+    if (S.csatPick) {
+      var t = el("textarea"); t.maxLength = 1000; t.rows = 2; t.placeholder = "Anything to add? (optional)"; t.value = S.csatComment;
+      t.oninput = function () { S.csatComment = t.value; };
+      card.appendChild(t);
+      var go = el("button", "go", S.csatBusy ? "Sending…" : "Send rating"); go.type = "button"; go.disabled = S.csatBusy;
+      go.onclick = submitCsat;
+      card.appendChild(go);
+    }
+    if (S.csatError) card.appendChild(el("div", "er", S.csatError));
+    list.appendChild(card);
+  }
+  function submitCsat() {
+    if (!S.csat || !S.csatPick || S.csatBusy) return;
+    var survey = S.csat;
+    S.csatBusy = true; render(false);
+    api("/csat", { method: "POST", body: JSON.stringify({ surveyId: survey.id, rating: S.csatPick, comment: S.csatComment }) }).then(function () {
+      var done = store("-csat"); done = Array.isArray(done) ? done.slice(-19) : []; done.push(survey.id); store("-csat", done);
+      S.csat = null; S.csatThanks = true;
+    }).catch(function (err) {
+      S.csatError = (err && err.message) || "The rating was not sent.";
+      if (err && err.status === 404) { var d = store("-csat"); d = Array.isArray(d) ? d.slice(-19) : []; d.push(survey.id); store("-csat", d); S.csat = null; }
+    }).finally(function () { S.csatBusy = false; render(false); });
   }
   function render(stick, teamNew) {
     if (!list) return;
@@ -636,6 +687,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       else row.appendChild(el("div", "tm", "Sending…"));
       list.appendChild(row);
     });
+    drawCsat();
     drawTyping();
     // Stay where the visitor is reading; only follow new messages when they were already at the bottom.
     if (stick || keep) { list.scrollTop = list.scrollHeight; S.newBelow = false; }

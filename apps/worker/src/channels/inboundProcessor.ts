@@ -16,6 +16,7 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { applyChannelCustomerMessage } from "../inbox/lifecycle.js";
+import { recordCsatAnswerFromChannel } from "../csat/csatSurveys.js";
 import { getAiSettings } from "../ai/settings.js";
 import { metaAppSecretFor, fetchMetaProfileName, type FetchImpl } from "./providerApi.js";
 
@@ -180,8 +181,10 @@ async function storeMessage(connection: Connection, event: Extract<NormalizedCha
 
   // A customer's message. The unique provider id is the idempotency guard: a replayed event lands
   // here, fails the insert, and stops — so it never reaches AI a second time either.
+  let stored: { id: string };
   try {
-    await prisma.channelMessage.create({
+    stored = await prisma.channelMessage.create({
+      select: { id: true },
       data: {
         conversationId: conversation.id,
         connectionId: connection.id,
@@ -204,6 +207,9 @@ async function storeMessage(connection: Connection, event: Extract<NormalizedCha
     if (isUniqueViolation(err)) return;
     throw err;
   }
+  // Satisfaction surveys (CSAT.md): the customer's next message after a survey, read once as a possible rating.
+  // The message stays an ordinary message (AI, status, everything below unchanged). Never throws.
+  if (!event.senderIsBot) await recordCsatAnswerFromChannel({ conversationId: conversation.id, messageId: stored.id, text: event.text, at: event.occurredAt });
   await touchConversation(conversation.id, conversation.lastMessageAt, {
     at: event.occurredAt,
     preview: channelMessagePreview(event.text, event.contentType),

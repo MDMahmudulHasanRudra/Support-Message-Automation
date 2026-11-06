@@ -180,6 +180,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "WhatsAppConversationState", "InboxLifecycleSettings", "ConversationPresence",
   // Failed Replies history (FAILED_REPLIES.md): written with its project, read by its reply; listed for the same reason.
   "FailedReplyAction",
+  // Satisfaction surveys (CSAT.md).
+  "CsatSurvey", "CsatSettings",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

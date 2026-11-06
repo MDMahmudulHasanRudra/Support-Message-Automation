@@ -324,6 +324,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: [],
     documentation: "INBOX_WORKSPACE.md",
   },
+  CSAT_SURVEYS: {
+    category: "Support",
+    benefits: ["\"How did we do?\" after every resolved conversation", "CSAT score, response rate and average per agent and channel"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["UNIFIED_INBOX_V3"], why: "A survey is asked when a conversation is Resolved, which is an Inbox V3 status." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Surveys and answers are kept. " + KEPT,
+    setupSteps: ["Choose the channels and the question under Settings → Satisfaction surveys"],
+    documentation: "CSAT.md",
+  },
   PRODUCT_CATALOG: {
     category: "Commerce",
     benefits: ["One catalogue of products, variants and prices", "Stock that moves with every order, with its history"],

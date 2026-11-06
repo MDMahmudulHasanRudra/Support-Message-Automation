@@ -13,6 +13,7 @@ import {
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
+import { recordCsatSurveyForResolution } from "@/server/csat";
 
 /**
  * Unified Inbox V3 — conversation lifecycle for the dashboard (packages/shared conversationLifecycle.ts,
@@ -81,6 +82,8 @@ export async function changeConversationStatus(ref: ConversationRef, request: Li
   if (!decision.ok) throw new LifecycleChangeError(decision.reason);
   const resolving = decision.to === "RESOLVED";
   const context: Prisma.InputJsonValue | undefined = decision.snoozedUntil ? { snoozedUntil: decision.snoozedUntil.toISOString() } : resolving && note ? { hasNote: true } : undefined;
+  // The RESOLVE event a satisfaction survey (CSAT.md) is keyed on: one survey per resolution, recorded after commit.
+  let eventId = null as string | null;
 
   if (ref.kind === "whatsapp") {
     const type = whatsAppConversationType(ref.chatId);
@@ -107,10 +110,13 @@ export async function changeConversationStatus(ref: ConversationRef, request: Li
           throw err;
         }
       }
-      await tx.conversationEvent.create({
+      const event = await tx.conversationEvent.create({
         data: { projectId, accountId: ref.accountId, chatId: ref.chatId, kind: decision.event, fromValue: current.status, toValue: decision.to, actorId, context },
+        select: { id: true },
       });
+      eventId = event.id;
     });
+    if (resolving && eventId) await recordCsatSurveyForResolution(ref, { eventId, resolvedAt: now, actorId });
     return decision.to;
   }
 
@@ -126,10 +132,13 @@ export async function changeConversationStatus(ref: ConversationRef, request: Li
       },
     });
     if (moved.count === 0) throw new LifecycleChangeError(CHANGED);
-    await tx.conversationEvent.create({
+    const event = await tx.conversationEvent.create({
       data: { projectId, channelConversationId: ref.conversationId, kind: decision.event, fromValue: current.status, toValue: decision.to, actorId, context },
+      select: { id: true },
     });
+    eventId = event.id;
   });
+  if (resolving && eventId) await recordCsatSurveyForResolution(ref, { eventId, resolvedAt: now, actorId });
   return decision.to;
 }
 
