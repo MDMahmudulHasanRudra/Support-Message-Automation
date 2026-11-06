@@ -9463,14 +9463,41 @@ model BackupRun {
   @@index([status, finishedAt])
 }
 
-/// One backup alert sent to platform operators. The unique key ("FAILED:<last success id>" or
-/// "STALE:<…>", backupHealth.ts) is claimed BEFORE sending, so an outage alerts once per kind, restarts included.
+/// One backup alert to platform operators. The unique key ("FAILED:<last success id>" or "STALE:<…>",
+/// backupHealth.ts) makes it one alert per outage per kind, restarts included. Delivery is per recipient
+/// (BackupAlertDelivery). `attempts` / `nextAttemptAt` pace the retry when NOTHING could be tried (no platform
+/// email, no recipient, the mail host refused) — a confirmed non-delivery, retried on a bounded schedule.
 model BackupAlert {
-  id         String   @id @default(cuid())
-  key        String   @unique
-  kind       String
-  recipients Int      @default(0)
-  delivered  Boolean  @default(false)
-  note       String?
-  createdAt  DateTime @default(now())
+  id            String                @id @default(cuid())
+  key           String                @unique
+  kind          String
+  /// Recipients the alert reached (SENT).
+  recipients    Int                   @default(0)
+  delivered     Boolean               @default(false)
+  note          String?
+  attempts      Int                   @default(0)
+  nextAttemptAt DateTime?
+  createdAt     DateTime              @default(now())
+  deliveries    BackupAlertDelivery[]
+}
+
+/// One recipient of one backup alert. QUEUED → SENDING (claimed by a conditional update) → SENT, or FAILED
+/// (confirmed not delivered; retried at nextAttemptAt until attempts run out), or UNKNOWN (may have been
+/// delivered: SMTP could not say, or the worker stopped mid-send) — UNKNOWN is never sent again.
+model BackupAlertDelivery {
+  id            String      @id @default(cuid())
+  alertId       String
+  alert         BackupAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  recipient     String
+  status        String      @default("QUEUED")
+  attempts      Int         @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?
+  sendingAt     DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([alertId, recipient])
+  @@index([status, nextAttemptAt])
 }

@@ -57,6 +57,29 @@ export function decideBackupHealth(input: {
 }
 
 /**
+ * Delivering a backup alert (backupWatch.ts). One alert per outage per kind; one delivery per recipient.
+ * Only a CONFIRMED non-delivery is retried — the mail server refused, no platform email was set up, the
+ * mail host was refused before connecting — on this schedule, then it stops. An outcome nobody can know
+ * (the connection dropped after the message was handed over: SMTP's UNKNOWN, or a crash mid-send) is final:
+ * resending could email the operator twice, and a duplicate alert is how people learn to ignore alerts.
+ */
+export const BACKUP_ALERT_RETRY_DELAYS_MS = [5 * 60_000, 15 * 60_000, 60 * 60_000, 3 * 60 * 60_000, 6 * 60 * 60_000] as const;
+/** First attempt plus one per retry delay. */
+export const BACKUP_ALERT_MAX_ATTEMPTS = BACKUP_ALERT_RETRY_DELAYS_MS.length + 1;
+
+/** When to try again after `attempts` confirmed failures, or null when attempts are used up. */
+export function nextBackupAlertAttempt(attempts: number, now: Date): Date | null {
+  if (attempts >= BACKUP_ALERT_MAX_ATTEMPTS) return null;
+  const index = Math.min(Math.max(0, attempts - 1), BACKUP_ALERT_RETRY_DELAYS_MS.length - 1);
+  return new Date(now.getTime() + BACKUP_ALERT_RETRY_DELAYS_MS[index]!);
+}
+
+/** Whether an SMTP failure kind proves the message was not delivered (and so may be retried). */
+export function isConfirmedNonDelivery(kind: "NOT_SENT" | "TEMPORARY" | "PERMANENT" | "AUTH" | "UNKNOWN"): boolean {
+  return kind !== "UNKNOWN";
+}
+
+/**
  * What a backup failure reason may say outside the server: no file paths (they name the backup location),
  * no host or credential. The script already strips paths; this is the second line, applied again here.
  */

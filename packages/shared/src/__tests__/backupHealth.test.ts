@@ -52,3 +52,19 @@ describe("sanitizeBackupReason", () => {
     expect(sanitizeBackupReason("x".repeat(500))!.length).toBe(300);
   });
 });
+
+describe("backup alert retries", () => {
+  it("back off 5 min, 15 min, 1 h, 3 h, 6 h, then stop", async () => {
+    const { nextBackupAlertAttempt, BACKUP_ALERT_MAX_ATTEMPTS } = await import("../backupHealth.js");
+    const t0 = new Date("2026-11-06T00:00:00Z");
+    const mins = [1, 2, 3, 4, 5].map((a) => (nextBackupAlertAttempt(a, t0)!.getTime() - t0.getTime()) / 60_000);
+    expect(mins).toEqual([5, 15, 60, 180, 360]);
+    expect(nextBackupAlertAttempt(BACKUP_ALERT_MAX_ATTEMPTS, t0)).toBeNull();
+  });
+
+  it("retry only what certainly was not delivered", async () => {
+    const { isConfirmedNonDelivery } = await import("../backupHealth.js");
+    for (const kind of ["NOT_SENT", "TEMPORARY", "PERMANENT", "AUTH"] as const) expect(isConfirmedNonDelivery(kind)).toBe(true);
+    expect(isConfirmedNonDelivery("UNKNOWN")).toBe(false);
+  });
+});
