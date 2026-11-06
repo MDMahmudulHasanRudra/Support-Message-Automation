@@ -150,3 +150,18 @@ continuing (worst insert latency during it 43 ms); about 0.04 ms more per stored
 `("projectId", body)` index (btree_gin) was also measured and rejected: slower on common terms, twice the build.
 The generated data is not time-clustered on disk, which is the worst case for phase 1; production rows are
 written in time order, which is kinder. Not yet measured on the production volume itself.
+
+## Triage (Inbox V3, V3-06)
+
+- **Wait on each row.** A row that needs a reply shows how long the customer has waited (hours and minutes, the
+  report format), from their FIRST message after our last reply — the First Response definition. A failed channel
+  send is no reply. WhatsApp: a reply is our number's message or a team member's; a group counts any of our numbers,
+  a personal chat only its own account. Computed for the listed rows only (`whatsAppWaitingSince`, one indexed probe
+  per row; channel rows in the list query).
+- **Sort** (Filters → Sort): newest first (default, stored as null), oldest first, longest waiting. Longest waiting
+  lists conversations needing a reply first, longest wait first, then the rest newest first. The channel query
+  applies the same order before its 300-row limit, and the WhatsApp side adds every unanswered conversation, so
+  the longest waits are never cut off. One pure ordering, `orderInboxItems` (packages/shared), stable on ties.
+- **Last message from** the customer or us. WhatsApp "customer" is the chat inbox's own unanswered state, looked up
+  over every conversation; "us" is everything answered (a queued reply counts, as everywhere else).
+- With the feature off, sort and last-sender are ignored and rows carry no wait.

@@ -122,6 +122,12 @@ const writeDensity = (v: "compact" | "comfortable") => {
   densityListeners.forEach((l) => l());
 };
 
+/** How long a customer has been waiting, in hours and minutes ("0h 5m", "26h 40m") — the report format. */
+function waitedFor(iso: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function relativeTime(iso: string | null): string {
   if (!iso) return "";
   const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
@@ -430,6 +436,29 @@ export function InboxWorkspace({
               <FilterSelect label="Assigned to" value={filters.assigneeId} onChange={(v) => set({ assigneeId: v })} options={options.people.map((p) => ({ value: p.id, label: p.name }))} />
               <FilterSelect label="Team" value={filters.teamId} onChange={(v) => set({ teamId: v })} options={options.teams.map((t) => ({ value: t.id, label: t.name }))} />
               {options.lifecycle ? (
+                <>
+                  <FilterSelect
+                    label="Sort"
+                    anyLabel="Newest first"
+                    value={filters.sort}
+                    onChange={(v) => set({ sort: (v as InboxFilterSet["sort"]) ?? null })}
+                    options={[
+                      { value: "waiting", label: "Longest waiting" },
+                      { value: "oldest", label: "Oldest first" },
+                    ]}
+                  />
+                  <FilterSelect
+                    label="Last message from"
+                    value={filters.lastSender}
+                    onChange={(v) => set({ lastSender: (v as InboxFilterSet["lastSender"]) ?? null })}
+                    options={[
+                      { value: "customer", label: "The customer" },
+                      { value: "team", label: "Us" },
+                    ]}
+                  />
+                </>
+              ) : null}
+              {options.lifecycle ? (
                 <FilterSelect
                   label="Status"
                   value={filters.status}
@@ -696,12 +725,12 @@ function IconToggle({ label, active, onClick, badge, children }: { label: string
   );
 }
 
-function FilterSelect({ label, value, onChange, options }: { label: string; value: string | null; onChange: (v: string | null) => void; options: { value: string; label: string }[] }) {
+function FilterSelect({ label, value, onChange, options, anyLabel = "Any" }: { label: string; value: string | null; onChange: (v: string | null) => void; options: { value: string; label: string }[]; anyLabel?: string }) {
   return (
     <label className="flex min-w-0 flex-col gap-0.5 text-[11px] text-[color:var(--color-muted-foreground)]">
       {label}
       <select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} className="h-7 min-w-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[color:var(--color-foreground)]">
-        <option value="">Any</option>
+        <option value="">{anyLabel}</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -935,9 +964,20 @@ function InboxRow({ item, term, active, compact, selecting, selected, onToggle }
             <span className={`truncate text-[13px] text-[color:var(--color-foreground)] ${item.unread ? "font-semibold" : "font-medium"}`}>{item.title}</span>
             {external && !selecting ? <ArrowUpRight className="size-3 shrink-0 text-[color:var(--color-subtle-foreground)] opacity-0 transition-opacity group-hover/row:opacity-100" aria-hidden /> : null}
           </span>
-          <span className={`tabular shrink-0 text-[11px] ${item.unread ? "font-medium text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-muted-foreground)]"}`} suppressHydrationWarning>
-            {relativeTime(item.lastMessageAt)}
-          </span>
+          {item.needsReply && item.waitingSince ? (
+            <span
+              className="tabular shrink-0 rounded-[var(--radius-sm)] bg-[var(--color-warning-bg)] px-1 text-[10.5px] font-medium text-[color:var(--color-warning-fg)]"
+              title={`Waiting for a reply since ${new Date(item.waitingSince).toLocaleString("en-GB", { timeZone: "Asia/Dhaka" })}`}
+              suppressHydrationWarning
+            >
+              <span className="sr-only">Waiting for a reply for </span>
+              {waitedFor(item.waitingSince)}
+            </span>
+          ) : (
+            <span className={`tabular shrink-0 text-[11px] ${item.unread ? "font-medium text-[color:var(--color-warning-fg)]" : "text-[color:var(--color-muted-foreground)]"}`} suppressHydrationWarning>
+              {relativeTime(item.lastMessageAt)}
+            </span>
+          )}
         </span>
         <span className={`mt-0.5 block truncate text-[12px] ${item.unread ? "text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)]"}`}>
           {item.lastSendFailed ? (

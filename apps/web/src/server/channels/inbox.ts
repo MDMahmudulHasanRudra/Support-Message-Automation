@@ -20,6 +20,7 @@ import {
   type InboxViewKey,
   type InboxWithinKey,
   LEGACY_WHATSAPP_LABEL,
+  orderInboxItems,
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
@@ -72,6 +73,8 @@ export interface InboxItem {
   unread: boolean;
   /** A customer message nobody has answered (opened or not). */
   needsReply: boolean;
+  /** Inbox V3: when the customer started waiting (first message after our last reply), for rows that need a reply. */
+  waitingSince: string | null;
   isGroup: boolean;
   status: "OPEN" | "CLOSED";
   /** Inbox V3 status (UNIFIED_INBOX_V3 on), or null while it is off. */
@@ -157,6 +160,7 @@ interface ChannelRow {
   needsReply: boolean;
   unread: boolean;
   lastSendFailed: boolean;
+  waitingSince: Date | null;
 }
 
 /**
@@ -194,6 +198,7 @@ function channelFilters(opts: ListOpts): Prisma.Sql {
   if (f.assigneeId) parts.push(Prisma.sql`c."assignedUserId" = ${f.assigneeId}`);
   if (f.account) parts.push(f.account.startsWith("ch:") ? Prisma.sql`c."connectionId" = ${f.account.slice(3)}` : Prisma.sql`false`);
   if (f.within) parts.push(Prisma.sql`c."lastMessageAt" >= ${new Date(opts.now.getTime() - WITHIN_MS[f.within])}`);
+  if (opts.lifecycle && f.lastSender) parts.push(Prisma.sql`c."lastMessageDirection"::text = ${f.lastSender === "customer" ? "INBOUND" : "OUTBOUND"}`);
   const term = f.search;
   if (term) {
     const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
@@ -201,6 +206,17 @@ function channelFilters(opts: ListOpts): Prisma.Sql {
       OR EXISTS (SELECT 1 FROM "ChannelMessage" s WHERE s."projectId" = c."projectId" AND s."conversationId" = c."id" AND s."text" ILIKE ${like}))`);
   }
   return Prisma.join(parts, " AND ");
+}
+
+/**
+ * Inbox V3 triage order, applied in SQL so the 300-row limit keeps the rows the order puts first (the longest waits
+ * under "waiting"). The merged list is ordered again by orderInboxItems; both break ties the same way.
+ */
+function channelOrder(opts: ListOpts): Prisma.Sql {
+  const sort = opts.lifecycle ? opts.filters.sort : null;
+  if (sort === "oldest") return Prisma.sql`c."lastMessageAt" ASC NULLS LAST, c."id"`;
+  if (sort === "waiting") return Prisma.sql`"needsReply" DESC, "waitingSince" ASC NULLS LAST, c."lastMessageAt" DESC NULLS LAST, c."id"`;
+  return Prisma.sql`c."lastMessageAt" DESC NULLS LAST, c."id"`;
 }
 
 async function loadChannelRows(opts: ListOpts): Promise<ChannelRow[]> {
@@ -213,6 +229,14 @@ async function loadChannelRows(opts: ListOpts): Promise<ChannelRow[]> {
            c."lastMessageAt", c."lastMessagePreview", c."lastMessageDirection"::text AS "lastMessageDirection",
            c."connectionId", conn."name" AS "connectionName", conn."status"::text AS "connectionStatus", conn."enabled" AS "connectionEnabled", conn."aiAutomationEnabled",
            ${NEEDS_REPLY_SQL} AS "needsReply",
+           CASE WHEN ${NEEDS_REPLY_SQL} THEN COALESCE((
+             SELECT min(w."occurredAt") FROM "ChannelMessage" w
+             WHERE w."projectId" = c."projectId" AND w."conversationId" = c."id" AND w."direction" = 'INBOUND'
+               AND w."occurredAt" > COALESCE((
+                 SELECT o."occurredAt" FROM "ChannelMessage" o
+                 WHERE o."projectId" = c."projectId" AND o."conversationId" = c."id" AND o."direction" = 'OUTBOUND' AND o."deliveryStatus" IS DISTINCT FROM 'FAILED'
+                 ORDER BY o."occurredAt" DESC LIMIT 1), '-infinity'::timestamp)
+           ), c."lastInboundAt") END AS "waitingSince",
            (${NEEDS_REPLY_SQL} AND (c."reviewedAt" IS NULL OR c."reviewedAt" < c."lastInboundAt")) AS "unread",
            COALESCE((SELECT f."deliveryStatus"::text IN ('FAILED', 'UNKNOWN') FROM "ChannelMessage" f
              WHERE f."projectId" = c."projectId" AND f."conversationId" = c."id" AND f."direction" = 'OUTBOUND'
@@ -223,7 +247,7 @@ async function loadChannelRows(opts: ListOpts): Promise<ChannelRow[]> {
     LEFT JOIN "Team" t ON t."id" = c."assignedTeamId" AND t."projectId" = c."projectId"
     LEFT JOIN "ConversationLabel" l ON l."channelConversationId" = c."id" AND l."projectId" = c."projectId"
     WHERE c."projectId" = ${projectId} AND ${channelFilters(opts)}
-    ORDER BY c."lastMessageAt" DESC NULLS LAST, c."id"
+    ORDER BY ${channelOrder(opts)}
     LIMIT ${INBOX_LIMIT}`;
 }
 
@@ -252,6 +276,7 @@ function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string, li
     lastMessageOutgoing: row.lastMessageDirection === "OUTBOUND",
     unread: row.unread,
     needsReply: row.needsReply,
+    waitingSince: lifecycle ? (row.waitingSince?.toISOString() ?? null) : null,
     isGroup: row.kind === "GROUP",
     // Inbox V3 may store PENDING / SNOOZED; for this view anything not CLOSED is open, as before.
     status: row.status === "CLOSED" ? "CLOSED" : "OPEN",
@@ -325,6 +350,7 @@ function fromWhatsApp(
     lastMessageOutgoing: c.lastMessageOutgoing,
     unread: c.awaitingReply,
     needsReply: c.isUnanswered,
+    waitingSince: null,
     isGroup: c.kind === "GROUP",
     status: "OPEN",
     lifecycleStatus: states ? (state?.status ?? "OPEN") : null,
@@ -441,7 +467,37 @@ async function decorateWhatsApp(list: ConversationSummary[], viewerId: string, l
     });
     states = new Map(rows.map((r) => [`${r.accountId}|${r.chatId}`, { status: r.status, userId: r.assignedUserId, userName: r.assignedUser?.name ?? null, teamName: r.assignedTeam?.name ?? null }]));
   }
-  return list.map((c) => fromWhatsApp(c, owners, labels, viewerId, states));
+  const waits = lifecycle ? await whatsAppWaitingSince(list.filter((c) => c.isUnanswered)) : new Map<string, Date>();
+  return list.map((c) => {
+    const item = fromWhatsApp(c, owners, labels, viewerId, states);
+    const since = waits.get(`${c.accountId}|${c.chatId}`);
+    return since ? { ...item, waitingSince: since.toISOString() } : item;
+  });
+}
+
+/**
+ * Inbox V3: when each unanswered WhatsApp conversation started waiting — its first customer message after our last
+ * reply (an outgoing message or a team member's), the First Response definition. A group counts a reply from any of
+ * our numbers; a personal chat only its own account's. One probe per listed row, on the (chatId, timestampWa) index.
+ */
+async function whatsAppWaitingSince(list: ConversationSummary[]): Promise<Map<string, Date>> {
+  if (list.length === 0) return new Map();
+  const projectId = await activeProjectId();
+  const values = Prisma.join(list.map((c) => Prisma.sql`(${c.accountId}, ${c.chatId}, ${c.kind !== "GROUP"})`));
+  const rows = await prisma.$queryRaw<Array<{ accountId: string; chatId: string; since: Date | null }>>`
+    SELECT v."accountId", v."chatId", w."since"
+    FROM (VALUES ${values}) AS v("accountId", "chatId", "personal")
+    CROSS JOIN LATERAL (
+      SELECT min(m."timestampWa") AS "since" FROM "Message" m
+      WHERE m."projectId" = ${projectId} AND m."chatId" = v."chatId" AND (NOT v."personal" OR m."accountId" = v."accountId")
+        AND m."direction" = 'INCOMING' AND NOT m."isFromTeamMember"
+        AND m."timestampWa" > COALESCE((
+          SELECT r."timestampWa" FROM "Message" r
+          WHERE r."projectId" = ${projectId} AND r."chatId" = v."chatId" AND (NOT v."personal" OR r."accountId" = v."accountId")
+            AND (r."direction" = 'OUTGOING' OR r."isFromTeamMember")
+          ORDER BY r."timestampWa" DESC LIMIT 1), '-infinity'::timestamp)
+    ) w`;
+  return new Map(rows.filter((r) => r.since).map((r) => [`${r.accountId}|${r.chatId}`, r.since!]));
 }
 
 async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; now: Date; lifecycle: boolean }) {
@@ -460,7 +516,7 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
     opts.viewerId,
     opts.lifecycle,
   );
-  const state = f.view === "unread" ? ("waiting" as const) : f.view === "needs-reply" ? ("unanswered" as const) : undefined;
+  const state = whatsAppState(f, opts.lifecycle);
   // Inbox V3: also the chats whose message TEXT matches, over the whole history, one bounded page (whatsAppMessageSearch.ts).
   const bodySearch = opts.lifecycle && f.search ? await searchWhatsAppMessages(accounts.map((a) => a.id), f.search) : null;
   const plain = restriction.include === null && restriction.exclude.size === 0 && !state && !f.search;
@@ -473,6 +529,11 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
     if (!accounts.some((a) => a.id === account.id)) continue;
     if (plain) {
       list.push(...inbox.conversations);
+      if (opts.lifecycle && f.sort === "waiting") {
+        const listed = new Set(inbox.conversations.map((c) => c.id));
+        const waiting = await getChatConversations(account.id, { view: { kind: "chats" as const, chatIds: null, state: "unanswered" } });
+        list.push(...waiting.filter((c) => !listed.has(c.id)));
+      }
       continue;
     }
     const include = restriction.include?.get(account.id);
@@ -491,7 +552,7 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
   }
   const within = f.within ? opts.now.getTime() - WITHIN_MS[f.within] : null;
   const items = await decorateWhatsApp(
-    list.filter((c) => within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)),
+    list.filter((c) => (within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)) && keepForLastSender(f, opts.lifecycle)(c)),
     opts.viewerId,
     opts.lifecycle,
   );
@@ -526,17 +587,30 @@ export async function loadMoreMessageMatches(opts: { scope: InboxScope; filters:
   const accounts = f.account ? all.filter((a) => `wa:${a.id}` === f.account) : all;
   const search = await searchWhatsAppMessages(accounts.map((a) => a.id), f.search, { cursor: opts.cursor, seen: opts.seen });
   const restriction = await whatsAppChatRestriction(accounts.map((a) => a.id), f, opts.viewerId, lifecycle);
-  const state = f.view === "unread" ? ("waiting" as const) : f.view === "needs-reply" ? ("unanswered" as const) : undefined;
+  const state = whatsAppState(f, lifecycle);
   const list: ConversationSummary[] = [];
   for (const account of accounts) {
     const chats = textMatchChats(search, account.id, restriction, new Set());
     if (chats.length) list.push(...(await getChatConversations(account.id, { view: { kind: "chats" as const, chatIds: chats, state } })));
   }
   const within = f.within ? now.getTime() - WITHIN_MS[f.within] : null;
-  const items = await decorateWhatsApp(list.filter((c) => within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)), opts.viewerId, lifecycle);
+  const items = await decorateWhatsApp(list.filter((c) => (within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)) && keepForLastSender(f, lifecycle)(c)), opts.viewerId, lifecycle);
   const ordered = withMatches(items, search).sort((a, b) => (b.messageMatch?.at ?? "").localeCompare(a.messageMatch?.at ?? "") || a.key.localeCompare(b.key));
   return { items: ordered, messageSearch: searchInfo(search) };
 }
+
+/**
+ * The chat-inbox state a WhatsApp list asks for. "Customer spoke last" (Inbox V3) is the unanswered state — the
+ * chat inbox's own definition, looked up over every conversation, not just the 300 most recent.
+ */
+function whatsAppState(f: InboxFilterSet, lifecycle: boolean): "waiting" | "unanswered" | undefined {
+  if (f.view === "unread") return "waiting";
+  if (f.view === "needs-reply" || (lifecycle && f.lastSender === "customer")) return "unanswered";
+  return undefined;
+}
+
+/** Inbox V3 "we spoke last": the answered conversations (a reply, queued or sent, after the customer's last message). */
+const keepForLastSender = (f: InboxFilterSet, lifecycle: boolean) => (c: ConversationSummary) => !(lifecycle && f.lastSender === "team" && c.isUnanswered);
 
 function sumWhatsApp(counts: Array<{ total: number; waiting: number; seenUnanswered: number }>, mine: number) {
   const total = counts.reduce((n, c) => n + c.total, 0);
@@ -575,9 +649,7 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
     includeWhatsApp ? loadWhatsApp({ filters, viewerId: opts.viewerId, now, lifecycle }) : Promise.resolve(null),
   ]);
 
-  const merged = [...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId, lifecycle)), ...(wa?.items ?? [])].sort(
-    (a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.key.localeCompare(b.key),
-  );
+  const merged = orderInboxItems([...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId, lifecycle)), ...(wa?.items ?? [])], lifecycle ? filters.sort : null);
   const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 };
   for (const [k, v] of Object.entries({ ...chCounts.byChannel, ...(wa?.counts.byChannel ?? {}) })) byChannel[k as InboxChannel] = v ?? 0;
   const counts: InboxCounts = {
