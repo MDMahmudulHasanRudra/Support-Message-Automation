@@ -171,7 +171,7 @@ written in time order, which is kinder. Not yet measured on the production volum
 Three read-only additions to All Conversations and the side panel. They add no table and no permission key. Tested on an isolated
 database only; not deployed.
 
-- **"AI is handling"** (a view, needs `UNIFIED_INBOX_V3`). WhatsApp: in the last 24 hours the AI answered a customer's message, its
+- **"AI is handling"** (a view, needs `UNIFIED_INBOX_V3`). WhatsApp, groups and one-to-one chats: in the last 24 hours the AI answered a customer's message, its
   reply did not fail, and nothing has been said in that chat since except that reply's own echo. Channels: the newest message is
   the AI's own reply (key `ai:<message id>`, so a satisfaction survey never counts) and it did not fail. A person replying, or
   the customer writing again, ends it. With the feature off, a saved view holding it opens as the plain list.

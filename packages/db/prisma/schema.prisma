@@ -3247,6 +3247,8 @@ model AiSettings {
   clientAccountAnswers     Boolean  @default(false)
   /// What a verified customer still owes, per currency. Needs clientAccountAnswers and Billing on. Off by default.
   clientDueAnswers         Boolean  @default(false)
+  /// AI answers a verified customer's own account question by itself in a one-to-one WhatsApp chat (AI_CLIENT_ANSWERS.md).
+  clientAccountAutoReply   Boolean  @default(false)
   updatedAt                DateTime @updatedAt
 }
 

@@ -9,7 +9,9 @@ import { findClientAccountGrounding, type AccountCustomer } from "../aiFallback/
 import { verifiedWhatsAppPhone } from "../aiFallback/commerceContext.js";
 import { buildFallbackPrompt } from "../aiFallback/prompt.js";
 import { runAiFallback } from "../aiFallback/runAiFallback.js";
+import { processOne as processOutboundOne } from "../queue/outboundQueueProcessor.js";
 import { MockAiClient } from "./mockAiClient.js";
+import { MockProvider } from "./mockProvider.js";
 
 /**
  * Customer account answers (AI_CLIENT_ANSWERS.md) against a real, isolated database.
@@ -42,7 +44,7 @@ const msg: Record<string, string> = {};
 
 const inA = <T,>(fn: () => Promise<T>) => withProject(A, fn);
 const inB = <T,>(fn: () => Promise<T>) => withProject(B, fn);
-const ON = { clientAccountAnswers: true, clientDueAnswers: true };
+const ON = { clientAccountAnswers: true, clientDueAnswers: true, clientAccountAutoReply: false };
 
 async function makeClient(projectId: string, code: string, phone: string | null, opts: { dues?: Array<{ amount: string; currency: string }>; service?: string } = {}) {
   const client = await rawPrisma.client.create({ data: { projectId, code, name: `Client ${code} ${tag}` } });
@@ -77,6 +79,9 @@ async function makeMessage(projectId: string, accountId: string, chatId: string,
   });
   return m.id;
 }
+
+const makeOutgoing = (phone: string, whatsappMessageId: string, at = new Date()) =>
+  rawPrisma.message.create({ data: { projectId: A, accountId: accountA, whatsappMessageId, chatId: `${phone}@c.us`, senderPhone: "880100", direction: "OUTGOING", body: "x", normalizedBody: "x", timestampWa: at } });
 
 const whatsapp = (accountId: string, chatId: string, messageId: string, isGroup = false): AccountCustomer => ({
   kind: "WHATSAPP",
@@ -264,6 +269,148 @@ describe("switches", () => {
     );
     expect(g.snippets.map((s) => s.title)).toEqual(["Your account (client 0012)"]);
     expect(g.amounts).toEqual([]);
+  });
+});
+
+describe("one-to-one chats: AI answers by itself only behind its own switch", () => {
+  let seq = 0;
+  const phoneFor = () => `88015${run}${String(++seq).padStart(4, "0")}`;
+  async function aiOn(data: Record<string, unknown> = {}) {
+    await rawPrisma.aiSettings.update({
+      where: { projectId: A },
+      data: { aiEngineEnabled: true, autoResponseEnabled: true, aiResponseMode: "STRICT_KNOWLEDGE_ONLY", autoResponseConfidenceThreshold: 80, clientAccountAnswers: true, clientDueAnswers: true, clientAccountAutoReply: true, commerceOrderAnswers: false, aiRuleGenerationEnabled: false, humanTakeoverCooldownMinutes: 30, aiReplyCooldownSeconds: 0, ...data },
+    });
+    return rawPrisma.automationSettings.update({
+      where: { projectId: A },
+      data: { automationEnabled: true, mode: "SAFE_AUTO_REPLY", rateLimitingEnabled: false, defaultReplyDelayMinMs: 0, defaultReplyDelayMaxMs: 0, teamsWebhookUrl: "https://example.invalid/webhook" },
+    });
+  }
+  async function ask(phone: string, body: string, opts: { reply?: string; confidence?: number; senderJid?: string; chatId?: string; settings?: Record<string, unknown>; automation?: Record<string, unknown> } = {}) {
+    let automationSettings = await aiOn(opts.settings);
+    if (opts.automation) automationSettings = await rawPrisma.automationSettings.update({ where: { projectId: A }, data: opts.automation });
+    const chatId = opts.chatId ?? `${phone}@c.us`;
+    const id = await makeMessage(A, accountA, chatId, opts.senderJid ?? `${phone}@c.us`, null, body);
+    const client = new MockAiClient();
+    client.nextText = `INTENT: dues\nSCOPE: BUSINESS_SPECIFIC\nCONFIDENCE: ${opts.confidence ?? 97}\nSHOULD_REPLY: YES\nRESPONSE: ${opts.reply ?? "Your due is BDT 700.00."}`;
+    await inA(() => runAiFallback({ message: { id, body }, accountId: accountA, chatId, toPhone: phone, group: null, automationSettings, clientOverride: client }));
+    const decision = await rawPrisma.aiFallbackDecision.findFirst({ where: { messageId: id } });
+    const outbound = await rawPrisma.outboundMessage.findMany({ where: { projectId: A, relatedMessageId: id } });
+    const notifications = await rawPrisma.notification.count({ where: { projectId: A, relatedMessageId: id } }).catch(() => 0);
+    return { id, decision, outbound, client, notifications };
+  }
+  const silent = (r: Awaited<ReturnType<typeof ask>>) => {
+    expect(r.client.requests).toHaveLength(0);
+    expect(r.decision).toBeNull();
+    expect(r.outbound).toHaveLength(0);
+    expect(r.notifications).toBe(0);
+  };
+  async function customer(opts: { dues?: boolean } = {}) {
+    const phone = phoneFor();
+    await makeClient(A, `P${phone.slice(-6)}`, phone, { service: "Home 20 Mbps", dues: opts.dues === false ? [] : [{ amount: "700.00", currency: "BDT" }] });
+    return phone;
+  }
+
+  it("a verified customer's account question is answered from their own record, and really goes out through the queue", async () => {
+    const phone = await customer();
+    const r = await ask(phone, "what is my due?");
+    expect(r.client.requests).toHaveLength(1);
+    expect(r.client.requests[0]!.userPrompt).toMatch(/Your outstanding dues \(client/);
+    expect(r.client.requests[0]!.systemPrompt).toMatch(/CUSTOMER ACCOUNT/);
+    expect(r.decision).toMatchObject({ outcome: "AI_REPLIED", groupId: null });
+    expect(r.outbound).toHaveLength(1);
+    expect(r.outbound[0]).toMatchObject({ actionType: "AUTO_REPLY", chatId: `${phone}@c.us`, status: "PENDING", body: "Your due is BDT 700.00." });
+
+    const provider = new MockProvider();
+    await rawPrisma.outboundMessage.update({ where: { id: r.outbound[0]!.id }, data: { scheduledAt: new Date(Date.now() - 60_000) } });
+    for (let i = 0; i < 10; i++) {
+      const row = await rawPrisma.outboundMessage.findUniqueOrThrow({ where: { id: r.outbound[0]!.id } });
+      if (row.status !== "PENDING") break;
+      if (!(await processOutboundOne(provider))) break;
+    }
+    expect((await rawPrisma.outboundMessage.findUniqueOrThrow({ where: { id: r.outbound[0]!.id } })).status).toBe("SENT");
+    expect(provider.sentMessages).toContainEqual({ chatId: `${phone}@c.us`, body: "Your due is BDT 700.00." });
+  });
+
+  it("with its switch off nothing happens at all, whatever the other two switches say", async () => {
+    silent(await ask(await customer(), "what is my due?", { settings: { clientAccountAutoReply: false } }));
+  });
+
+  it("needs the account switch too", async () => {
+    silent(await ask(await customer(), "what is my due?", { settings: { clientAccountAnswers: false } }));
+  });
+
+  it("an ordinary personal message stays with the team: no AI call, no decision, no alert, no reply", async () => {
+    silent(await ask(await customer(), "hello, my router has a red light"));
+    silent(await ask(await customer(), "ok thanks"));
+  });
+
+  it("a request to pay, change or disconnect stays with the team too, silently", async () => {
+    silent(await ask(await customer(), "I want to pay my bill"));
+    silent(await ask(await customer(), "please disconnect my line"));
+  });
+
+  it("nobody but one verified client: an unknown number, a LID, a number two clients share", async () => {
+    silent(await ask(phoneFor(), "what is my due?"));
+    const lid = `1616${run}00000${++seq}`;
+    silent(await ask(lid, "what is my due?", { chatId: `${lid}@lid`, senderJid: `${lid}@lid` }));
+    silent(await ask(P_SHARED, "what is my due?"));
+  });
+
+  it("stays quiet after a person replied in the chat, from the dashboard or the business phone, and AI's own reply does not count", async () => {
+    const dashboard = await customer();
+    await rawPrisma.outboundMessage.create({ data: { projectId: A, accountId: accountA, chatId: `${dashboard}@c.us`, toPhone: dashboard, body: "a person", actionType: "MANUAL_REPLY", status: "SENT", idempotencyKey: randomUUID() } });
+    silent(await ask(dashboard, "what is my due?"));
+
+    // A dashboard send that failed never reached the customer, so it is no reply.
+    const failedSend = await customer();
+    await rawPrisma.outboundMessage.create({ data: { projectId: A, accountId: accountA, chatId: `${failedSend}@c.us`, toPhone: failedSend, body: "a person", actionType: "MANUAL_REPLY", status: "FAILED", idempotencyKey: randomUUID() } });
+    expect((await ask(failedSend, "what is my due?")).decision).toMatchObject({ outcome: "AI_REPLIED" });
+
+    const businessPhone = await customer();
+    await makeOutgoing(businessPhone, `business-${randomUUID()}`);
+    silent(await ask(businessPhone, "what is my due?"));
+
+    const longAgo = await customer();
+    await makeOutgoing(longAgo, `old-${randomUUID()}`, new Date(Date.now() - 45 * 60_000));
+    expect((await ask(longAgo, "what is my due?")).decision).toMatchObject({ outcome: "AI_REPLIED" });
+
+    const aiBefore = await customer();
+    const providerMessageId = `ai-${randomUUID()}`;
+    await rawPrisma.outboundMessage.create({ data: { projectId: A, accountId: accountA, chatId: `${aiBefore}@c.us`, toPhone: aiBefore, body: "earlier answer", actionType: "AUTO_REPLY", status: "SENT", idempotencyKey: randomUUID(), providerMessageId } });
+    await makeOutgoing(aiBefore, providerMessageId);
+    expect((await ask(aiBefore, "when does my package expire?")).decision).toMatchObject({ outcome: "AI_REPLIED" });
+  });
+
+  it("the kill switch and MANUAL_ONLY stop it", async () => {
+    silent(await ask(await customer(), "what is my due?", { automation: { automationEnabled: false } }));
+    silent(await ask(await customer(), "what is my due?", { automation: { mode: "MANUAL_ONLY" } }));
+  });
+
+  it("the AI engine and auto response switches stop it", async () => {
+    silent(await ask(await customer(), "what is my due?", { settings: { aiEngineEnabled: false } }));
+    silent(await ask(await customer(), "what is my due?", { settings: { autoResponseEnabled: false } }));
+  });
+
+  it("an amount it was not given is handed over, never sent; a low-confidence answer too, with no holding reply", async () => {
+    const wrong = await ask(await customer(), "what is my due?", { reply: "Your due is BDT 9,999.00." });
+    expect(wrong.decision).toMatchObject({ outcome: "HUMAN_FALLBACK", reason: "UNGROUNDED_PRICE" });
+    expect(wrong.outbound).toHaveLength(0);
+    const unsure = await ask(await customer(), "what is my due?", { confidence: 10, settings: { unableToUnderstandReplyEnabled: true } });
+    expect(unsure.decision).toMatchObject({ outcome: "HUMAN_FALLBACK" });
+    expect(unsure.outbound).toHaveLength(0);
+  });
+
+  it("never drafts a rule from it", async () => {
+    const r = await ask(await customer(), "what is my due?", { settings: { aiRuleGenerationEnabled: true, aiRuleGenerationMinConfidence: 50 } });
+    expect(r.decision).toMatchObject({ outcome: "AI_REPLIED" });
+    expect(await rawPrisma.ruleProposal.count({ where: { projectId: A, sourceMessageId: r.id } })).toBe(0);
+  });
+
+  it("a group's answer is unchanged: the switch never brings account details into a group", async () => {
+    await aiOn();
+    const g = await inA(() => findClientAccountGrounding({ text: "what is my due?", switches: { ...ON, clientAccountAutoReply: true }, customer: whatsapp(accountA, groupChatA, msg.group!, true) }));
+    expect(g.status).toBe("GROUP");
+    expect(g.snippets).toEqual([]);
   });
 });
 

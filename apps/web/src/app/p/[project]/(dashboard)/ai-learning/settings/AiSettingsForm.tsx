@@ -159,11 +159,17 @@ export function AiSettingsForm({
             label="Tell customers what they still owe"
             description={`${AI_CLIENT_ANSWER_CAPABILITY_LABELS.DUES}, never added up across currencies. Needs the switch above on.${clientAnswers.modules.clients && !clientAnswers.modules.billing ? " Needs Billing, which is switched off in Client Management." : ""}`}
           />
+          <SwitchField
+            name="clientAccountAutoReply"
+            defaultChecked={settings.clientAccountAutoReply}
+            label="Let AI answer these by itself in one-to-one WhatsApp chats"
+            description="Off: agents get these details only in AI Copilot drafts. On: when a customer asks about their own account in a one-to-one chat, AI replies by itself, but only when their WhatsApp number matches exactly one client. Any other message there stays with your team, with no reply and no alert. AI stays quiet for that chat while a person has just replied. Needs the first switch on."
+          />
           <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
             AI never takes a payment and never changes, renews or disconnects a package: a customer asking for any of that is handed to a person, and a reply naming an amount that is not in their record is never sent.
           </p>
-          <Alert tone="info" title="Where this reaches customers today">
-            Agents get these details in AI Copilot drafts for a one-to-one WhatsApp chat. AI does not answer customers on its own here yet: its automatic WhatsApp replies run only in groups, where account details are never given, and the other channels cannot prove who the customer is.
+          <Alert tone="info" title="Where this reaches customers">
+            Never in a WhatsApp group, and never on Messenger, Instagram, Telegram or website chat, which cannot prove who the customer is. Only in a one-to-one WhatsApp chat: in AI Copilot drafts for agents, and in AI&apos;s own replies if the last switch is on.
           </Alert>
           {clientAnswers.policy.blocked.length ? (
             <Alert tone="warning" title="Switched on but not active">

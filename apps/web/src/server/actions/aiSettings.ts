@@ -88,6 +88,7 @@ export async function updateAiSettings(
       // its sub-module are on; dues also need account answers on.
       clientAccountAnswers: flag("clientAccountAnswers"),
       clientDueAnswers: flag("clientDueAnswers"),
+      clientAccountAutoReply: flag("clientAccountAutoReply"),
       autoResponseConfidenceThreshold: percent("autoResponseConfidenceThreshold", 90),
       aiReplyCooldownSeconds: nonNegativeInt("aiReplyCooldownSeconds", 300),
       humanTakeoverCooldownMinutes: nonNegativeInt("humanTakeoverCooldownMinutes", 30),

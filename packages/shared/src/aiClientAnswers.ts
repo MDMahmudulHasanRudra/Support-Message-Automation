@@ -25,6 +25,8 @@ export const AI_CLIENT_ANSWER_CAPABILITY_LABELS: Record<AiClientAnswerCapability
 export interface AiClientAnswerSwitches {
   clientAccountAnswers: boolean;
   clientDueAnswers: boolean;
+  /** AI answers these by itself in a one-to-one WhatsApp chat; needs clientAccountAnswers (AI_CLIENT_ANSWERS.md). */
+  clientAccountAutoReply?: boolean;
 }
 
 /** The Client Management sub-modules these answers read (ClientModuleSettings; no row = both on). */

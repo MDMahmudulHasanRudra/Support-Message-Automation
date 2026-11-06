@@ -2,7 +2,7 @@ import { projectHasFeature } from "../project/features.js";
 import { createAiFallbackDecision, createRuleProposalFromAiReply, resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { prisma } from "../db.js";
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { isMediaOnlyBody } from "@support-automation/shared";
+import { isMediaOnlyBody, isPersonalChatId } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { checkAiFallbackEligibility } from "./eligibility.js";
@@ -10,7 +10,7 @@ import { buildFallbackPrompt, parseFallbackResponse } from "./prompt.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "./answerPlan.js";
 import { findRelevantKnowledge } from "./knowledgeContext.js";
 import { findCommerceGrounding, verifiedWhatsAppPhone } from "./commerceContext.js";
-import { findClientAccountGrounding, isPersonalRecordEntry, moneyFiguresGrounded } from "./clientAccountContext.js";
+import { findClientAccountGrounding, isPersonalRecordEntry, moneyFiguresGrounded, personalAccountGrounding } from "./clientAccountContext.js";
 import { buildEvidenceBundle, fingerprintOf, recordEvidenceSnapshot } from "./evidenceSnapshot.js";
 import { expandQueryTerms } from "./queryExpansion.js";
 import { loadConversationContext } from "./conversationContext.js";
@@ -99,8 +99,23 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     scope: aiSettings.aiAutomationScope,
     now: new Date(),
     aiReplyEntitled: await projectHasFeature("AI_REPLY"),
+    personalAccountAnswers: !params.group && aiSettings.clientAccountAutoReply && isPersonalChatId(params.chatId),
   });
   if (!eligibility.eligible) return;
+
+  // A one-to-one chat reaches here only with the admin's switch on, and goes further only for a verified customer's
+  // own account question (AI_CLIENT_ANSWERS.md). Everything else ends here, before any decision row or alert.
+  const personalAccount = params.group
+    ? null
+    : await personalAccountGrounding({
+        text: params.message.body,
+        switches: aiSettings,
+        accountId: params.accountId,
+        chatId: params.chatId,
+        takeoverMinutes: aiSettings.humanTakeoverCooldownMinutes,
+        verifiedPhone: () => verifiedWhatsAppPhone(params.message.id),
+      });
+  if (!params.group && !personalAccount) return;
 
   // Resolved independently of the (possibly mocked, in tests) completion result — mirrors
   // aiAnalysisJob.ts's own pattern, and matters for correctness: AiFallbackDecision.aiProviderId
@@ -185,7 +200,8 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
     // say — "we could not understand this, the support team will follow up". Runs only on the pass
     // that claimed the decision above, so a re-run can never send it twice; the throttle-caused
     // handovers never qualify (see packages/shared/src/unableToUnderstand.ts).
-    const holdingReplyId = await sendUnableToUnderstandReply({
+    // A one-to-one chat never gets one: AI spoke there only because it had the customer's own answer to give.
+    const holdingReplyId = !params.group ? null : await sendUnableToUnderstandReply({
       reason,
       aiSettings,
       automationSettings: params.automationSettings,
@@ -322,7 +338,7 @@ export async function runAiFallback(params: RunAiFallbackParams): Promise<void> 
   // by default, and then nothing here runs and nothing below changes. Only a one-to-one chat with a
   // number WhatsApp itself delivered can be a verified customer, so a group gets no account data. A
   // request to pay, renew, change a package or disconnect goes to a person.
-  const account = await findClientAccountGrounding({
+  const account = personalAccount ?? await findClientAccountGrounding({
     text: params.message.body,
     switches: aiSettings,
     customer: {

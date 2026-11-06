@@ -1,22 +1,36 @@
 # AI answers about a customer's own account
 
-Two `AiSettings` switches, both **off by default**: `clientAccountAnswers` (package, state, expiry) and `clientDueAnswers`
-(what they still owe, needs the first). Active only while `CLIENT_CENTER` and its Subscriptions / Billing sub-modules are on.
+Three `AiSettings` switches, all **off by default**: `clientAccountAnswers` (package, state, expiry), `clientDueAnswers`
+(what they still owe, needs the first) and `clientAccountAutoReply` (AI replies by itself, below). Active only while `CLIENT_CENTER` and its Subscriptions / Billing sub-modules are on.
 
-Status: built and tested on an isolated database only. Not deployed.
+Status: built and tested on an isolated database only. Not deployed, and never tried with a real customer or number. Try it on one test number first.
 
-## Where it reaches customers today
+## Where it reaches customers
 
-**Only in AI Copilot drafts, for an agent, in a one-to-one WhatsApp chat.** It does not answer customers on its own yet:
+- **AI Copilot drafts**, for an agent, in a one-to-one WhatsApp chat, with the first two switches.
+- **AI's own replies in a one-to-one WhatsApp chat**, with a third switch, `clientAccountAutoReply`, also off by default. The owner
+  chose this on 6 Nov 2026 over sharing dues inside a group.
+- **Never** in a WhatsApp group, and never on Messenger, Instagram, Telegram or website chat, which cannot prove who the customer is.
 
-- WhatsApp's automatic AI runs only in groups (`checkAiFallbackEligibility`: a DM is always ineligible).
-- Account details are never given in a group.
-- Messenger, Instagram, Telegram and website chat carry no proof of who the customer is.
+### The one-to-one gate (`personalAccountGrounding`)
 
-The settings page says so. Automatic answers need one owner decision, either of:
+This is the first time AI replies by itself in a personal WhatsApp chat, so everything else about personal chats stays as it was. AI
+goes on only when ALL of this holds:
 
-1. let the automatic AI answer one-to-one WhatsApp chats, at least for account questions; or
-2. treat a group linked to one client (a Clients V3 group link) as that client, which shows dues to everyone in the group.
+1. the switch is on, with every ordinary gate: kill switch, MANUAL_ONLY, AI Engine, auto response, the `AI_REPLY` entitlement, and
+   "only the Primary account answers";
+2. the message is a question about the customer's own account;
+3. the sender is matched to exactly one live client;
+4. it asks for nothing a person must do (pay, renew, change, disconnect);
+5. no person has replied in this chat within `humanTakeoverCooldownMinutes`. A dashboard send that failed is no reply, and AI's own
+   earlier answers do not count. A personal chat has no group row to hold `aiSuppressedUntil`, so this is read from the messages.
+
+**Anything else ends silently**, with no AI call, no decision row, no alert and no reply. An ordinary personal message must behave
+exactly as it does with the switch off, or every "ok thanks" would raise an "AI Assistance Required" alert.
+
+Once past the gate, the ordinary path applies. An amount it was not given, or a low-confidence answer, hands over with the usual
+alert. No holding reply is sent there ("we could not understand"): AI spoke only because it had the customer's own answer to give.
+The reply goes through `enqueueOutboundMessage`, the rate limits and the AI reply cooldown.
 
 ## Rules worth not undoing
 

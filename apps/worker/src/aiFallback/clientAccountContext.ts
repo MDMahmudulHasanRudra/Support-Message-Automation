@@ -115,6 +115,52 @@ export function moneyFiguresGrounded(
   });
 }
 
+/**
+ * Whether a person has spoken in this one-to-one chat recently, so AI stays quiet: a reply typed in the dashboard
+ * (queued or sent), or one from the business phone. AI's own earlier replies do not count, so a customer's next
+ * question still gets an answer. The group version of this rule is WhatsAppGroup.aiSuppressedUntil; a personal chat
+ * has no row to hold it, so it is read from the messages themselves.
+ */
+export async function humanRepliedRecently(accountId: string, chatId: string, minutes: number, now: Date): Promise<boolean> {
+  const since = new Date(now.getTime() - minutes * 60_000);
+  const manual = await prisma.outboundMessage.count({ where: { accountId, chatId, actionType: "MANUAL_REPLY", createdAt: { gte: since }, status: { notIn: ["FAILED", "CANCELLED", "SKIPPED"] } } });
+  if (manual > 0) return true;
+  const outgoing = await prisma.message.findMany({ where: { accountId, chatId, direction: "OUTGOING", timestampWa: { gte: since } }, select: { whatsappMessageId: true }, take: 50 });
+  if (outgoing.length === 0) return false;
+  const automated = await prisma.outboundMessage.findMany({
+    where: { accountId, chatId, actionType: "AUTO_REPLY", providerMessageId: { in: outgoing.map((m) => m.whatsappMessageId) } },
+    select: { providerMessageId: true },
+  });
+  const ours = new Set(automated.map((o) => o.providerMessageId));
+  return outgoing.some((m) => !ours.has(m.whatsappMessageId));
+}
+
+/**
+ * The one-to-one chat gate (AiSettings.clientAccountAutoReply). AI speaks here only when ALL of this holds: the
+ * customer asked about their own account, is matched to exactly one live client, asked for nothing a person must
+ * do, and no person has just replied. Anything else returns null and the caller ends the turn with no decision row,
+ * no alert and no reply: an ordinary personal message must behave exactly as it does with the switch off.
+ */
+export async function personalAccountGrounding(input: {
+  text: string;
+  switches: AiClientAnswerSwitches;
+  accountId: string;
+  chatId: string;
+  takeoverMinutes: number;
+  verifiedPhone: () => Promise<string | null>;
+  now?: Date;
+}): Promise<ClientAccountGrounding | null> {
+  if (input.chatId.endsWith("@g.us")) return null;
+  const grounding = await findClientAccountGrounding({
+    text: input.text,
+    switches: input.switches,
+    customer: { kind: "WHATSAPP", accountId: input.accountId, chatId: input.chatId, isGroup: false, verifiedPhone: input.verifiedPhone },
+  });
+  if (grounding.handoverReason || grounding.status !== "FOUND" || grounding.snippets.length === 0) return null;
+  if (await humanRepliedRecently(input.accountId, input.chatId, input.takeoverMinutes, input.now ?? new Date())) return null;
+  return grounding;
+}
+
 export async function findClientAccountGrounding(
   input: {
     text: string;

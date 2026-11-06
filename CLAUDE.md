@@ -1635,7 +1635,7 @@ owns who is online, engaged time and first-response stats; this one owns **sched
 
 Fires only when `packages/engine`'s `evaluate()` genuinely misses on a real customer message
 (`finalDecision === "NO_MATCH"`) **and** the message's group has opted in
-(`WhatsAppGroup.aiAutomationEnabled`, default false). `checkAiFallbackEligibility()` gates on the
+(`WhatsAppGroup.aiAutomationEnabled`, default false), or it is a one-to-one account question behind `clientAccountAutoReply` (`AI_CLIENT_ANSWERS.md`). `checkAiFallbackEligibility()` gates on the
 kill switch, automation mode, group opt-in, and `AiSettings.aiEngineEnabled` before
 `runAiFallback()` ever calls `resolveAiClient("RESPONSE")` — reuses `checkAutoReplySafety()`,
 `enqueueOutboundMessage`, and `enqueueNotification` exactly as the deterministic pipeline does,
@@ -3152,7 +3152,7 @@ once, and never sent to an address that resolves privately. Background work runs
 
 ### Customer account answers (`AI_CLIENT_ANSWERS.md`, 7 Nov 2026)
 
-`AiSettings.clientAccountAnswers` / `clientDueAnswers`, **off by default**. Today this reaches only AI Copilot drafts in a one-to-one WhatsApp chat, because WhatsApp's automatic AI runs only in groups and account details are never given in a group; the settings page says so. Rules worth not undoing: a verified `@c.us` number matching exactly one live client (or a person's chat link), never a LID, a group, a channel or the Sandbox; off means no query and a byte-identical prompt; a request to pay, renew, change or disconnect goes to a person; every amount in a reply must be one it was given. **An answer built from one person's account, dues or order never becomes a rule draft** (`isPersonalRecordEntry`): a rule answers everybody.
+`AiSettings.clientAccountAnswers` / `clientDueAnswers` / `clientAccountAutoReply`, **off by default**. It reaches AI Copilot drafts in a one-to-one WhatsApp chat and, with the third switch, AI's own replies there; never a group or another channel. **`personalAccountGrounding` is the only way a direct message reaches the AI**: only a verified customer's own account question, with no person having just replied. Anything else ends silently, with no AI call, decision row, alert or reply, and no holding reply is sent there. Rules worth not undoing: a verified `@c.us` number matching exactly one live client (or a person's chat link), never a LID, a group, a channel or the Sandbox; off means no query and a byte-identical prompt; a request to pay, renew, change or disconnect goes to a person; every amount in a reply must be one it was given. **An answer built from one person's account, dues or order never becomes a rule draft** (`isPersonalRecordEntry`): a rule answers everybody.
 
 ### Commerce-aware AI (`AI_COMMERCE.md`)
 
