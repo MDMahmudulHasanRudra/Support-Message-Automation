@@ -102,3 +102,4 @@ export * from "./logRedaction.js";
 export * from "./failedReplies.js";
 export * from "./logEvent.js";
 export * from "./backupHealth.js";
+export * from "./conversationLifecycle.js";

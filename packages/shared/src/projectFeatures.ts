@@ -260,6 +260,17 @@ export const PROJECT_FEATURES = [
     workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
   },
   {
+    key: "UNIFIED_INBOX_V3",
+    label: "Inbox V3 — conversation status, snooze and assignment",
+    description:
+      "Open / Pending / Snoozed / Resolved on every WhatsApp and channel conversation, snooze with automatic reopen, a reopen-on-customer-message policy, user and Team assignment for WhatsApp conversations, and their history. Off = the conversation views exactly as before; recorded states are kept.",
+    // A presentation and workflow switch over existing pages (messages.view to read, the reply keys to write).
+    defaultEnabled: false,
+    routes: ["/settings/inbox-status"],
+    permissionKeys: [],
+    workerEffect: "Stops reopening snoozed conversations and stops applying the reopen policy to new customer messages.",
+  },
+  {
     key: "PRODUCT_CATALOG",
     label: "Product Catalog",
     description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",

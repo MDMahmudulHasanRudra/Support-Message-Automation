@@ -49,6 +49,8 @@ import {
   setConversationPriority,
   setConversationTags,
 } from "@/server/actions/inboxWorkspace";
+import { setConversationAssignee, setConversationTeam } from "@/server/actions/inboxLifecycle";
+import { ConversationStatusSection } from "./ConversationStatusSection";
 
 type TabKey = "details" | "notes" | "copilot";
 
@@ -115,13 +117,14 @@ function writeWidth(value: number) {
 export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const collapsed = useSyncExternalStore(subscribe, readCollapsed, () => false);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const firstTab: TabKey = data.access.collaboration ? "details" : "copilot";
+  const hasDetails = data.access.collaboration || data.access.lifecycle;
+  const firstTab: TabKey = hasDetails ? "details" : "copilot";
   const [tab, setTab] = useState<TabKey>(firstTab);
   const width = useSyncExternalStore(subscribe, readWidth, () => 340);
   const sheetRef = useRef<HTMLDivElement>(null);
 
   const tabs = [
-    data.access.collaboration ? { key: "details" as const, label: "Details", icon: Tag } : null,
+    hasDetails ? { key: "details" as const, label: "Details", icon: Tag } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", icon: StickyNote, count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "Copilot", icon: Sparkles } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
@@ -198,7 +201,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         </button>
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "details" && data.access.collaboration ? <DetailsTab data={data} /> : null}
+        {tab === "details" && hasDetails ? <DetailsTab data={data} /> : null}
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
       </div>
@@ -254,7 +257,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         className="fixed bottom-24 right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3.5 py-2 text-[12.5px] font-medium text-[color:var(--color-foreground)] shadow-[var(--shadow-lg)] ring-1 ring-[var(--color-border)] xl:hidden"
       >
         <PanelRightOpen className="size-4" aria-hidden />
-        {data.access.copilot ? "Notes & Copilot" : "Notes"}
+        {data.access.copilot ? (data.access.collaboration ? "Notes & Copilot" : "Copilot") : data.access.collaboration ? "Notes" : "Details"}
       </button>
       {sheetOpen ? (
         <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="Conversation workspace">
@@ -318,6 +321,11 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
 
   return (
     <div className="space-y-5 p-4">
+      {data.lifecycle ? (
+        <ConversationStatusSection conversationRef={data.ref} status={data.lifecycle.status} snoozedUntil={data.lifecycle.snoozedUntil} readOnly={ro} />
+      ) : null}
+
+      {data.access.collaboration ? (
       <section>
         <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
           <Flag className="size-3.5" aria-hidden />
@@ -343,7 +351,9 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
           ))}
         </div>
       </section>
+      ) : null}
 
+      {data.access.collaboration ? (
       <section>
         <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
           <Tag className="size-3.5" aria-hidden />
@@ -389,6 +399,7 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
           </form>
         ) : null}
       </section>
+      ) : null}
 
       {data.teams ? (
         <section>
@@ -403,7 +414,9 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
               const next = e.target.value || null;
               setTeam(next);
               start(async () => {
-                const r = await setChannelConversationTeam((data.ref as { conversationId: string }).conversationId, next);
+                const r = data.access.lifecycle
+                  ? await setConversationTeam(data.ref, next)
+                  : await setChannelConversationTeam((data.ref as { conversationId: string }).conversationId, next);
                 if ("error" in r) {
                   setTeam(undefined);
                   fail(r.error);
@@ -435,7 +448,9 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
               const next = e.target.value || null;
               setAssignee(next);
               start(async () => {
-                const r = await setChannelAssignee((data.ref as { conversationId: string }).conversationId, next);
+                const r = data.access.lifecycle
+                  ? await setConversationAssignee(data.ref, next)
+                  : await setChannelAssignee((data.ref as { conversationId: string }).conversationId, next);
                 if ("error" in r) {
                   setAssignee(undefined);
                   fail(r.error);
@@ -481,7 +496,7 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
             {data.history.map((h) => (
               <li key={h.id}>
                 <span className="text-[color:var(--color-foreground)]">{h.actorName ?? "Someone"}</span>{" "}
-                {h.kind === "STATUS" ? (h.to === "Closed" ? "closed it" : "reopened it") : h.kind === "TEAM" ? (h.to ? `moved it to ${h.to}` : "removed the Team") : h.to ? `assigned it to ${h.to}` : "unassigned it"} · <RelTime iso={h.at} />
+                {describeHistory(h)} · <RelTime iso={h.at} />
               </li>
             ))}
           </ol>
@@ -491,6 +506,30 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
       {ro ? <p className="text-[11.5px] text-[color:var(--color-subtle-foreground)]">Your role can read this conversation but not change it.</p> : null}
     </div>
   );
+}
+
+/** One history line, for the older STATUS / ASSIGNEE / TEAM rows and the Inbox V3 kinds. */
+function describeHistory(h: WorkspaceData["history"][number]): string {
+  switch (h.kind) {
+    case "STATUS":
+      return h.to === "Resolved" ? "resolved it" : "reopened it";
+    case "REOPEN":
+      return "reopened it";
+    case "PENDING":
+      return "marked it pending";
+    case "RESOLVE":
+      return "resolved it";
+    case "SNOOZE":
+      return "snoozed it";
+    case "UNSNOOZE":
+      return "unsnoozed it";
+    case "TEAM":
+      return h.to ? `moved it to ${h.to}` : "removed the Team";
+    case "ASSIGNEE":
+      return h.to ? `assigned it to ${h.to}` : "unassigned it";
+    default:
+      return "changed it";
+  }
 }
 
 // ── Notes ───────────────────────────────────────────────────────────────────────────────────────

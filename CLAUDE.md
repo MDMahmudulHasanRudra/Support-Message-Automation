@@ -2920,6 +2920,15 @@ A side panel on every WhatsApp Chat and All Conversations conversation, behind `
 anything: "Use in reply" only fills the composer through `lib/composerBridge.ts`. The Copilot reuses the
 production prompt/parser and verified-only retrieval in the worker; never add a second AI path for it.
 
+### Inbox V3 — conversation lifecycle (`packages/shared/src/conversationLifecycle.ts`, 6 Nov 2026)
+
+Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker exactly as before. Rules worth not undoing:
+- **OPEN / PENDING / SNOOZED / RESOLVED, one pure rule set** (`decideTransition`, `statusAfterCustomerMessage`, `snoozeHasEnded`) shared by the actions, the worker hook and the snooze loop. Channel conversations store RESOLVED as their existing CLOSED (`channelStatusOf` / `channelStorageOf`), so every old close/reopen path works; legacy views read anything not CLOSED as OPEN.
+- **A WhatsApp conversation state row is created only when a person acts** (`WhatsAppConversationState`, unique per project + account + chat). No row = OPEN, unassigned; no Message is copied, and the worker never creates a row. Priority and tags stay in `ConversationLabel`.
+- **Every change is a conditional update with its `ConversationEvent` in the same transaction**, so replays and concurrent calls give one change and one event. Events carry statuses, times and a reason (`CUSTOMER_MESSAGE`, `SNOOZE_ENDED`), never message text or the resolution note.
+- **The reopen policy is per project** (`InboxLifecycleSettings`, Settings → Inbox status, `settings.edit`): PENDING always reopens on a customer message; RESOLVED and SNOOZED by policy (both default on). A team member message never changes the status.
+- Writes check the conversation module reply key (`messages.reply` / `conversations.reply`) through `resolveWorkspaceAccess`, plus the feature; assignment re-checks the person (`mentionablePeople`) and the Team (scoped client; the database refuses another project Team).
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

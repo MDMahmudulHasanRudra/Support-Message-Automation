@@ -29,6 +29,7 @@ import { registerMessageMedia } from "../media/registerMessageMedia.js";
 import { recordMessagePictures } from "../avatars/whatsappPictures.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { trackSupportAssignment } from "../supportAssignment/tracker.js";
+import { recordWhatsAppConversationActivity } from "../inbox/lifecycle.js";
 import { recordMoodSignal } from "../mood/moodDetection.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 import { messageTraceId } from "../logging/logRef.js";
@@ -645,6 +646,10 @@ async function persistIncomingMessage(
     hasMedia: Boolean(raw.media),
     timestampWa: raw.timestampWa,
   });
+
+  // Inbox V3 (inbox/lifecycle.ts): a customer's message reopens a recorded WhatsApp conversation by the
+  // project's policy. A no-op while UNIFIED_INBOX_V3 is off or nobody has acted on this chat. Never throws.
+  await recordWhatsAppConversationActivity({ accountId: raw.accountId, chatId: raw.chatId, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
 
   return { message, group, isFromTeamMember, quotedMessage, previous };
 }

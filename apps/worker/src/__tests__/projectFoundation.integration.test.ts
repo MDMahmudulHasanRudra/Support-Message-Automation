@@ -116,7 +116,9 @@ describe("the constraints later phases depend on", () => {
     // + the eight Client CRM V7 tables (20261101130100_client_crm_v7).
     // + FailedReplyAction (FAILED_REPLIES.md, 20261105120000_failed_replies): same-project triggers on both
     //   message ids, projectId immutable, append-only.
-    expect(refusing).toHaveLength(177);
+    // + WhatsAppConversationState and InboxLifecycleSettings (Inbox V3, 20261106100000_inbox_v3_lifecycle):
+    //   same-project triggers on the account and the Team, projectId immutable.
+    expect(refusing).toHaveLength(179);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -155,7 +157,8 @@ describe("the constraints later phases depend on", () => {
     // + the two client code tables.
     // + the eight Client CRM V7 tables.
     // + FailedReplyAction (20261105120000_failed_replies).
-    expect(rows).toHaveLength(180);
+    // + WhatsAppConversationState and InboxLifecycleSettings (20261106100000_inbox_v3_lifecycle).
+    expect(rows).toHaveLength(182);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

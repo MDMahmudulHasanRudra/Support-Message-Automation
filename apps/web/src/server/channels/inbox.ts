@@ -214,7 +214,8 @@ function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string): I
     unread: row.unread,
     needsReply: row.needsReply,
     isGroup: row.kind === "GROUP",
-    status: row.status,
+    // Inbox V3 may store PENDING / SNOOZED; for this view anything not CLOSED is open, as before.
+    status: row.status === "CLOSED" ? "CLOSED" : "OPEN",
     assigneeName: row.assigneeName,
     assignedToMe: row.assignedUserId === viewerId,
     teamName: row.teamName,
@@ -590,7 +591,7 @@ export async function getChannelThread(conversationId: string, now: Date = new D
       title: channelConversationTitle(conversation),
       customerUsername: conversation.customerUsername,
       externalThreadId: conversation.externalThreadId,
-      status: conversation.status,
+      status: conversation.status === "CLOSED" ? "CLOSED" : "OPEN",
       assignedUserId: conversation.assignedUserId,
       assigneeName: conversation.assignedUser?.name ?? null,
       lastInboundAt: conversation.lastInboundAt?.toISOString() ?? null,

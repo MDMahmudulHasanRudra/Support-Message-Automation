@@ -15,6 +15,7 @@ import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
+import { applyChannelCustomerMessage } from "../inbox/lifecycle.js";
 import { getAiSettings } from "../ai/settings.js";
 import { metaAppSecretFor, fetchMetaProfileName, type FetchImpl } from "./providerApi.js";
 
@@ -366,7 +367,10 @@ async function touchConversation(
     data.lastMessagePreview = input.preview;
     data.lastMessageDirection = input.direction;
   }
-  if (input.inbound) {
+  // Inbox V3 on: the project's reopen policy decides, with a history row (inbox/lifecycle.ts). Off: the old
+  // rule, unchanged — any customer message reopens a closed conversation.
+  const lifecycleHandled = input.inbound && (await applyChannelCustomerMessage(conversationId));
+  if (input.inbound && !lifecycleHandled) {
     data.status = "OPEN";
     data.closedAt = null;
   }

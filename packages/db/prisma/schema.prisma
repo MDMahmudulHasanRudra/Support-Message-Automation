@@ -733,6 +733,8 @@ model Project {
   aiDrafts                             AiDraft[]
   inboxSavedViews                      InboxSavedView[]
   inboxMentions                        InboxMention[]
+  whatsAppConversationStates           WhatsAppConversationState[]
+  inboxLifecycleSettings               InboxLifecycleSettings?
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -965,34 +967,35 @@ model User {
   listViewPreferences            ListViewPreference[]
   emailsQueued                   EmailOutbox[]             @relation("EmailQueuedBy")
 
-  projectAccess             ProjectAccess[]
-  projectMemberRoles        ProjectMemberRole[]
+  projectAccess                 ProjectAccess[]
+  projectMemberRoles            ProjectMemberRole[]
   /// The person this login belongs to, if one has been recorded (Main Admin → Configuration → Employees).
-  employee                  Employee?
+  employee                      Employee?
   /// Google accounts this person connected (GOOGLE_SHEETS.md). Audit only; grants nothing.
-  googleAccountsConnected   GoogleIntegrationAccount[] @relation("GoogleAccountConnectedBy")
-  googleSheetMemberships    GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberUser")
-  googleSheetMembersAdded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberAddedBy")
-  googleSheetMembersEnded   GoogleSpreadsheetMember[]  @relation("GoogleSheetMemberEndedBy")
+  googleAccountsConnected       GoogleIntegrationAccount[]  @relation("GoogleAccountConnectedBy")
+  googleSheetMemberships        GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberUser")
+  googleSheetMembersAdded       GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberAddedBy")
+  googleSheetMembersEnded       GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberEndedBy")
   /// Google identities this person proved are theirs by signing in with Google (Phase 4).
-  googleIdentities          UserGoogleIdentity[]
-  googleSheetActivities     GoogleSheetActivity[]      @relation("GoogleSheetActivityUser")
-  googleSheetWorkSessions   GoogleSheetWorkSession[]   @relation("GoogleSheetWorkSessionUser")
+  googleIdentities              UserGoogleIdentity[]
+  googleSheetActivities         GoogleSheetActivity[]       @relation("GoogleSheetActivityUser")
+  googleSheetWorkSessions       GoogleSheetWorkSession[]    @relation("GoogleSheetWorkSessionUser")
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.
-  customerId                String?
-  customer                  Customer?                  @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
+  customerId                    String?
+  customer                      Customer?                   @relation("CustomerUsers", fields: [customerId], references: [id], onDelete: Restrict)
   /// Set on the support identity a RELQIVO operator uses inside this customer's workspace (never a
   /// person's account; no password works for it; shown as "RELQIVO Support").
-  supportOperatorId         String?
-  supportOperator           PlatformOperator?          @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
-  conversationNotes         ConversationNote[]         @relation("ConversationNoteAuthor")
-  aiDraftsRequested         AiDraft[]                  @relation("AiDraftRequester")
-  conversationLabelsUpdated ConversationLabel[]        @relation("ConversationLabelUpdater")
-  inboxSavedViews           InboxSavedView[]           @relation("InboxSavedViewOwner")
-  listSavedViews            ListSavedView[]            @relation("ListSavedViewOwner")
-  inboxMentions             InboxMention[]             @relation("InboxMentionUser")
-  conversationEvents        ConversationEvent[]        @relation("ConversationEventActor")
+  supportOperatorId             String?
+  supportOperator               PlatformOperator?           @relation(fields: [supportOperatorId], references: [id], onDelete: SetNull)
+  conversationNotes             ConversationNote[]          @relation("ConversationNoteAuthor")
+  aiDraftsRequested             AiDraft[]                   @relation("AiDraftRequester")
+  conversationLabelsUpdated     ConversationLabel[]         @relation("ConversationLabelUpdater")
+  inboxSavedViews               InboxSavedView[]            @relation("InboxSavedViewOwner")
+  listSavedViews                ListSavedView[]             @relation("ListSavedViewOwner")
+  inboxMentions                 InboxMention[]              @relation("InboxMentionUser")
+  whatsAppConversationsAssigned WhatsAppConversationState[] @relation("WhatsAppConversationAssignee")
+  conversationEvents            ConversationEvent[]         @relation("ConversationEventActor")
 
   @@index([customerId])
 }
@@ -1224,7 +1227,9 @@ model WhatsAppAccount {
   droppedMessages      MessageDropCounter[]
   personalChatReviews  PersonalChatReview[]
   pictures             WhatsAppPicture[]
-  scopedKnowledge      AiKnowledgeItem[]         @relation("AiKnowledgeScopeAccount")
+  scopedKnowledge      AiKnowledgeItem[]           @relation("AiKnowledgeScopeAccount")
+  conversationStates   WhatsAppConversationState[]
+  conversationEvents   ConversationEvent[]         @relation("ConversationEventAccount")
   conversationLabels   ConversationLabel[]
   conversationNotes    ConversationNote[]
   aiDrafts             AiDraft[]
@@ -1598,12 +1603,13 @@ model Team {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  members                      InternalTeamMember[]
-  memberships                  TeamMembership[]
-  supportEpisodes              SupportResponseEpisode[]
-  assignedClients              Client[]
-  soldSubscriptions            ClientSubscription[]
-  assignedChannelConversations ChannelConversation[]    @relation("ChannelConversationTeam")
+  members                       InternalTeamMember[]
+  memberships                   TeamMembership[]
+  supportEpisodes               SupportResponseEpisode[]
+  assignedClients               Client[]
+  soldSubscriptions             ClientSubscription[]
+  assignedWhatsAppConversations WhatsAppConversationState[] @relation("WhatsAppConversationTeam")
+  assignedChannelConversations  ChannelConversation[]       @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
   @@unique([projectId, code])
@@ -6413,6 +6419,8 @@ enum ChannelThreadKind {
 enum ChannelConversationStatus {
   OPEN
   CLOSED
+  PENDING
+  SNOOZED
 }
 
 enum ChannelAiOutcome {
@@ -6555,6 +6563,11 @@ model ChannelConversation {
   aiSuppressedUntil    DateTime?
   /// Website chat: when an agent last typed in this conversation; the widget shows "typing…" briefly.
   agentTypingAt        DateTime?
+  /// Inbox V3 (conversationLifecycle.ts): when a SNOOZED conversation reopens by itself.
+  snoozedUntil         DateTime?
+  statusChangedAt      DateTime?
+  /// Who resolved (CLOSED) it, when a person did. A plain id: history keeps its own actor.
+  resolvedById         String?
   closedAt             DateTime?
   createdAt            DateTime                  @default(now())
   updatedAt            DateTime                  @updatedAt
@@ -8172,20 +8185,27 @@ model InboxMention {
 /// What happened to a Messenger / Instagram / Telegram conversation's ownership and state: the
 /// assignment history. WhatsApp group ownership history stays in GroupResponsibilityChange.
 model ConversationEvent {
-  id                    String              @id @default(cuid())
-  projectId             String              @default(dbgenerated("project_id_required()"))
-  project               Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
-  channelConversationId String
-  channelConversation   ChannelConversation @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
-  /// ASSIGNEE | TEAM | STATUS
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Exactly one conversation: a channel conversation, or a WhatsApp chat (accountId + chatId). CHECK.
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  accountId             String?
+  account               WhatsAppAccount?     @relation("ConversationEventAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  /// ASSIGNEE | TEAM | STATUS (older rows), and the Inbox V3 kinds in conversationLifecycle.ts
   kind                  String
   /// User id / Team id / status before and after (null = none).
   fromValue             String?
   toValue               String?
   actorId               String?
-  actor                 User?               @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
-  createdAt             DateTime            @default(now())
+  actor                 User?                @relation("ConversationEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  /// Why and how, never message text: e.g. { reason: "CUSTOMER_MESSAGE" } or { snoozedUntil }.
+  context               Json?
+  createdAt             DateTime             @default(now())
 
+  @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
 }
 
@@ -9500,4 +9520,56 @@ model BackupAlertDelivery {
 
   @@unique([alertId, recipient])
   @@index([status, nextAttemptAt])
+}
+
+/// Inbox V3 status of a conversation (conversationLifecycle.ts). Channel conversations keep their own column.
+enum ConversationLifecycleStatus {
+  OPEN
+  PENDING
+  SNOOZED
+  RESOLVED
+}
+
+/// Inbox V3 lifecycle and ownership of ONE WhatsApp conversation (account + chat), created the first time a
+/// person acts on it. Nothing is copied from Message and no row exists for an untouched chat: no row = OPEN,
+/// unassigned. Priority and tags stay in ConversationLabel. Feature UNIFIED_INBOX_V3.
+model WhatsAppConversationState {
+  id                    String                      @id @default(cuid())
+  projectId             String                      @default(dbgenerated("project_id_required()"))
+  project               Project                     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  accountId             String
+  account               WhatsAppAccount             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String
+  /// GROUP or PERSONAL, from the chat id's WhatsApp domain (whatsAppConversationType).
+  conversationType      String
+  status                ConversationLifecycleStatus @default(OPEN)
+  snoozedUntil          DateTime?
+  statusChangedAt       DateTime                    @default(now())
+  assignedUserId        String?
+  assignedUser          User?                       @relation("WhatsAppConversationAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?                       @relation("WhatsAppConversationTeam", fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  lastActivityAt        DateTime?
+  lastCustomerMessageAt DateTime?
+  resolvedAt            DateTime?
+  /// A plain id: deleting a login must not rewrite who resolved it.
+  resolvedById          String?
+  resolutionNote        String?
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+
+  @@unique([projectId, accountId, chatId])
+  @@index([projectId, status, snoozedUntil])
+  @@index([projectId, assignedUserId])
+}
+
+/// Inbox V3: what a customer message does to a resolved or snoozed conversation. No row = the defaults (both on).
+model InboxLifecycleSettings {
+  id                              String   @id @default(cuid())
+  projectId                       String   @unique @default(dbgenerated("project_id_required()"))
+  project                         Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  reopenResolvedOnCustomerMessage Boolean  @default(true)
+  reopenSnoozedOnCustomerMessage  Boolean  @default(true)
+  updatedById                     String?
+  updatedAt                       DateTime @updatedAt
 }

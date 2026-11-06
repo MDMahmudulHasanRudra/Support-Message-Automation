@@ -312,6 +312,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: [],
     documentation: "INBOX_WORKSPACE.md",
   },
+  UNIFIED_INBOX_V3: {
+    category: "Support",
+    benefits: ["Open, Pending, Snoozed and Resolved on every conversation", "Snooze with automatic reopen", "Assign WhatsApp conversations to a person or a Team"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "The status controls sit beside a conversation in WhatsApp Chat or All Conversations." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Statuses, snoozes and assignments are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "INBOX_WORKSPACE.md",
+  },
   PRODUCT_CATALOG: {
     category: "Commerce",
     benefits: ["One catalogue of products, variants and prices", "Stock that moves with every order, with its history"],
