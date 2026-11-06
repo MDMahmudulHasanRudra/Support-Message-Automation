@@ -1,5 +1,7 @@
 import { matchKey, searchWhatsAppMessages, type MessageSearchResult } from "@/server/whatsAppMessageSearch";
-import { channelStatusOf, channelStorageOf, type ConversationStatus } from "@support-automation/shared";
+import {
+  INBOX_RECENT_HOURS,
+  UPSET_MOOD_LEVEL, channelStatusOf, channelStorageOf, type ConversationStatus } from "@support-automation/shared";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { Prisma } from "@prisma/client";
 import {
@@ -199,6 +201,17 @@ function channelFilters(opts: ListOpts): Prisma.Sql {
   if (f.account) parts.push(f.account.startsWith("ch:") ? Prisma.sql`c."connectionId" = ${f.account.slice(3)}` : Prisma.sql`false`);
   if (f.within) parts.push(Prisma.sql`c."lastMessageAt" >= ${new Date(opts.now.getTime() - WITHIN_MS[f.within])}`);
   if (opts.lifecycle && f.lastSender) parts.push(Prisma.sql`c."lastMessageDirection"::text = ${f.lastSender === "customer" ? "INBOUND" : "OUTBOUND"}`);
+  // Mood is read in WhatsApp groups only, so no channel conversation can match.
+  if (f.mood) parts.push(Prisma.sql`false`);
+  // "AI is handling": the newest message is the AI's own reply (keyed ai:<message id>; a survey or a person's reply is not), not failed.
+  if (f.view === "ai") {
+    parts.push(Prisma.sql`c."lastMessageAt" >= ${new Date(opts.now.getTime() - INBOX_RECENT_HOURS * 3_600_000)} AND EXISTS (
+      SELECT 1 FROM (
+        SELECT m."idempotencyKey", m."deliveryStatus" FROM "ChannelMessage" m
+        WHERE m."projectId" = c."projectId" AND m."conversationId" = c."id"
+        ORDER BY m."occurredAt" DESC, m."id" DESC LIMIT 1
+      ) newest WHERE newest."idempotencyKey" LIKE 'ai:%' AND newest."deliveryStatus"::text <> 'FAILED')`);
+  }
   const term = f.search;
   if (term) {
     const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
@@ -380,7 +393,45 @@ async function whatsAppGroupsAssignedTo(viewerId: string): Promise<Set<string>> 
  * and recorded in GroupResponsibilityChange for the Team Report); personal chats have no owner. The
  * inbox only reads it — no second assignment for WhatsApp exists.
  */
-async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, viewerId: string, lifecycle = false): Promise<{ include: Map<string, Set<string>> | null; exclude: Map<string, Set<string>> }> {
+/** Groups where a customer's newest mood reading in the last day is frustrated or worse, per account's copy. */
+async function upsetChats(accountIds: string[], now: Date): Promise<Array<{ accountId: string; chatId: string }>> {
+  if (accountIds.length === 0) return [];
+  const since = new Date(now.getTime() - INBOX_RECENT_HOURS * 3_600_000);
+  return prisma.$queryRaw<Array<{ accountId: string; chatId: string }>>`
+    SELECT DISTINCT r."accountId", r."whatsappGroupId" AS "chatId" FROM (
+      SELECT DISTINCT ON (e."accountId", e."whatsappGroupId", e."customerKey") e."accountId", e."whatsappGroupId", e."level"
+      FROM "CustomerMoodEvent" e
+      WHERE e."projectId" = ${await activeProjectId()} AND e."accountId" IN (${Prisma.join(accountIds)}) AND e."messageAt" >= ${since}
+      ORDER BY e."accountId", e."whatsappGroupId", e."customerKey", e."messageAt" DESC, e."id" DESC
+    ) r WHERE r."level" >= ${UPSET_MOOD_LEVEL}`;
+}
+
+/**
+ * "AI is handling" on WhatsApp: in the last day the AI answered a customer's message, its reply did not fail, and
+ * nothing has been said in that chat since except that reply's own echo. A person replying, or the customer writing
+ * again, ends it (until the AI answers that message too).
+ */
+async function aiHandledChats(accountIds: string[], now: Date): Promise<Array<{ accountId: string; chatId: string }>> {
+  if (accountIds.length === 0) return [];
+  const projectId = await activeProjectId();
+  const since = new Date(now.getTime() - INBOX_RECENT_HOURS * 3_600_000);
+  return prisma.$queryRaw<Array<{ accountId: string; chatId: string }>>`
+    SELECT DISTINCT m."accountId", m."chatId"
+    FROM "AiFallbackDecision" d
+    JOIN "Message" m ON m."id" = d."messageId" AND m."projectId" = ${projectId}
+    WHERE d."projectId" = ${projectId} AND d."outcome" = 'AI_REPLIED' AND d."createdAt" >= ${since} AND m."accountId" IN (${Prisma.join(accountIds)})
+      AND NOT EXISTS (
+        SELECT 1 FROM "OutboundMessage" f
+        WHERE f."projectId" = ${projectId} AND f."relatedMessageId" = m."id" AND f."status" = 'FAILED')
+      AND NOT EXISTS (
+        SELECT 1 FROM "Message" n
+        WHERE n."projectId" = ${projectId} AND n."accountId" = m."accountId" AND n."chatId" = m."chatId" AND n."timestampWa" > m."timestampWa"
+          AND NOT EXISTS (
+            SELECT 1 FROM "OutboundMessage" o
+            WHERE o."projectId" = ${projectId} AND o."relatedMessageId" = m."id" AND o."providerMessageId" = n."whatsappMessageId"))`;
+}
+
+async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, viewerId: string, lifecycle = false, now: Date = new Date()): Promise<{ include: Map<string, Set<string>> | null; exclude: Map<string, Set<string>> }> {
   const toMap = (rows: Array<{ accountId: string | null; chatId: string | null }>) => {
     const m = new Map<string, Set<string>>();
     for (const r of rows) if (r.accountId && r.chatId) (m.get(r.accountId) ?? m.set(r.accountId, new Set()).get(r.accountId)!).add(r.chatId);
@@ -392,6 +443,8 @@ async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, 
       .then((rows) => toMap(rows.map((r) => ({ accountId: r.accountId, chatId: r.whatsappGroupId }))));
 
   const includes: Map<string, Set<string>>[] = [];
+  if (f.mood === "upset") includes.push(toMap(await upsetChats(accountIds, now)));
+  if (f.view === "ai") includes.push(toMap(await aiHandledChats(accountIds, now)));
   const priorities = priorityFilterOf(f.view);
   if (priorities || f.tag) {
     const rows = await prisma.conversationLabel.findMany({
@@ -515,6 +568,7 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
     f,
     opts.viewerId,
     opts.lifecycle,
+    opts.now,
   );
   const state = whatsAppState(f, opts.lifecycle);
   // Inbox V3: also the chats whose message TEXT matches, over the whole history, one bounded page (whatsAppMessageSearch.ts).
@@ -636,12 +690,14 @@ export interface InboxResult {
 }
 
 export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilterSet; viewerId: string; now?: Date }): Promise<InboxResult> {
-  const filters = opts.filters ?? EMPTY_INBOX_FILTERS;
+  const asked = opts.filters ?? EMPTY_INBOX_FILTERS;
   const now = opts.now ?? new Date();
   const scopedType = channelBySlug(opts.scope);
   const types: ChannelType[] = opts.scope === "all" ? ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] : scopedType ? [scopedType] : [];
   const includeWhatsApp = opts.scope === "all" || opts.scope === "whatsapp";
   const lifecycle = !(await activeDisabledFeatures()).has("UNIFIED_INBOX_V3");
+  // "AI is handling" is an Inbox V3 view; a saved view holding it opens as the plain list while the feature is off.
+  const filters = !lifecycle && asked.view === "ai" ? { ...asked, view: "all" as const } : asked;
 
   const [rows, chCounts, wa] = await Promise.all([
     loadChannelRows({ types, filters, viewerId: opts.viewerId, now, lifecycle }),
@@ -669,13 +725,15 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
 }
 
 /** The choices for the inbox's Team / person / account filters. */
-export async function inboxFilterOptions(): Promise<{ teams: { id: string; name: string }[]; accounts: { key: string; label: string }[] }> {
+export async function inboxFilterOptions(): Promise<{ teams: { id: string; name: string }[]; accounts: { key: string; label: string }[]; moodDetection: boolean }> {
   const [teams, waAccounts, connections] = await Promise.all([
     prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
     getChatAccounts(),
     prisma.channelConnection.findMany({ select: { id: true, name: true, type: true }, orderBy: { name: "asc" } }),
   ]);
+  const moodDetection = Boolean((await prisma.moodDetectionSettings.findFirst({ select: { enabled: true } }))?.enabled);
   return {
+    moodDetection,
     teams,
     accounts: [
       ...waAccounts.map((a) => ({ key: `wa:${a.id}`, label: `${LEGACY_WHATSAPP_LABEL} · ${a.label}` })),

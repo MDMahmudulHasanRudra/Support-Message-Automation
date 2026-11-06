@@ -4,7 +4,7 @@ import { EMPTY_INBOX_FILTERS, inboxFilterKey, isDefaultInboxFilters, parseInboxF
 describe("parseInboxFilterSet", () => {
   it("keeps valid fields and drops everything else", () => {
     const f = parseInboxFilterSet({ view: "urgent", within: "7d", search: "  router  ", tag: "Billing", teamId: "team_1", assigneeId: "u1", account: "wa:acc1", where: "1=1" });
-    expect(f).toEqual({ status: null, sort: null, lastSender: null, view: "urgent", within: "7d", search: "router", tag: "billing", teamId: "team_1", assigneeId: "u1", account: "wa:acc1" });
+    expect(f).toEqual({ status: null, sort: null, lastSender: null, mood: null, view: "urgent", within: "7d", search: "router", tag: "billing", teamId: "team_1", assigneeId: "u1", account: "wa:acc1" });
     expect("where" in f).toBe(false);
   });
 

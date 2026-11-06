@@ -20,10 +20,10 @@ commerce, multi-project and white label, and send safety (rate limits, no automa
 | 5 | Contact Follow-Up workspace | `FOLLOW_UPS`: Mine / Team / Overdue / Due today / Upcoming / Done, linked to conversations and clients; never messages the customer | **Built** (`FOLLOW_UPS.md`) |
 | 6 | AI looks up the customer's own data and acts | AI grounded on the customer's own client record (dues, expiry, plan) — only for the verified sender number, exactly like commerce grounding | **Built for agent Copilot drafts only** (`AI_CLIENT_ANSWERS.md`). **Automatic answers need an owner decision**: automatic WhatsApp AI runs only in groups, and account details are never given in a group |
 | 7 | Agent mobile app + push notifications | Installable web app (PWA) with web push for assignments, waits and mentions | Planned |
-| 8 | Ownership folders (Unassigned, AI-handled, Bot) | "AI is handling" view beside Mine / Unassigned | Planned |
+| 8 | Ownership folders (Unassigned, AI-handled, Bot) | "AI is handling" view beside Mine / Unassigned | **Built** (`INBOX_WORKSPACE.md` § Views and files) |
 | 9 | Visual bot flow builder | Numbered-menu flows (works on linked-device WhatsApp), buttons on widget / Messenger / Telegram | Planned |
-| 10 | Sentiment filter | Mood (already detected) as an inbox filter | Planned |
-| 11 | Right panel tabs incl. Files | Files tab: every attachment in the conversation | Planned |
+| 10 | Sentiment filter | Mood (already detected) as an inbox filter | **Built**, WhatsApp groups only, where mood is read (`INBOX_WORKSPACE.md` § Views and files) |
+| 11 | Right panel tabs incl. Files | Files tab: every attachment in the conversation | **Built** (`INBOX_WORKSPACE.md` § Views and files) |
 | 12 | Payment links in chat (bKash, SSLCOMMERZ) | Invoice → payment link → payment recorded → AI can answer "what do I owe" | **Blocked: merchant credentials** (bKash sandbox app key/secret, SSLCOMMERZ store id/password) |
 | 13 | Official WhatsApp Cloud API + campaigns | Second WhatsApp mode beside linked devices, opt-in template campaigns | **Blocked: Meta Business verification and app review** |
 | 14 | Email as an inbound channel | Email-to-conversation | **Blocked: a mailbox (IMAP or inbound webhook provider) to connect** |

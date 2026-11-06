@@ -1,5 +1,6 @@
 "use server";
 
+import { loadConversationFiles, type ConversationFile } from "@/server/conversationFiles";
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
@@ -62,6 +63,20 @@ async function forRead(refInput: unknown): Promise<{ session: Session; ref: Conv
   const access = await resolveWorkspaceAccess(granted.session, ref);
   if (!access?.copilot) return { error: "Nothing to show." };
   return { session: granted.session, ref };
+}
+
+/**
+ * Every attachment of a conversation, for the Files tab (Inbox V3). A read: a viewer who may read the conversation
+ * may see what is in it, and each link goes to the route the thread already uses. Refuses as a sentence, never a redirect.
+ */
+export async function readConversationFiles(refInput: unknown): Promise<{ files: ConversationFile[] } | Fail> {
+  const ref = parseConversationRef(refInput);
+  if (!ref) return { error: "That conversation could not be found." };
+  const granted = await checkPermission("messages.view");
+  if ("denied" in granted) return { error: granted.denied };
+  const access = await resolveWorkspaceAccess(granted.session, ref);
+  if (!access?.lifecycle) return { error: "That conversation could not be found." };
+  return { files: await loadConversationFiles(ref) };
 }
 
 // ── Notes ────────────────────────────────────────────────────────────────────────────────────────

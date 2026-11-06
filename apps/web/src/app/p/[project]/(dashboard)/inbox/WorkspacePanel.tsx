@@ -26,7 +26,9 @@ import {
   Users,
   Wand2,
   X,
+  Paperclip,
 } from "lucide-react";
+import { FilesTab } from "./FilesTab";
 import {
   CONVERSATION_PRIORITIES,
   CONVERSATION_PRIORITY_LABEL,
@@ -56,7 +58,7 @@ import { ConversationStatusSection } from "./ConversationStatusSection";
 import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
 import { FollowUpsSection } from "./FollowUpsSection";
 
-type TabKey = "details" | "notes" | "copilot" | "followups";
+type TabKey = "details" | "notes" | "copilot" | "followups" | "files";
 
 const PRIORITY_DOT: Record<ConversationPriorityValue, string> = {
   NONE: "bg-[var(--color-border-strong)]",
@@ -134,6 +136,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
     data.access.collaboration ? { key: "notes" as const, label: "Notes", icon: StickyNote, count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "Copilot", icon: Sparkles } : null,
     data.access.followUps ? { key: "followups" as const, label: "Follow-ups", icon: AlarmClock, count: data.followUps?.length ?? 0 } : null,
+    data.access.lifecycle ? { key: "files" as const, label: "Files", icon: Paperclip } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
 
   // Keyboard: Alt+1/2/3/4 switch tabs (opening the panel or sheet), Escape closes the sheet.
@@ -213,6 +216,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
         {tab === "followups" && data.access.followUps ? <FollowUpsSection data={data} /> : null}
+        {tab === "files" && data.access.lifecycle ? <FilesTab conversation={data.ref} /> : null}
       </div>
     </div>
   );

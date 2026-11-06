@@ -71,6 +71,8 @@ export interface InboxOptions {
   collaboration: boolean;
   /** Inbox V3 status, snooze and WhatsApp assignment (UNIFIED_INBOX_V3) are on for this project. */
   lifecycle: boolean;
+  /** Mood Detection is switched on: offers the "upset customer" filter. */
+  moodDetection: boolean;
   /** Automatic routing (AUTO_ROUTING with UNIFIED_INBOX_V3) is on: offers "Distribute evenly". */
   autoRouting: boolean;
   /** May share views with the team (channels.manage). */
@@ -86,7 +88,7 @@ const SCOPES: Array<{ scope: InboxScope; channel: InboxChannel | null; label: st
   { scope: "website", channel: "WEBCHAT", label: "Website" },
 ];
 
-const VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<InboxCounts, "byChannel">; collaboration?: boolean }> = [
+const VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<InboxCounts, "byChannel">; collaboration?: boolean; lifecycle?: boolean }> = [
   { view: "all", label: "Open", count: "all" },
   { view: "mine", label: "My inbox", count: "mine" },
   { view: "unassigned", label: "Unassigned" },
@@ -94,6 +96,7 @@ const VIEWS: Array<{ view: InboxViewKey; label: string; count?: keyof Omit<Inbox
   { view: "needs-reply", label: "Needs reply", count: "needsReply" },
   { view: "high", label: "High priority", collaboration: true },
   { view: "urgent", label: "Urgent", collaboration: true },
+  { view: "ai", label: "AI is handling", lifecycle: true },
   { view: "closed", label: "Closed", count: "closed" },
 ];
 
@@ -259,7 +262,7 @@ export function InboxWorkspace({
     setActiveViewId(null);
   };
   const extraFilters = [filters.teamId, filters.assigneeId, filters.tag, filters.account].filter(Boolean).length;
-  const visibleViews = VIEWS.filter((v) => !v.collaboration || options.collaboration);
+  const visibleViews = VIEWS.filter((v) => (!v.collaboration || options.collaboration) && (!v.lifecycle || options.lifecycle));
 
   const runBulk = (op: BulkOp) => {
     const refs = (shown?.items ?? []).filter((i) => selected.has(i.key)).map((i) => i.ref);
@@ -459,6 +462,14 @@ export function InboxWorkspace({
                     ]}
                   />
                 </>
+              ) : null}
+              {options.moodDetection ? (
+                <FilterSelect
+                  label="Mood"
+                  value={filters.mood}
+                  onChange={(v) => set({ mood: (v as InboxFilterSet["mood"]) ?? null })}
+                  options={[{ value: "upset", label: "Upset customer (last day, WhatsApp groups)" }]}
+                />
               ) : null}
               {options.lifecycle ? (
                 <FilterSelect

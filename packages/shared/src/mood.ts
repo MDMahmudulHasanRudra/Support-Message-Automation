@@ -50,6 +50,9 @@ export const MOOD_EMOJI: Record<Mood, string> = {
  * Urgent sits with angry — it needs a person just as soon, for a different reason. A new mood is one
  * entry here and one in MOODS; nothing else in the engine assumes the list is closed.
  */
+/** From this level a customer reads as upset to a person triaging the inbox: frustrated or worse. */
+export const UPSET_MOOD_LEVEL = 2;
+
 export const MOOD_LEVEL: Record<Mood, 0 | 1 | 2 | 3 | 4> = {
   NEUTRAL: 0,
   POSITIVE: 0,

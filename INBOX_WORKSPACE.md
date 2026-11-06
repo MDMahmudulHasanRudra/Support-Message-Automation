@@ -165,3 +165,20 @@ written in time order, which is kinder. Not yet measured on the production volum
 - **Last message from** the customer or us. WhatsApp "customer" is the chat inbox's own unanswered state, looked up
   over every conversation; "us" is everything answered (a queued reply counts, as everywhere else).
 - With the feature off, sort and last-sender are ignored and rows carry no wait.
+
+## Views and files
+
+Three read-only additions to All Conversations and the side panel. They add no table and no permission key. Tested on an isolated
+database only; not deployed.
+
+- **"AI is handling"** (a view, needs `UNIFIED_INBOX_V3`). WhatsApp: in the last 24 hours the AI answered a customer's message, its
+  reply did not fail, and nothing has been said in that chat since except that reply's own echo. Channels: the newest message is
+  the AI's own reply (key `ai:<message id>`, so a satisfaction survey never counts) and it did not fail. A person replying, or
+  the customer writing again, ends it. With the feature off, a saved view holding it opens as the plain list.
+- **Upset customer** (a filter, offered while Mood Detection is switched on). A customer's newest reading in the last 24 hours is
+  frustrated or worse (`UPSET_MOOD_LEVEL`). Per customer, so one calm customer does not hide an angry one in the same group. A calm
+  message writes no reading, so a reading stands until it is a day old. Mood is read in WhatsApp groups only, so no channel
+  conversation or personal chat can match.
+- **Files** (a side panel tab, needs `UNIFIED_INBOX_V3`). Every attachment of the conversation, newest first, at most 200, loaded when
+  the tab opens. Each link goes to the route the thread already uses, so it opens nothing new. Storage keys never reach the browser.
+  A message deleted for everyone is not listed. A provider link counts only if it is http(s).

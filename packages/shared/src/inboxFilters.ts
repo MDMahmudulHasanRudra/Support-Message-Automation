@@ -4,7 +4,7 @@
  * A filter only NARROWS what the viewer can already read — it is never an access rule.
  */
 
-export const INBOX_VIEW_KEYS = ["all", "mine", "unassigned", "unread", "needs-reply", "high", "urgent", "closed"] as const;
+export const INBOX_VIEW_KEYS = ["all", "mine", "unassigned", "unread", "needs-reply", "high", "urgent", "closed", "ai"] as const;
 export type InboxViewKey = (typeof INBOX_VIEW_KEYS)[number];
 
 /** List order. Null = newest activity first (the default). "waiting" = conversations awaiting a reply first, longest wait first. */
@@ -14,6 +14,15 @@ export type InboxSortKey = (typeof INBOX_SORT_KEYS)[number];
 /** Who sent the newest message: the customer (the ball is in our court) or us (a person, the business number, AI). */
 export const INBOX_LAST_SENDER_KEYS = ["customer", "team"] as const;
 export type InboxLastSenderKey = (typeof INBOX_LAST_SENDER_KEYS)[number];
+
+/**
+ * "upset": a customer's newest mood reading in the last day was frustrated or worse (Mood Detection, WhatsApp groups only).
+ * A later calm message writes no reading, so a reading stands until it is a day old.
+ */
+export const INBOX_MOOD_KEYS = ["upset"] as const;
+export type InboxMoodKey = (typeof INBOX_MOOD_KEYS)[number];
+/** How far back the "upset" filter and the "AI is handling" view look. */
+export const INBOX_RECENT_HOURS = 24;
 
 export const INBOX_WITHIN_KEYS = ["24h", "7d", "30d"] as const;
 export type InboxWithinKey = (typeof INBOX_WITHIN_KEYS)[number];
@@ -38,11 +47,13 @@ export interface InboxFilterSet {
   sort: Exclude<InboxSortKey, "newest"> | null;
   /** Inbox V3 triage: who spoke last; null = anyone. Ignored while the feature is off. */
   lastSender: InboxLastSenderKey | null;
+  /** Only conversations with an upset customer; null = anyone. Narrows to WhatsApp groups, the only place mood is read. */
+  mood: InboxMoodKey | null;
 }
 
 const LIFECYCLE_FILTERS = ["OPEN", "PENDING", "SNOOZED", "RESOLVED"] as const;
 
-export const EMPTY_INBOX_FILTERS: InboxFilterSet = { view: "all", within: null, search: "", tag: null, teamId: null, assigneeId: null, account: null, status: null, sort: null, lastSender: null };
+export const EMPTY_INBOX_FILTERS: InboxFilterSet = { view: "all", within: null, search: "", tag: null, teamId: null, assigneeId: null, account: null, status: null, sort: null, lastSender: null, mood: null };
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ACCOUNT = /^(wa|ch):[A-Za-z0-9_-]{1,64}$/;
@@ -68,17 +79,18 @@ export function parseInboxFilterSet(input: unknown): InboxFilterSet {
     // "newest" is the default order, stored as null so it never makes a list look filtered.
     sort: pick(v.sort, ["oldest", "waiting"] as const),
     lastSender: pick(v.lastSender, INBOX_LAST_SENDER_KEYS),
+    mood: pick(v.mood, INBOX_MOOD_KEYS),
   };
 }
 
 /** True when nothing but the default "open conversations" view is asked for. */
 export function isDefaultInboxFilters(f: InboxFilterSet): boolean {
-  return f.view === "all" && !f.within && !f.search && !f.tag && !f.teamId && !f.assigneeId && !f.account && !f.status && !f.sort && !f.lastSender;
+  return f.view === "all" && !f.within && !f.search && !f.tag && !f.teamId && !f.assigneeId && !f.account && !f.status && !f.sort && !f.lastSender && !f.mood;
 }
 
 /** A stable key for "which query does this result answer". */
 export function inboxFilterKey(f: InboxFilterSet): string {
-  return [f.view, f.within ?? "", f.search, f.tag ?? "", f.teamId ?? "", f.assigneeId ?? "", f.account ?? "", f.status ?? "", f.sort ?? "", f.lastSender ?? ""].join("|");
+  return [f.view, f.within ?? "", f.search, f.tag ?? "", f.teamId ?? "", f.assigneeId ?? "", f.account ?? "", f.status ?? "", f.sort ?? "", f.lastSender ?? "", f.mood ?? ""].join("|");
 }
 
 /** The priorities a view asks for, or null when it does not filter by priority. */
