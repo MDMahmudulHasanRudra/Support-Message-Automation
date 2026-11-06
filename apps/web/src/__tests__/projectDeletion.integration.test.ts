@@ -112,6 +112,22 @@ describe("deleting one workspace", () => {
     const siblingBefore = await projectRowCounts(siblingId);
     expect(Object.keys(await projectRowCounts(targetId)).length).toBeGreaterThan(10);
 
+    // Tables with a rule of their own about deletes and rewrites: an answered survey (its answer can never change),
+    // a follow-up's append-only history, and routing and survey settings. All of it goes with the workspace.
+    const chatId = "8801700000001@c.us";
+    const account = await rawPrisma.whatsAppAccount.create({ data: { projectId: targetId, label: `Delete ${tag}`, status: "CONNECTED" } });
+    await rawPrisma.whatsAppConversationState.create({ data: { projectId: targetId, accountId: account.id, chatId, conversationType: "PERSONAL" } });
+    const resolved = await rawPrisma.conversationEvent.create({ data: { projectId: targetId, accountId: account.id, chatId, kind: "RESOLVE", toValue: "RESOLVED" } });
+    const now = new Date();
+    await rawPrisma.csatSurvey.create({
+      data: { projectId: targetId, channel: "WHATSAPP_PERSONAL", accountId: account.id, chatId, resolutionEventId: resolved.id, customerKey: `wa:${chatId}`, resolvedAt: now, status: "SENT", sentAt: now, answeredAt: now, answerClosedAt: now, rating: 5, answerSource: "MESSAGE" },
+    });
+    await rawPrisma.csatSettings.create({ data: { projectId: targetId } });
+    await rawPrisma.routingSettings.create({ data: { projectId: targetId } });
+    const followUp = await rawPrisma.followUp.create({ data: { projectId: targetId, title: "Call back", dueAt: now, accountId: account.id, chatId } });
+    await rawPrisma.followUpEvent.create({ data: { projectId: targetId, followUpId: followUp.id, kind: "CREATED" } });
+    expect(await projectRowCounts(targetId)).toMatchObject({ CsatSurvey: 1, CsatSettings: 1, RoutingSettings: 1, FollowUp: 1, FollowUpEvent: 1 });
+
     const result = await deleteProjectData(targetId);
     expect(result).toMatchObject({ name: `Target ${tag}`, customerId: owner.customerId, mediaRemoved: true });
 
