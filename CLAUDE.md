@@ -2930,6 +2930,7 @@ Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker 
 - Writes check the conversation module reply key (`messages.reply` / `conversations.reply`) through `resolveWorkspaceAccess`, plus the feature; assignment re-checks the person (`mentionablePeople`) and the Team (scoped client; the database refuses another project Team).
 - **Bulk** (`bulkUpdateConversations`, op `lifecycle`) and the panel share `changeConversationStatus` / `assignWhatsAppConversation`; with V3 off WhatsApp rows keep the old skip. Priority/tag changes write PRIORITY / TAGS events (`recordLabelChange`, V3 on only).
 - **Presence** (`ConversationPresence`, `presenceHeartbeat`): one heartbeat hook per open conversation (`useConversationPresence`, visible tab only), viewing = 30 s, typing = 8 s, never yourself, never message text, pruned after a day by the next heartbeat. Polled: a refusal is an empty list.
+- **Message search** (`server/whatsAppMessageSearch.ts`, `INBOX_WORKSPACE.md` § Message search): full history through the trigram index `Message_body_search_idx` (build it CONCURRENTLY by hand before deploying its migration). Two phases: recent rows per account first, the index only for older history; only the window EVERY account was read through counts from phase 1. One core, 3 s timeout, ≥3 characters, 100 a page / 1,000 in all, snippets only, never revoked messages. With V3 off the search is names only.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

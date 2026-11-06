@@ -294,6 +294,19 @@ export function ConversationV2({
     [merged, hasMoreOlder, loadOlder],
   );
 
+  // Opened from an All Conversations message-search hit (`?msg=<id>`): jump to it once, through the same bounded path.
+  const jumpedFromUrl = useRef(false);
+  useEffect(() => {
+    if (jumpedFromUrl.current) return;
+    const id = new URLSearchParams(window.location.search).get("msg");
+    if (!id || !/^[\w-]{1,64}$/.test(id)) return;
+    const timer = setTimeout(() => {
+      jumpedFromUrl.current = true;
+      void jumpTo(id);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [jumpTo]);
+
   // ---- Search ----------------------------------------------------------------------------------
   const [searchOpen, setSearchOpen] = useState(false);
   const [term, setTerm] = useState("");

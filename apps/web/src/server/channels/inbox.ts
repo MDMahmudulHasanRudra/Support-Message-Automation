@@ -1,3 +1,4 @@
+import { matchKey, searchWhatsAppMessages, type MessageSearchResult } from "@/server/whatsAppMessageSearch";
 import { channelStatusOf, channelStorageOf, type ConversationStatus } from "@support-automation/shared";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { Prisma } from "@prisma/client";
@@ -86,6 +87,32 @@ export interface InboxItem {
   lastSendFailed: boolean;
   /** Why replies cannot go out from here right now, if they cannot (a disconnected channel…). */
   connectionProblem: string | null;
+  /** Inbox V3 message search: the newest message in this conversation whose text matched the search. */
+  messageMatch?: { snippet: string; at: string; messageId: string };
+}
+
+/** Inbox V3 message search, as the list reports it (whatsAppMessageSearch.ts). */
+export interface MessageSearchInfo {
+  /** Cursor for "More message matches", or null when there are none. */
+  nextCursor: string | null;
+  /** The search ran out of time and returned nothing; narrow it. */
+  timedOut: boolean;
+  /** The term is too short to search message text (name search still ran). */
+  tooShort: boolean;
+  /** Conversations on this page whose message text matched. */
+  matched: number;
+  /** As many matches were shown as paging allows; narrow the search to go further. */
+  limitReached: boolean;
+}
+
+const searchInfo = (r: MessageSearchResult): MessageSearchInfo => ({ nextCursor: r.nextCursor, timedOut: r.timedOut, tooShort: r.tooShort, matched: r.matches.size, limitReached: r.limitReached });
+
+function withMatches(items: InboxItem[], search: MessageSearchResult | null): InboxItem[] {
+  if (!search?.matches.size) return items;
+  return items.map((i) => {
+    const m = i.ref.kind === "whatsapp" ? search.matches.get(matchKey(i.ref.accountId, i.ref.chatId)) : undefined;
+    return m ? { ...i, messageMatch: { snippet: m.snippet, at: m.at.toISOString(), messageId: m.messageId } } : i;
+  });
 }
 
 export interface InboxCounts {
@@ -434,6 +461,8 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
     opts.lifecycle,
   );
   const state = f.view === "unread" ? ("waiting" as const) : f.view === "needs-reply" ? ("unanswered" as const) : undefined;
+  // Inbox V3: also the chats whose message TEXT matches, over the whole history, one bounded page (whatsAppMessageSearch.ts).
+  const bodySearch = opts.lifecycle && f.search ? await searchWhatsAppMessages(accounts.map((a) => a.id), f.search) : null;
   const plain = restriction.include === null && restriction.exclude.size === 0 && !state && !f.search;
 
   const list: ConversationSummary[] = [];
@@ -454,7 +483,11 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
         : exclude?.size
           ? { kind: "chats" as const, chatIds: [...exclude], exclude: true, state }
           : { kind: "chats" as const, chatIds: null, state };
-    list.push(...(await getChatConversations(account.id, { search: f.search || undefined, view })));
+    const byName = await getChatConversations(account.id, { search: f.search || undefined, view });
+    list.push(...byName);
+    const seen = new Set(byName.map((c) => c.chatId));
+    const textChats = textMatchChats(bodySearch, account.id, restriction, seen);
+    if (textChats.length) list.push(...(await getChatConversations(account.id, { view: { kind: "chats" as const, chatIds: textChats, state } })));
   }
   const within = f.within ? opts.now.getTime() - WITHIN_MS[f.within] : null;
   const items = await decorateWhatsApp(
@@ -462,7 +495,47 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
     opts.viewerId,
     opts.lifecycle,
   );
-  return { items, counts: sumWhatsApp(counts, mine.size) };
+  return { items: withMatches(items, bodySearch), counts: sumWhatsApp(counts, mine.size), messageSearch: bodySearch ? searchInfo(bodySearch) : null };
+}
+
+/** The text-matched chats of one account that the list's other filters allow, minus those already listed. */
+function textMatchChats(search: MessageSearchResult | null, accountId: string, restriction: Awaited<ReturnType<typeof whatsAppChatRestriction>>, seen: Set<string>): string[] {
+  if (!search) return [];
+  const include = restriction.include?.get(accountId);
+  const exclude = restriction.exclude.get(accountId);
+  const out: string[] = [];
+  for (const m of search.matches.values()) {
+    if (m.accountId !== accountId || seen.has(m.chatId) || exclude?.has(m.chatId)) continue;
+    if (restriction.include !== null && !include?.has(m.chatId)) continue;
+    out.push(m.chatId);
+  }
+  return out;
+}
+
+/**
+ * Inbox V3: the next page of WhatsApp conversations whose message text matches (the list's "More message
+ * matches"). The same filters and restriction as the list; only text matches, never name matches or channel rows,
+ * which the first page already returned. Empty with the feature off.
+ */
+export async function loadMoreMessageMatches(opts: { scope: InboxScope; filters: InboxFilterSet; viewerId: string; cursor: string; seen: string[]; now?: Date }): Promise<{ items: InboxItem[]; messageSearch: MessageSearchInfo | null }> {
+  const f = opts.filters;
+  const now = opts.now ?? new Date();
+  const lifecycle = !(await activeDisabledFeatures()).has("UNIFIED_INBOX_V3");
+  if (!lifecycle || !f.search || (opts.scope !== "all" && opts.scope !== "whatsapp") || f.account?.startsWith("ch:") || (f.view === "closed" && !lifecycle)) return { items: [], messageSearch: null };
+  const all = await getChatAccounts();
+  const accounts = f.account ? all.filter((a) => `wa:${a.id}` === f.account) : all;
+  const search = await searchWhatsAppMessages(accounts.map((a) => a.id), f.search, { cursor: opts.cursor, seen: opts.seen });
+  const restriction = await whatsAppChatRestriction(accounts.map((a) => a.id), f, opts.viewerId, lifecycle);
+  const state = f.view === "unread" ? ("waiting" as const) : f.view === "needs-reply" ? ("unanswered" as const) : undefined;
+  const list: ConversationSummary[] = [];
+  for (const account of accounts) {
+    const chats = textMatchChats(search, account.id, restriction, new Set());
+    if (chats.length) list.push(...(await getChatConversations(account.id, { view: { kind: "chats" as const, chatIds: chats, state } })));
+  }
+  const within = f.within ? now.getTime() - WITHIN_MS[f.within] : null;
+  const items = await decorateWhatsApp(list.filter((c) => within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)), opts.viewerId, lifecycle);
+  const ordered = withMatches(items, search).sort((a, b) => (b.messageMatch?.at ?? "").localeCompare(a.messageMatch?.at ?? "") || a.key.localeCompare(b.key));
+  return { items: ordered, messageSearch: searchInfo(search) };
 }
 
 function sumWhatsApp(counts: Array<{ total: number; waiting: number; seenUnanswered: number }>, mine: number) {
@@ -484,6 +557,8 @@ export interface InboxResult {
   counts: InboxCounts;
   /** More matched than the list shows; search narrows it. */
   truncated: boolean;
+  /** Inbox V3: the WhatsApp message-text search that ran with this search term, and its limits. Null otherwise. */
+  messageSearch: MessageSearchInfo | null;
 }
 
 export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilterSet; viewerId: string; now?: Date }): Promise<InboxResult> {
@@ -513,7 +588,12 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
     closed: chCounts.closed,
     byChannel,
   };
-  return { items: merged.slice(0, INBOX_LIMIT), counts, truncated: merged.length > INBOX_LIMIT || rows.length >= INBOX_LIMIT };
+  return {
+    items: merged.slice(0, INBOX_LIMIT),
+    counts,
+    truncated: merged.length > INBOX_LIMIT || rows.length >= INBOX_LIMIT,
+    messageSearch: wa && "messageSearch" in wa ? (wa.messageSearch ?? null) : null,
+  };
 }
 
 /** The choices for the inbox's Team / person / account filters. */

@@ -104,3 +104,49 @@ Migration `20261029110000_inbox_views_mentions` (InboxSavedView, InboxMention, C
 - The side panel is resizable on desktop (drag or arrow keys on its edge, 280–480 px, remembered per browser).
   Alt+1/2/3 open Details / Notes / Copilot (the sheet on smaller screens); Escape closes the sheet, which takes
   focus when it opens.
+
+## Message search (Inbox V3, V3-06 — migration `20261106130000_message_body_search`)
+
+With `UNIFIED_INBOX_V3` on, the All Conversations search also finds WhatsApp conversations by what was **said**,
+across the whole stored history, not only by name. Off, the search is names only, exactly as before.
+
+- **Index.** One trigram GIN index, `"Message_body_search_idx"` on `"Message"."body"` (`pg_trgm`, a trusted
+  extension in the official image). Bengali words survive trigram extraction under the database's `en_US.utf8`
+  ctype, so one index serves Bengali, Banglish and English. Prisma cannot express it; the migration is its only
+  declaration. **Build it by hand with `CREATE INDEX CONCURRENTLY` before `migrate deploy`** — the steps and the
+  validity check are in the migration's deploy note.
+- **Two phases** (`server/whatsAppMessageSearch.ts`). The cost is grouping matches by conversation, not finding
+  them: a word in 4% of messages touches nearly every table page, whatever the index. Phase 1 walks each
+  account's newest messages (existing `("accountId", "timestampWa")` index, 12,000 rows split across accounts) and
+  answers any common term on its own — walking back in time, the first conversations met ARE those with the
+  newest matches. Phase 2 uses the trigram index only for history older than everything phase 1 read, which is
+  where rare terms are found. Only the window every account was read through counts from phase 1; a quiet
+  account's deeper matches wait for phase 2, so they never outrank a busy account's newer ones.
+- **Bounds.** 3 characters minimum (shorter has no trigram; the UI says so). 100 conversations a page, 1,000
+  across pages, then "narrow it". One core per search: no parallel workers (the database container has the
+  default 64 MB `/dev/shm`, which parallel workers need), `work_mem` 32 MB for that transaction only, and a 3 s
+  statement timeout — out of time is reported, and the name search still answers.
+- **Paging.** "More message matches": the cursor is the last row's match time, and the browser sends back the
+  conversations it holds; the next page reads at or before that time without them, so ties on one timestamp are
+  neither repeated nor skipped.
+- **What leaves.** Chat ids and a ~120-character snippet around the match, shown as plain text with the term
+  marked. Messages deleted for everyone are not searched. The accounts searched are exactly those the list shows;
+  every query names `"projectId"` (phase 2 twice).
+- **Jump.** A matched row opens WhatsApp Chat at `?msg=<id>`; Chat v2 jumps there through its existing bounded
+  `jumpTo` (v1 ignores the parameter).
+
+Measured on 3.6M generated messages (3M in one project over 3 accounts and ~2,000 chats, 300k in each of two
+small projects; twelve months; mixed Bengali / Banglish / English), the test container on the dev machine:
+
+| Case | No index | Trigram index alone | Two phases (shipped) |
+|---|---|---|---|
+| Rare term (25 rows) | 1.2–1.4 s, full scan | ~1 ms | 30–75 ms |
+| Common term, big project (3–11% of rows) | 1.3–1.6 s | 0.7–1.2 s | 32–39 ms |
+| Common term, small project | 1.5–1.7 s | ~230 ms | 135–225 ms |
+| 25,000 matches in 20 old chats | — | — | ~130 ms |
+
+Index: 240 MB (about a quarter of the 922 MB table); plain build 31 s, `CONCURRENTLY` 58–68 s with inserts
+continuing (worst insert latency during it 43 ms); about 0.04 ms more per stored message. A project-led
+`("projectId", body)` index (btree_gin) was also measured and rejected: slower on common terms, twice the build.
+The generated data is not time-clustered on disk, which is the worst case for phase 1; production rows are
+written in time order, which is kinder. Not yet measured on the production volume itself.

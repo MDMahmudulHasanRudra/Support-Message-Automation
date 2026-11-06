@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { Button, Dialog, useToast } from "@/components/ui";
-import { listInboxAction } from "@/server/actions/channelInbox";
+import { listInboxAction, moreMessageMatchesAction } from "@/server/actions/channelInbox";
 import {
   bulkUpdateConversations,
   deleteInboxView,
@@ -34,7 +34,7 @@ import {
   type InboxMentionItem,
   type SavedInboxView,
 } from "@/server/actions/inbox";
-import type { InboxCounts, InboxItem, InboxChannel } from "@/server/channels/inbox";
+import type { InboxCounts, InboxItem, InboxChannel, MessageSearchInfo } from "@/server/channels/inbox";
 import {
   CONVERSATION_PRIORITIES,
   CONVERSATION_PRIORITY_LABEL,
@@ -153,7 +153,9 @@ export function InboxWorkspace({
   const { showToast } = useToast();
   const threadOpen = /\/conversations\/[^/]+\/c\//.test(pathname);
   const [filters, setFilters] = useState<InboxFilterSet>(EMPTY_INBOX_FILTERS);
-  const [result, setResult] = useState<{ key: string; items: InboxItem[]; truncated: boolean } | null>(null);
+  const [result, setResult] = useState<{ key: string; items: InboxItem[]; truncated: boolean; messageSearch: MessageSearchInfo | null } | null>(null);
+  // Inbox V3 "More message matches": further pages of text matches for the query in `key`.
+  const [more, setMore] = useState<{ key: string; items: InboxItem[]; nextCursor: string | null; loading: boolean; limitReached?: boolean } | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [pending, startTransition] = useTransition();
   const [showFilters, setShowFilters] = useState(false);
@@ -206,7 +208,7 @@ export function InboxWorkspace({
       () =>
         startTransition(async () => {
           const answer = await listInboxAction({ scope, filters });
-          if (answer) setResult({ key, items: answer.items, truncated: answer.truncated });
+          if (answer) setResult({ key, items: answer.items, truncated: answer.truncated, messageSearch: answer.messageSearch });
         }),
       filters.search ? 300 : 0,
     );
@@ -224,7 +226,25 @@ export function InboxWorkspace({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const shown = filtered ? (result?.key === key ? result : null) : { items, truncated };
+  const answered = filtered ? (result?.key === key ? result : null) : { items, truncated, messageSearch: null };
+  const extra = more?.key === key ? more : null;
+  const shown = answered && extra?.items.length ? { ...answered, items: [...answered.items, ...extra.items.filter((i) => !answered.items.some((a) => a.key === i.key))] } : answered;
+  const messageSearch = answered?.messageSearch ?? null;
+  const nextCursor = extra ? extra.nextCursor : (messageSearch?.nextCursor ?? null);
+  const loadMoreMatches = async () => {
+    if (!nextCursor || extra?.loading) return;
+    const forKey = key;
+    setMore((m) => ({ key: forKey, items: m?.key === forKey ? m.items : [], nextCursor, loading: true }));
+    const held = [...(answered?.items ?? []), ...(extra?.items ?? [])];
+    const seen = held.flatMap((i) => (i.ref.kind === "whatsapp" ? [`${i.ref.accountId}|${i.ref.chatId}`] : []));
+    const page = await moreMessageMatchesAction({ scope, filters, cursor: nextCursor, seen });
+    setMore((m) => {
+      if (inboxFilterKey(filters) !== forKey) return m;
+      const kept = m?.key === forKey ? m.items : [];
+      return { key: forKey, items: [...kept, ...page.items.filter((i) => !kept.some((k) => k.key === i.key))], nextCursor: page.messageSearch?.nextCursor ?? null, loading: false, limitReached: page.messageSearch?.limitReached ?? false };
+    });
+    if (page.messageSearch?.timedOut) showToast({ tone: "danger", title: "Message search took too long. Add another word to narrow it." });
+  };
   const activeKey = useMemo(() => pathname.match(/\/c\/([^/?#]+)/)?.[1] ?? null, [pathname]);
   const set = (patch: Partial<InboxFilterSet>) => {
     setFilters((f) => ({ ...f, ...patch }));
@@ -496,6 +516,7 @@ export function InboxWorkspace({
                 <InboxRow
                   key={item.key}
                   item={item}
+                  term={filters.search}
                   compact={density === "compact"}
                   active={item.key === `ch:${activeKey}`}
                   selecting={selecting}
@@ -512,6 +533,7 @@ export function InboxWorkspace({
               ))}
             </ul>
           )}
+          {shown && messageSearch ? <MessageSearchNotice info={extra?.limitReached ? { ...messageSearch, limitReached: true } : messageSearch} more={nextCursor ? loadMoreMatches : null} loading={extra?.loading ?? false} /> : null}
           {shown?.truncated ? <p className="px-4 py-3 text-center text-[11px] text-[color:var(--color-subtle-foreground)]">Showing the 300 most recent matches. Narrow the filters or search to reach the rest.</p> : null}
         </div>
       </aside>
@@ -875,7 +897,7 @@ function MentionsPopover({ data, onClose, onRead }: { data: { unread: number; it
   );
 }
 
-function InboxRow({ item, active, compact, selecting, selected, onToggle }: { item: InboxItem; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
+function InboxRow({ item, term, active, compact, selecting, selected, onToggle }: { item: InboxItem; term: string; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
   const avatar = conversationAvatar(item.key, item.title);
   const external = item.channel === "WHATSAPP";
   const rowClass = `group/row relative flex w-full gap-3 border-b border-[var(--color-border)] px-3.5 ${compact ? "py-2" : "py-3"} text-left transition-[background-color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)] ${
@@ -924,7 +946,12 @@ function InboxRow({ item, active, compact, selecting, selected, onToggle }: { it
               Not sent ·
             </span>
           ) : null}
-          {item.preview ? (
+          {item.messageMatch ? (
+            <>
+              <Search className="mr-1 inline size-3 align-[-2px] text-[color:var(--color-subtle-foreground)]" aria-label="Matching message" />
+              <Highlighted text={item.messageMatch.snippet} term={term} />
+            </>
+          ) : item.preview ? (
             <>
               {item.lastMessageOutgoing ? <span className="text-[color:var(--color-subtle-foreground)]">You: </span> : null}
               {item.preview}
@@ -983,7 +1010,7 @@ function InboxRow({ item, active, compact, selecting, selected, onToggle }: { it
           {body}
         </button>
       ) : (
-        <Link href={item.href} aria-current={active ? "page" : undefined} title={external ? "Opens in WhatsApp Chat" : undefined} className={`${rowClass} active:translate-y-px`}>
+        <Link href={item.messageMatch ? `${item.href}${item.href.includes("?") ? "&" : "?"}msg=${encodeURIComponent(item.messageMatch.messageId)}` : item.href} aria-current={active ? "page" : undefined} title={external ? "Opens in WhatsApp Chat" : undefined} className={`${rowClass} active:translate-y-px`}>
           {body}
         </Link>
       )}
@@ -993,4 +1020,39 @@ function InboxRow({ item, active, compact, selecting, selected, onToggle }: { it
 
 function Chip({ children }: { children: React.ReactNode }) {
   return <span className="inline-flex items-center gap-0.5 rounded-[var(--radius-xs)] bg-[var(--color-neutral-bg)] px-1.5 py-px text-[10px] text-[color:var(--color-neutral-fg)]">{children}</span>;
+}
+
+/** The term marked inside a snippet. Plain text only: the snippet is never rendered as HTML. */
+function Highlighted({ text, term }: { text: string; term: string }) {
+  const t = term.trim();
+  const at = t ? text.toLocaleLowerCase().indexOf(t.toLocaleLowerCase()) : -1;
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="rounded-sm bg-[var(--color-warning-bg)] px-0.5 text-[color:var(--color-foreground)]">{text.slice(at, at + t.length)}</mark>
+      {text.slice(at + t.length)}
+    </>
+  );
+}
+
+/** What the WhatsApp message-text search covered, under the results. */
+function MessageSearchNotice({ info, more, loading }: { info: MessageSearchInfo; more: (() => void) | null; loading: boolean }) {
+  const line = info.tooShort
+    ? "Type 3 or more characters to search WhatsApp message text too. Names are searched already."
+    : info.timedOut
+      ? "Searching WhatsApp message text took too long and was stopped. Add another word to narrow it. Names are still searched."
+      : info.limitReached && !more
+        ? "That is as many message matches as one search shows. Add another word to narrow it."
+        : "Names, and WhatsApp message text across the whole history.";
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 py-3 text-center text-[11px] text-[color:var(--color-subtle-foreground)]" role="status">
+      <p className={info.timedOut ? "text-[color:var(--color-warning-fg)]" : undefined}>{line}</p>
+      {more ? (
+        <Button type="button" size="sm" variant="secondary" onClick={more} disabled={loading}>
+          {loading ? "Searching…" : "More message matches"}
+        </Button>
+      ) : null}
+    </div>
+  );
 }
