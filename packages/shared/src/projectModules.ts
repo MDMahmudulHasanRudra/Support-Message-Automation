@@ -635,6 +635,13 @@ export interface ModuleEntitlement {
   approvedFeatures: readonly string[];
 }
 
+/**
+ * The switch for both gates below. Off for now at the owner's request ("allow all, we lock it later"): every module can
+ * be switched on, with no platform approval and no plan limit. To lock again, set NEXT_PUBLIC_MODULE_LOCKS=on at
+ * build time. A hard dependency is still added automatically, because the module cannot work without it.
+ */
+export const MODULE_LOCKS_ENFORCED = typeof process !== "undefined" && process.env.NEXT_PUBLIC_MODULE_LOCKS === "on";
+
 /** The modules that need platform approval before a customer may switch them on. */
 export const APPROVAL_REQUIRED_MODULES: readonly string[] = PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key);
 
@@ -652,6 +659,7 @@ export const TEMPLATE_ENTITLEMENT: ModuleEntitlement = { restricted: false, allo
 export function moduleEntitled(entitlement: ModuleEntitlement, key: string): boolean {
   const def = MODULE_BY_KEY.get(key);
   if (!def) return false;
+  if (!MODULE_LOCKS_ENFORCED) return true;
   if (def.manualOnly) return entitlement.approvedFeatures.includes(key);
   if (!entitlement.restricted) return true;
   return entitlement.allowedFeatures.includes(key);

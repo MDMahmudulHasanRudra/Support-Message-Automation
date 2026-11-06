@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
   APPROVAL_REQUIRED_MODULES,
+  MODULE_LOCKS_ENFORCED,
   approvedModulesFor,
   modulesToWithdraw,
   moduleDefinition,
@@ -68,6 +69,7 @@ export class ModuleNotApprovedError extends Error {
  * order every module and approval change follows (lock → Project → ProjectFeature).
  */
 export async function assertAdditionsApproved(tx: Tx, owner: string | null, projectId: string, added: readonly string[]): Promise<void> {
+  if (!MODULE_LOCKS_ENFORCED) return;
   const needing = added.filter((k) => APPROVAL_REQUIRED_MODULES.includes(k));
   if (needing.length === 0) return;
   if (!owner) throw new ModuleNotApprovedError(needing);
@@ -84,6 +86,7 @@ const asBase = (value: string | null): ProjectBaseType | null => (value === "DEF
  * it — recorded as an ordinary module change. Returns what was switched off, per project.
  */
 export async function withdrawUnapprovedModules(tx: Tx, owner: string, actor: string, reason: string, onlyProjectId?: string | null): Promise<Array<{ projectId: string; name: string; removed: string[] }>> {
+  if (!MODULE_LOCKS_ENFORCED) return [];
   const founding = await tx.customer.findUnique({ where: { id: owner }, select: { isFounding: true } });
   const projects = await tx.project.findMany({
     where: {
