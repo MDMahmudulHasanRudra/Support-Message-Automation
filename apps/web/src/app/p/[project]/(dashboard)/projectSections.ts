@@ -206,6 +206,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/settings/mood-detection": { write: ["settings.edit"] },
   "/settings/inbox-status": { write: ["settings.edit"] },
   "/settings/csat": { write: ["settings.edit"] },
+  "/settings/auto-routing": { write: ["settings.edit"] },
   "/support-assignment/settings": { write: ["support_assignment.manage"] },
   "/team-management/shifts": { fullOnly: true, read: ["team_management.view"] },
   "/team-management/settings": { fullOnly: true, read: ["team_management.view"] },

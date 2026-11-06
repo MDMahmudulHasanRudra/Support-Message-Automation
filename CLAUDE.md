@@ -2945,6 +2945,15 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 
 Feature `FOLLOW_UPS`, **off by default**: an internal to-do list for call-backs, visits and promised replies. It **never sends anything to a customer**. Rules worth not undoing: reading needs `messages.view`; changing one needs the reply key of the conversation it is about; a linked conversation, client, person or Team must be this project's; every change is a conditional update with its `FollowUpEvent` (append-only) in the same transaction; buckets split at Dhaka midnight by plain instants (`followUpBucketRange`), with no SQL day arithmetic.
 
+### Automatic routing (`AUTO_ROUTING.md`, 7 Nov 2026)
+
+Feature `AUTO_ROUTING`, **off by default**, needs `UNIFIED_INBOX_V3` and its own settings on. One function, `routeConversation` (packages/db), serves the message hooks, the 60 s sweep and "Distribute evenly". Rules worth not undoing:
+- Never replaces an assignee. Nobody eligible leaves it unassigned and records why, by counts. Never assigns in a held project.
+- The per-project advisory lock covers the pointer, the counts, the pick, the write and the event. A test fails without it.
+- Permission is the existing resolver (`resolveRoleKeys`, `levelAllows`, page selection), never a second one. Leave always excludes; the roster applies only with "only on duty".
+- A group with an owner is never routed; groups are off unless switched on separately; one copy assigned means the other copy is not routed.
+- `enabledAt` keeps an old backlog from being handed out. An assignment is an `ASSIGNEE` event with `{ reason: "AUTO_ROUTING" }` in its context.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

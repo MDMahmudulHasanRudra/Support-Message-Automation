@@ -105,3 +105,4 @@ export * from "./backupHealth.js";
 export * from "./conversationLifecycle.js";
 export * from "./csat.js";
 export * from "./followUps.js";
+export * from "./autoRouting.js";

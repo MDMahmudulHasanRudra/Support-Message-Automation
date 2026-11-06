@@ -281,6 +281,16 @@ export const PROJECT_FEATURES = [
     workerEffect: "Stops asking satisfaction surveys and stops reading ratings from customer messages; surveys waiting to go out are skipped.",
   },
   {
+    key: "AUTO_ROUTING",
+    label: "Automatic conversation routing",
+    description:
+      "Gives each new customer conversation to one person automatically — round robin or least busy — from a chosen pool, respecting each person's permission, the roster, leave and a limit of open conversations (AUTO_ROUTING.md). Needs Inbox V3. Off = nobody is assigned automatically; assignments already made are kept.",
+    defaultEnabled: false,
+    routes: ["/settings/auto-routing"],
+    permissionKeys: [],
+    workerEffect: "Stops assigning new conversations; nothing already assigned changes.",
+  },
+  {
     key: "PRODUCT_CATALOG",
     label: "Product Catalog",
     description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",

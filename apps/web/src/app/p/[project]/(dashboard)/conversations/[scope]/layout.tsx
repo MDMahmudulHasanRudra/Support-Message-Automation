@@ -28,7 +28,7 @@ export default async function InboxLayout({ children, params }: { children: Reac
     activeDisabledFeatures(),
     hasPermission(session, "channels.manage"),
   ]);
-  const options = { ...filterOptions, people: people.map((p) => ({ id: p.id, name: p.name })), collaboration: !disabled.has("INBOX_COLLABORATION"), lifecycle: !disabled.has("UNIFIED_INBOX_V3"), canShare };
+  const options = { ...filterOptions, people: people.map((p) => ({ id: p.id, name: p.name })), collaboration: !disabled.has("INBOX_COLLABORATION"), lifecycle: !disabled.has("UNIFIED_INBOX_V3"), autoRouting: !disabled.has("UNIFIED_INBOX_V3") && !disabled.has("AUTO_ROUTING"), canShare };
 
   return (
     <div className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">

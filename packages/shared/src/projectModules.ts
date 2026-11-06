@@ -336,6 +336,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Choose the channels and the question under Settings → Satisfaction surveys"],
     documentation: "CSAT.md",
   },
+  AUTO_ROUTING: {
+    category: "Support",
+    benefits: ["New conversations reach one person without anyone sharing them out", "Only people on duty, with room, who can reply"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["UNIFIED_INBOX_V3"], why: "Routing assigns conversations through Inbox V3's assignment and status." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Assignments already made are kept. " + KEPT,
+    setupSteps: ["Settings → Automatic routing: choose the conversations, the Teams or people, and the method"],
+    documentation: "AUTO_ROUTING.md",
+  },
   PRODUCT_CATALOG: {
     category: "Commerce",
     benefits: ["One catalogue of products, variants and prices", "Stock that moves with every order, with its history"],
