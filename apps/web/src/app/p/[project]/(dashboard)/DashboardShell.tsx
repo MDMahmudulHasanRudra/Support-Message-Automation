@@ -14,6 +14,7 @@ import { CommandPalette } from "./CommandPalette";
 import { FloatingAiChat } from "./FloatingAiChat";
 import { useBranding } from "@/components/BrandingProvider";
 import { WhatsAppJobCenter } from "@/components/whatsappOperations/WhatsAppJobCenter";
+import { FollowUpBadge } from "@/components/followUps/FollowUpBadge";
 import {
   isSettingsPath,
   navGroupsFor,
@@ -314,6 +315,9 @@ export function DashboardShell({
               ⌘K
             </kbd>
           </button>
+
+          {/* My overdue + due-today follow-ups (FOLLOW_UPS.md); in-app only, renders nothing at zero. */}
+          {granted.has("messages.view") && !featuresOff.has("FOLLOW_UPS") ? <FollowUpBadge /> : null}
 
           <UserMenu username={username} onLogout={onLogout} />
         </header>

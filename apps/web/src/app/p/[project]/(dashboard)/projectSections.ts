@@ -99,6 +99,8 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-assignment/completed": { write: ["support_assignment.assign"], also: ["/support-assignment"] },
   "/support-assignment/report": { also: ["/api/support-assignment/report"] },
   "/support-escalation": { write: ["escalations.manage"] },
+  // Changing a follow-up needs the reply key of the conversation it is about (FOLLOW_UPS.md).
+  "/follow-ups": { write: ["messages.reply", "conversations.reply"] },
   // Clients
   "/clients": {
     write: [

@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import {
   Activity,
+  AlarmClock,
   BadgeCheck,
   BookUser,
   CalendarClock,
@@ -73,6 +74,10 @@ import { PrepareMessageButton } from "../messages/PrepareMessage";
 import { MessageHistory } from "../messages/MessageHistory";
 import { PrepareOfferButton } from "../subscriptions/renewals/RenewalParts";
 import { RenewalOffersPanel } from "../subscriptions/renewals/RenewalOffersPanel";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
+import { mentionablePeople } from "@/server/inboxWorkspace";
+import { loadClientFollowUps } from "@/server/followUps";
+import { ClientFollowUps } from "@/components/followUps/ClientFollowUps";
 import { ActivityItem, CardLink, currencyName, FactCard, flagOf, InfoRow, muted, panel, ProfileTabs, SectionCard, Timeline, type TabSpec } from "./ProfileParts";
 
 const STATUS_COLOR: Record<string, "green" | "gray" | "yellow" | "red"> = { ACTIVE: "green", INACTIVE: "gray", PENDING: "yellow", ARCHIVED: "gray", BLOCKED: "red" };
@@ -126,6 +131,18 @@ export default async function ClientDetailPage({ params, searchParams }: { param
       ? prisma.whatsAppGroup.findMany({ where: { isActive: true }, select: { whatsappGroupId: true, name: true }, distinct: ["whatsappGroupId"], orderBy: { name: "asc" }, take: 2000 })
       : Promise.resolve([]),
   ]);
+
+  // Follow-ups about this client (FOLLOW_UPS.md): shown with the feature on and the key that reads them.
+  const featuresOff = await activeDisabledFeatures();
+  const followUps =
+    !featuresOff.has("FOLLOW_UPS") && (await hasPermission(session, "messages.view"))
+      ? await Promise.all([
+          loadClientFollowUps(client.id),
+          !featuresOff.has("WHATSAPP_CHAT") && (await hasPermission(session, "messages.reply")) ? true : !featuresOff.has("OMNICHANNEL") && (await hasPermission(session, "conversations.reply")),
+          mentionablePeople(session),
+          prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+        ]).then(([items, canCreate, people, teams]) => ({ items, canCreate, people, teams }))
+      : null;
 
   // Amounts and dates are read only for someone holding the billing key; the rest of the page never sees them.
   const billing = canViewBilling && caps.settings.billing ? await getClientBilling(client.id) : null;
@@ -504,6 +521,19 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                 ) : null}
                 {client.businessType ? <InfoRow icon={Shapes} label="Business type">{client.businessType}</InfoRow> : null}
               </SectionCard>
+
+              {followUps ? (
+                <SectionCard icon={AlarmClock} title="Follow-ups">
+                  <ClientFollowUps
+                    clientId={client.id}
+                    items={followUps.items}
+                    canCreate={followUps.canCreate && !archived}
+                    people={followUps.people}
+                    teams={followUps.teams}
+                    viewerId={session.userId}
+                  />
+                </SectionCard>
+              ) : null}
 
               <SectionCard
                 icon={MessageCircle}

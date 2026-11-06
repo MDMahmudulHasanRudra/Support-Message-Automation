@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import {
+  AlarmClock,
   AtSign,
   BookOpenCheck,
   Bot,
@@ -53,8 +54,9 @@ import {
 import { setConversationAssignee, setConversationTeam } from "@/server/actions/inboxLifecycle";
 import { ConversationStatusSection } from "./ConversationStatusSection";
 import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
+import { FollowUpsSection } from "./FollowUpsSection";
 
-type TabKey = "details" | "notes" | "copilot";
+type TabKey = "details" | "notes" | "copilot" | "followups";
 
 const PRIORITY_DOT: Record<ConversationPriorityValue, string> = {
   NONE: "bg-[var(--color-border-strong)]",
@@ -120,7 +122,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const collapsed = useSyncExternalStore(subscribe, readCollapsed, () => false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const hasDetails = data.access.collaboration || data.access.lifecycle;
-  const firstTab: TabKey = hasDetails ? "details" : "copilot";
+  const firstTab: TabKey = hasDetails ? "details" : data.access.copilot ? "copilot" : "followups";
   const [tab, setTab] = useState<TabKey>(firstTab);
   const width = useSyncExternalStore(subscribe, readWidth, () => 340);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -131,9 +133,10 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
     hasDetails ? { key: "details" as const, label: "Details", icon: Tag } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", icon: StickyNote, count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "Copilot", icon: Sparkles } : null,
+    data.access.followUps ? { key: "followups" as const, label: "Follow-ups", icon: AlarmClock, count: data.followUps?.length ?? 0 } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
 
-  // Keyboard: Alt+1/2/3 switch tabs (opening the panel or sheet), Escape closes the sheet.
+  // Keyboard: Alt+1/2/3/4 switch tabs (opening the panel or sheet), Escape closes the sheet.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && sheetOpen) {
@@ -141,7 +144,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         return;
       }
       if (!e.altKey || e.ctrlKey || e.metaKey) return;
-      const index = ["1", "2", "3"].indexOf(e.key);
+      const index = ["1", "2", "3", "4"].indexOf(e.key);
       const target = tabs[index];
       if (!target) return;
       e.preventDefault();
@@ -209,6 +212,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         {tab === "details" && hasDetails ? <DetailsTab data={data} /> : null}
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
+        {tab === "followups" && data.access.followUps ? <FollowUpsSection data={data} /> : null}
       </div>
     </div>
   );
@@ -262,7 +266,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         className="fixed bottom-24 right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-[var(--color-surface)] px-3.5 py-2 text-[12.5px] font-medium text-[color:var(--color-foreground)] shadow-[var(--shadow-lg)] ring-1 ring-[var(--color-border)] xl:hidden"
       >
         <PanelRightOpen className="size-4" aria-hidden />
-        {data.access.copilot ? (data.access.collaboration ? "Notes & Copilot" : "Copilot") : data.access.collaboration ? "Notes" : "Details"}
+        {data.access.copilot ? (data.access.collaboration ? "Notes & Copilot" : "Copilot") : data.access.collaboration ? "Notes" : hasDetails ? "Details" : "Follow-ups"}
       </button>
       {sheetOpen ? (
         <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true" aria-label="Conversation workspace">

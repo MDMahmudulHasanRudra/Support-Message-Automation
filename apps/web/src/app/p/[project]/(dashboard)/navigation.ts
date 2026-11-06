@@ -1,6 +1,7 @@
 import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
+  AlarmClock,
   AlertCircle,
   AlertTriangle,
   BarChart3,
@@ -416,6 +417,8 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
+      // Call-backs, visits and promised replies (FOLLOW_UPS.md). A project feature that ships off.
+      { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
     ],
   },
   {
@@ -700,6 +703,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/sales", "sales.view"],
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
+  ["/follow-ups", "messages.view"],
   ["/support-activity", "support_activity.view"],
   ["/support-assignment", "support_assignment.view"],
   ["/team-report", "support_activity.view"],

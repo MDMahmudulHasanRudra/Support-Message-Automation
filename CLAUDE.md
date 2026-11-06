@@ -2941,6 +2941,10 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 - The customer's next message is read once within 24 hours; only a message that is nothing but a rating counts (`parseCsatRating`). The message itself stays ordinary and the hooks never throw. An answer is final (trigger).
 - Channels use the automated window only, never the HUMAN_AGENT tag. A survey is not an AI answer, so the AI reply cooldown ignores its variant.
 
+### Follow-ups (`FOLLOW_UPS.md`, 7 Nov 2026)
+
+Feature `FOLLOW_UPS`, **off by default**: an internal to-do list for call-backs, visits and promised replies. It **never sends anything to a customer**. Rules worth not undoing: reading needs `messages.view`; changing one needs the reply key of the conversation it is about; a linked conversation, client, person or Team must be this project's; every change is a conditional update with its `FollowUpEvent` (append-only) in the same transaction; buckets split at Dhaka midnight by plain instants (`followUpBucketRange`), with no SQL day arithmetic.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

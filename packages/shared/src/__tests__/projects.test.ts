@@ -101,6 +101,7 @@ describe("project features", () => {
     expect(all).toHaveLength(PROJECT_FEATURES.length);
     expect(all.every((f) => f.isDefault)).toBe(true);
     expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "CSAT_SURVEYS", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO"]);
+    expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "FOLLOW_UPS"]);
     expect(resolveProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: true }]).find((f) => f.key === "GOOGLE_SHEETS")).toMatchObject({ enabled: true, isDefault: false });
     const withOverride = resolveProjectFeatures([{ key: "AI_REPLY", enabled: false }]);
     expect(withOverride.find((f) => f.key === "AI_REPLY")).toMatchObject({ enabled: false, isDefault: false });
@@ -155,6 +156,11 @@ describe("which feature a page or action belongs to", () => {
     expect(pathAllowedByFeatures("/messages", disabled)).toBe(true);
     expect(pathAllowedByFeatures("/ai-learning/activity", disabled)).toBe(true);
     expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "CSAT_SURVEYS", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO"]);
+    expect([...disabled]).toEqual(["WHATSAPP_CHAT", "GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "FOLLOW_UPS"]);
+    expect(pathAllowedByFeatures("/chat/1", disabled)).toBe(false);
+    expect(pathAllowedByFeatures("/messages", disabled)).toBe(true);
+    expect(pathAllowedByFeatures("/ai-learning/activity", disabled)).toBe(true);
+    expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "UNIFIED_REPORTING", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "FOLLOW_UPS"]);
     // The new chat view is a presentation switch: off, it blocks no page at all.
     expect(pathAllowedByFeatures("/chat/account/a/g", disabledProjectFeatures([]))).toBe(true);
     expect(pathAllowedByFeatures("/clients/import", disabledProjectFeatures([]))).toBe(false);
@@ -184,6 +190,7 @@ describe("which feature a page or action belongs to", () => {
         { key: "SHOPIFY", enabled: true },
         { key: "API_ACCESS", enabled: true },
         { key: "SOCIAL_STUDIO", enabled: true },
+        { key: "FOLLOW_UPS", enabled: true },
       ]).size,
     ).toBe(0);
   });
