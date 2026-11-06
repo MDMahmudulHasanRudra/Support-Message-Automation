@@ -2,6 +2,7 @@
 
 import { prisma } from "@/server/db";
 import { checkPermission } from "@/server/authorize";
+import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { activeProjectId } from "@/server/projectContext";
 import {
@@ -210,13 +211,19 @@ export async function requestCopilot(
   const lastHour = await prisma.aiDraft.count({ where: { requestedById: w.session.userId, createdAt: { gte: new Date(Date.now() - 3_600_000) } } });
   if (lastHour >= COPILOT_HOURLY_LIMIT) return { error: `You have used the Copilot ${COPILOT_HOURLY_LIMIT} times in the last hour. Try again a little later.` };
 
+  // What this agent may see of a client's account in a draft (AI_CLIENT_ANSWERS.md), decided here by the
+  // ordinary permission check and recorded on the request: the worker cannot resolve a person's roles, so it
+  // only ever narrows by these. Asked only for a WhatsApp conversation, the one kind that can carry it.
+  const clientAccountAllowed = w.ref.kind === "whatsapp" && (await hasPermission(w.session, "clients.view"));
+  const clientDuesAllowed = clientAccountAllowed && (await hasPermission(w.session, "clients.view_billing"));
+
   // The database decides "one active request per person per conversation" (partial unique index
   // AiDraft_one_active_*): of two concurrent requests exactly one is inserted, so a double click never
   // pays for two AI calls. The findFirst above is only the friendly fast path.
   let created;
   try {
     created = await prisma.aiDraft.create({
-      data: { projectId: await activeProjectId(), ...conversationRefColumns(w.ref), mode, instruction, baseText, requestedById: w.session.userId },
+      data: { projectId: await activeProjectId(), ...conversationRefColumns(w.ref), mode, instruction, baseText, requestedById: w.session.userId, clientAccountAllowed, clientDuesAllowed },
       select: DRAFT_SELECT,
     });
   } catch (err) {

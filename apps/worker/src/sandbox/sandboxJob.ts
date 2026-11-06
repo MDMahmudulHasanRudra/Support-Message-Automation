@@ -4,7 +4,7 @@ import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
 import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
-import { validateCommerceFigures } from "@support-automation/shared";
+import { findClientAccountGrounding, moneyFiguresGrounded } from "../aiFallback/clientAccountContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import type { ConversationTurn } from "../aiFallback/conversationContext.js";
 import { getApprovedStyleGuidance } from "../knowledge/communicationStyleJob.js";
@@ -152,6 +152,13 @@ async function answerTurn(turnId: string): Promise<void> {
     await finish({ outcome: "HUMAN_FALLBACK", reason: "COMMERCE_REQUEST" });
     return;
   }
+  // Customer account answers (AI_CLIENT_ANSWERS.md), read-only. The sandbox has no verified customer, so it
+  // shows what an unverified customer gets: no account details ever, and requests handed over.
+  const account = await findClientAccountGrounding({ text: turn.userMessage, switches: aiSettings, customer: { kind: "UNVERIFIABLE" } });
+  if (account.handoverReason) {
+    await finish({ outcome: "HUMAN_FALLBACK", reason: account.handoverReason });
+    return;
+  }
   const knowledge = [
     ...commerce.snippets,
     ...(await findRelevantKnowledge(turn.userMessage, { groupId }, undefined, () => expandQueryTerms(client!, turn.userMessage, conversation))),
@@ -181,6 +188,7 @@ async function answerTurn(turnId: string): Promise<void> {
         knowledge,
         conversation,
         commerceRules: commerce.rules,
+        accountRules: account.rules,
       }),
     );
   } catch (err) {
@@ -233,7 +241,7 @@ async function answerTurn(turnId: string): Promise<void> {
     return;
   }
 
-  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) {
+  if (!moneyFiguresGrounded(parsed.responseText, commerce, account, knowledge)) {
     await finish({ outcome: "HUMAN_FALLBACK", reason: "UNGROUNDED_PRICE", ...common });
     return;
   }

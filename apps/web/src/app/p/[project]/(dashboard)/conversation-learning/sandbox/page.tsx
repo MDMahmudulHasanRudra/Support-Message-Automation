@@ -26,6 +26,7 @@ const REASON_COPY: Record<string, string> = {
   MALFORMED_RESPONSE: "The AI's answer could not be parsed.",
   LOW_CONFIDENCE: "The AI was less confident than the Auto-response confidence threshold requires.",
   LOW_CONFIDENCE_GENERAL: "An answer with no verified knowledge behind it is held to the higher general-answer threshold, and this fell below it.",
+  ACCOUNT_REQUEST: "The question asks to pay, renew, change a package or disconnect. AI cannot do that, so a real customer would be handed to a person.",
 };
 
 function explainReason(reason: string | null): string | null {

@@ -62,6 +62,12 @@ export interface FallbackPromptInput {
    * prompt is then byte-identical to what it was before they existed.
    */
   commerceRules?: string[];
+  /**
+   * What the AI may and may not say about the customer's own account (`accountPromptRules`,
+   * AI_CLIENT_ANSWERS.md). Absent or empty whenever account answers are off — the default — and the
+   * prompt is then byte-identical to what it was before they existed.
+   */
+  accountRules?: string[];
 }
 
 export interface FallbackPrompt {
@@ -222,6 +228,7 @@ export function buildFallbackPrompt(input: FallbackPromptInput): FallbackPrompt 
         ]
       : []),
     ...(input.commerceRules ?? []),
+    ...(input.accountRules ?? []),
   ]
     // Joined on NEWLINES, not spaces.
     //

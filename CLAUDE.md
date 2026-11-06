@@ -3129,6 +3129,10 @@ project; API keys are stored as SHA-256 only and run inside their project; outbo
 once, and never sent to an address that resolves privately. Background work runs in the APP process
 (`server/integrationsProcessor.ts`, `INTEGRATIONS_PROCESSOR_DISABLED=true`).
 
+### Customer account answers (`AI_CLIENT_ANSWERS.md`, 7 Nov 2026)
+
+`AiSettings.clientAccountAnswers` / `clientDueAnswers`, **off by default**. Today this reaches only AI Copilot drafts in a one-to-one WhatsApp chat, because WhatsApp's automatic AI runs only in groups and account details are never given in a group; the settings page says so. Rules worth not undoing: a verified `@c.us` number matching exactly one live client (or a person's chat link), never a LID, a group, a channel or the Sandbox; off means no query and a byte-identical prompt; a request to pay, renew, change or disconnect goes to a person; every amount in a reply must be one it was given. **An answer built from one person's account, dues or order never becomes a rule draft** (`isPersonalRecordEntry`): a rule answers everybody.
+
 ### Commerce-aware AI (`AI_COMMERCE.md`)
 
 Five `AiSettings.commerce*` switches, all off by default except the request hand-over; each works only while its module

@@ -136,8 +136,17 @@ export function commercePromptRules(policy: AiCommercePolicy, ctx: { ordersFound
  * "never invent a price". An amount is a number written next to a currency (৳, Tk, taka, টাকা, BDT, $,
  * USD, Rs). Bengali digits are compared as ASCII; thousands separators and a ".00" are ignored.
  */
-export function validateCommerceFigures(reply: string, groundingText: string): { ok: true } | { ok: false; unsupported: string[] } {
-  const amounts = extractAmounts(reply);
+export function validateCommerceFigures(
+  reply: string,
+  groundingText: string,
+  /**
+   * Upper-case currency codes to read as currency markers too ("SAR 300", "300 AED"), on top of the fixed
+   * list. Customer account answers (aiClientAnswers.ts) pass every ISO code, because a due can be in any of
+   * them; commerce passes nothing, so its check is exactly what it was.
+   */
+  options: { currencyCodes?: readonly string[] } = {},
+): { ok: true } | { ok: false; unsupported: string[] } {
+  const amounts = extractAmounts(reply, options.currencyCodes ?? []);
   if (amounts.length === 0) return { ok: true };
   const allowed = new Set(extractNumbers(groundingText));
   const unsupported = amounts.filter((a) => !allowed.has(a));
@@ -152,13 +161,20 @@ function normalizeAmount(raw: string): string {
   return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : raw;
 }
 
-function extractAmounts(text: string): string[] {
+function extractAmounts(text: string, codes: readonly string[]): string[] {
   const t = asciiDigits(text);
   const out: string[] = [];
   const after = new RegExp(`${NUMBER}\\s?(?:/-)?\\s?${CURRENCY}`, "gi");
   const before = new RegExp(`${CURRENCY}\\s?${NUMBER}`, "gi");
   for (const m of t.matchAll(after)) out.push(normalizeAmount(m[1]!));
   for (const m of t.matchAll(before)) out.push(normalizeAmount(m[1]!));
+  const valid = codes.filter((c) => /^[A-Z]{3}$/.test(c));
+  if (valid.length) {
+    // Case-SENSITIVE on purpose: "SAR 300" is money, "all 3 packages" is not.
+    const code = `\\b(?:${valid.join("|")})\\b`;
+    for (const m of t.matchAll(new RegExp(`${NUMBER}\\s?${code}`, "g"))) out.push(normalizeAmount(m[1]!));
+    for (const m of t.matchAll(new RegExp(`${code}\\s?${NUMBER}`, "g"))) out.push(normalizeAmount(m[1]!));
+  }
   return [...new Set(out)];
 }
 
