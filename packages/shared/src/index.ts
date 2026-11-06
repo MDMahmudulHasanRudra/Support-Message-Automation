@@ -33,6 +33,7 @@ export * from "./socialMeta.js";
 export * from "./socialAi.js";
 export * from "./socialRss.js";
 export * from "./aiCommerce.js";
+export * from "./aiClientAnswers.js";
 export * from "./rawSqlGuard.js";
 export * from "./projectAccessLevels.js";
 export * from "./projectRoles.js";

@@ -3242,6 +3242,11 @@ model AiSettings {
   commerceShowStockCount   Boolean  @default(false)
   /// Hand a request to buy, cancel, return or change an order straight to a person.
   commerceHandoverRequests Boolean  @default(true)
+  /// Customer account answers (AI_CLIENT_ANSWERS.md): a verified customer's own package, its state and expiry,
+  /// from Client Management. Works only while Client Management and its Subscriptions are on. Off by default.
+  clientAccountAnswers     Boolean  @default(false)
+  /// What a verified customer still owes, per currency. Needs clientAccountAnswers and Billing on. Off by default.
+  clientDueAnswers         Boolean  @default(false)
   updatedAt                DateTime @updatedAt
 }
 
@@ -8149,6 +8154,11 @@ model AiDraft {
   tokensUsed            Int?
   requestedById         String?
   requestedBy           User?                @relation("AiDraftRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  /// What the requester may see of a client's account (AI_CLIENT_ANSWERS.md), decided by the web's own
+  /// permission check (`clients.view` / `clients.view_billing`) when the request was made. The worker only
+  /// ever narrows by these; false (every older row) = no account data in the draft.
+  clientAccountAllowed  Boolean              @default(false)
+  clientDuesAllowed     Boolean              @default(false)
   /// Set when the agent put the text into the composer.
   usedAt                DateTime?
   /// UP | DOWN — the agent's rating.

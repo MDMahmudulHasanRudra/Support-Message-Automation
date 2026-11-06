@@ -1,5 +1,5 @@
 import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
-import { aiDisclosureText, CHANNELS, decideAiDisclosure, decideReplyWindow, channelMessagePreview, isAiDisclosureChannel, validateChannelText, withAiDisclosure, type AiDisclosureReason, type ChannelType, validateCommerceFigures } from "@support-automation/shared";
+import { aiDisclosureText, CHANNELS, decideAiDisclosure, decideReplyWindow, channelMessagePreview, isAiDisclosureChannel, validateChannelText, withAiDisclosure, type AiDisclosureReason, type ChannelType } from "@support-automation/shared";
 import type { AiSettings, AutomationSettings } from "@prisma/client";
 import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
@@ -10,6 +10,7 @@ import { getAutomationSettings } from "../pipeline/settings.js";
 import { buildAnswerPlan, renderAnswerPlan, validateGrounding } from "../aiFallback/answerPlan.js";
 import { findRelevantKnowledge } from "../aiFallback/knowledgeContext.js";
 import { findCommerceGrounding } from "../aiFallback/commerceContext.js";
+import { findClientAccountGrounding, moneyFiguresGrounded } from "../aiFallback/clientAccountContext.js";
 import { expandQueryTerms } from "../aiFallback/queryExpansion.js";
 import { researchForCustomerQuestion } from "../aiFallback/deepAnswer.js";
 import { buildFallbackPrompt, parseFallbackResponse } from "../aiFallback/prompt.js";
@@ -211,6 +212,11 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   // channels carry no phone number that proves who the customer is.
   const commerce = await findCommerceGrounding({ text, switches: settings.ai, customerPhone: null });
   if (commerce.handoverRequest) return handOver("COMMERCE_REQUEST");
+  // Customer account answers (AI_CLIENT_ANSWERS.md): never any account data here — these channels carry
+  // no identity that proves who the customer is — but the rules still tell the AI so, and a request to
+  // pay, renew, change a package or disconnect still goes to a person.
+  const account = await findClientAccountGrounding({ text, switches: settings.ai, customer: { kind: "UNVERIFIABLE" } });
+  if (account.handoverReason) return handOver(account.handoverReason);
   let knowledge = await findRelevantKnowledge(text, { groupId: null, accountId: null }, undefined, () => expandQueryTerms(client, text, conversation));
   if (commerce.snippets.length) knowledge = [...commerce.snippets, ...knowledge];
   const mayResearch = settings.ai.aiResponseMode === "KNOWLEDGE_PLUS_FORGE" || settings.ai.aiResponseMode === "KNOWLEDGE_FORGE_GENERAL";
@@ -236,6 +242,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
         conversation,
         planGuidance: renderAnswerPlan(plan),
         commerceRules: commerce.rules,
+        accountRules: account.rules,
       }),
     );
   } catch (err) {
@@ -254,7 +261,7 @@ async function decide(messageId: string, now: Date, clientOverride?: AiClient): 
   if (parsed.confidence < required) return handOver(grounded ? "LOW_CONFIDENCE" : "LOW_CONFIDENCE_GENERAL", extra);
   const grounding = validateGrounding(parsed.responseText, plan);
   if (!grounding.ok) return handOver(grounding.reason ?? "UNGROUNDED_RESPONSE", extra);
-  if (commerce.policy?.active && !validateCommerceFigures(parsed.responseText, commerce.groundingText).ok) return handOver("UNGROUNDED_PRICE", extra);
+  if (!moneyFiguresGrounded(parsed.responseText, commerce, account, knowledge)) return handOver("UNGROUNDED_PRICE", extra);
   const tooLong = validateChannelText(type, parsed.responseText);
   if (tooLong) return handOver("REPLY_TOO_LONG_FOR_CHANNEL", extra);
 

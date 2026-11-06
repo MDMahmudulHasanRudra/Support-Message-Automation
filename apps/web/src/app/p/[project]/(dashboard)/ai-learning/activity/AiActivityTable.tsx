@@ -60,7 +60,11 @@ const REASON_HELP: Record<string, string> = {
   COMMERCE_REQUEST:
     "The customer asked to buy, cancel, return or change an order. AI cannot do that, so it went straight to a person.",
   UNGROUNDED_PRICE:
-    "The reply named a price that is not in the catalogue or the order it was given, so it was handed over instead of sent.",
+    "The reply named a price or an amount owed that is not in what it was given (the catalogue, the order, the customer's own dues or verified knowledge), so it was handed over instead of sent.",
+  ACCOUNT_REQUEST:
+    "The customer asked to pay, renew, change their package or disconnect. AI cannot do that, so it went straight to a person.",
+  ACCOUNT_AMBIGUOUS:
+    "The customer asked about their account, but their number matches more than one client record, so AI did not guess between them and handed it to a person.",
 };
 
 function explainReason(reason: string | null): string | null {

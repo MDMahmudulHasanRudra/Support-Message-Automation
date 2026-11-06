@@ -102,9 +102,10 @@ export async function recordEvidenceSnapshot(params: {
         conflictCount: bundle.conflicts.length,
         items: {
           create: bundle.knowledge.map((entry, index) => ({
-            // Catalogue and order entries (AI_COMMERCE.md) are built at answer time and are not
-            // knowledge rows; the title records which product or order it was.
-            knowledgeItemId: entry.id.startsWith("commerce:") ? null : entry.id,
+            // Catalogue and order entries (AI_COMMERCE.md) and a customer's own account entries
+            // (AI_CLIENT_ANSWERS.md) are built at answer time and are not knowledge rows; the title
+            // records which product, order or client it was — never the figures or dates it stated.
+            knowledgeItemId: entry.id.startsWith("commerce:") || entry.id.startsWith("client:") ? null : entry.id,
             // The version AS RETRIEVED, carried down from the search rather than re-read. Re-reading
             // would fetch whatever the entry had become between retrieval and now, which for an
             // entry edited in that window is exactly the wrong answer.
