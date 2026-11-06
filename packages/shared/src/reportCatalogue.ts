@@ -271,7 +271,7 @@ export const REPORT_CATALOGUE: readonly ReportCatalogueEntry[] = [
     category: "Support Performance",
     description: "Answers to “How did we do? 1–5” after resolved conversations: CSAT (4–5 of the answered), response rate and average, per agent and per channel, with every rated conversation.",
     question: "How satisfied are customers with how their conversations were resolved?",
-    exports: [],
+    exports: ["CSV"],
     generic: false,
   },
 ];

@@ -36,6 +36,7 @@ const inboxActions = await import("@/server/actions/inboxLifecycle");
 const webchat = await import("@/server/channels/webchat");
 const messagesRoute = await import("@/app/api/webchat/[key]/messages/route");
 const csatRoute = await import("@/app/api/webchat/[key]/csat/route");
+const exportRoute = await import("@/app/p/[project]/api/reports/csat/export/route");
 
 const tag = randomUUID().replace(/-/g, "").slice(0, 8);
 const ISP = { id: ORIGINAL_PROJECT_ID, slug: "isp-digital", name: "ISP Digital", status: "ACTIVE" as const };
@@ -253,6 +254,45 @@ describe("settings", () => {
     });
     await feature(ORIGINAL_PROJECT_ID, "CSAT_SURVEYS", false);
     expect(await inIsp(() => csatActions.saveCsatSettingsAction({ telegramEnabled: false }))).toMatchObject({ error: expect.any(String) });
+  });
+});
+
+describe("the report's CSV", () => {
+  async function answered(comment: string) {
+    const chatId = personal();
+    await inIsp(() => resolve({ kind: "whatsapp", accountId: account, chatId }));
+    const now = new Date();
+    await rawPrisma.csatSurvey.updateMany({ where: { accountId: account, chatId }, data: { status: "SENT", sentAt: now, question: "q" } });
+    await rawPrisma.csatSurvey.updateMany({ where: { accountId: account, chatId }, data: { answeredAt: now, answerClosedAt: now, rating: 5, comment, answerSource: "WIDGET" } });
+  }
+  const download = () => inIsp(() => exportRoute.GET(new NextRequest("http://x.test/p/isp-digital/api/reports/csat/export")));
+
+  it("holds what the page holds, sanitises a customer's words, and shows a comment only to a message reader", async () => {
+    await answered(`=HYPERLINK("evil") ${tag}`);
+    const reader = await download();
+    expect(reader.headers.get("content-type")).toContain("text/csv");
+    const text = await reader.text();
+    expect(text).toContain("Asked (Dhaka),Channel,Customer");
+    expect(text).toContain(tag);
+    expect(text).toContain("'=HYPERLINK");
+    expect(text).not.toMatch(/,=HYPERLINK/);
+
+    const roleId = await role("CSAT report only", ["support_activity.view"]);
+    current = await user("csat_report_only", roleId, [ORIGINAL_PROJECT_ID]);
+    const noComment = await (await download()).text();
+    expect(noComment).toContain("Asked (Dhaka)");
+    expect(noComment).not.toContain(tag);
+  });
+
+  it("needs the report's key and the feature, and refuses a nonsense range", async () => {
+    current = s.viewer;
+    await expect(download()).rejects.toThrow();
+    current = s.agent;
+    await feature(ORIGINAL_PROJECT_ID, "CSAT_SURVEYS", false);
+    await expect(download()).rejects.toThrow();
+    await feature(ORIGINAL_PROJECT_ID, "CSAT_SURVEYS", true);
+    const bad = await inIsp(() => exportRoute.GET(new NextRequest("http://x.test/p/isp-digital/api/reports/csat/export?from=2020-01-01&to=2026-01-01")));
+    expect(bad.status).toBe(400);
   });
 });
 

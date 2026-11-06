@@ -15,10 +15,10 @@ commerce, multi-project and white label, and send safety (rate limits, no automa
 |---|---|---|---|
 | 1 | Message search across conversations | Full-history WhatsApp message-text search, trigram index, two phases (≤ ~225 ms measured on 3.6M messages) | **Built** (`fa8a4ad`, needs a hand-run index build before deploy) |
 | 2 | "Highest wait time" sort, "last message sender" filter | Wait shown on each row, longest-waiting sort, last-sender filter | **Built** (`f955618`) |
-| 3 | Post-chat CSAT rating + CSAT report | `CSAT_SURVEYS`: rating after Resolve (widget card, channels, optional WhatsApp 1:1), Bangla digits, cooldown, report per agent / channel | In progress |
-| 4 | Auto routing (round-robin, availability / break aware) | `AUTO_ROUTING`: round-robin or least-open, capacity, on-duty from our roster and leave, "Distribute evenly" bulk action | In progress |
-| 5 | Contact Follow-Up workspace | `FOLLOW_UPS`: Mine / Team / Overdue / Due today / Upcoming / Done, linked to conversations and clients; never messages the customer | In progress |
-| 6 | AI looks up the customer's own data and acts | AI grounded on the customer's own client record (dues, expiry, plan) — only for the verified sender number, exactly like commerce grounding | Planned (next) |
+| 3 | Post-chat CSAT rating + CSAT report | `CSAT_SURVEYS`: rating after Resolve (widget card, channels, optional WhatsApp 1:1), Bangla digits, cooldown, report per agent / channel | **Built** (`CSAT.md`) |
+| 4 | Auto routing (round-robin, availability / break aware) | `AUTO_ROUTING`: round-robin or least-open, capacity, on-duty from our roster and leave, "Distribute evenly" bulk action | **Built** (`AUTO_ROUTING.md`) |
+| 5 | Contact Follow-Up workspace | `FOLLOW_UPS`: Mine / Team / Overdue / Due today / Upcoming / Done, linked to conversations and clients; never messages the customer | **Built** (`FOLLOW_UPS.md`) |
+| 6 | AI looks up the customer's own data and acts | AI grounded on the customer's own client record (dues, expiry, plan) — only for the verified sender number, exactly like commerce grounding | **Built for agent Copilot drafts only** (`AI_CLIENT_ANSWERS.md`). **Automatic answers need an owner decision**: automatic WhatsApp AI runs only in groups, and account details are never given in a group |
 | 7 | Agent mobile app + push notifications | Installable web app (PWA) with web push for assignments, waits and mentions | Planned |
 | 8 | Ownership folders (Unassigned, AI-handled, Bot) | "AI is handling" view beside Mine / Unassigned | Planned |
 | 9 | Visual bot flow builder | Numbered-menu flows (works on linked-device WhatsApp), buttons on widget / Messenger / Telegram | Planned |

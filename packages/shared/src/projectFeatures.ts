@@ -276,7 +276,7 @@ export const PROJECT_FEATURES = [
     description:
       "\"How did we do? 1–5\" after a conversation is resolved, on the channels the project chooses (website chat card, Messenger, Instagram, Telegram, WhatsApp personal chats), with a CSAT report per agent and channel (CSAT.md). Never in a WhatsApp group, never to a team member, at most once per customer per cooldown. Needs Inbox V3. Off = nothing is asked; recorded answers are kept.",
     defaultEnabled: false,
-    routes: ["/settings/csat", "/reports/csat"],
+    routes: ["/settings/csat", "/reports/csat", "/api/reports/csat"],
     permissionKeys: [],
     workerEffect: "Stops asking satisfaction surveys and stops reading ratings from customer messages; surveys waiting to go out are skipped.",
   },

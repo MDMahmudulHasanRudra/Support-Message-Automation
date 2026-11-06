@@ -179,7 +179,8 @@ const LIST_LIMIT = 500;
  * resolutions of the period. Every figure comes from `summarizeCsat` (packages/shared), so the tiles, the agent
  * rows and the channel rows use one formula. Comments only for a viewer who may read messages.
  */
-export async function loadCsatReport(range: { start: Date; end: Date }, options: { canReadMessages: boolean }): Promise<CsatReport> {
+export async function loadCsatReport(range: { start: Date; end: Date }, options: { canReadMessages: boolean; listLimit?: number }): Promise<CsatReport> {
+  const listLimit = options.listLimit ?? LIST_LIMIT;
   const asked = await prisma.csatSurvey.findMany({
     where: { status: "SENT", sentAt: { gte: range.start, lt: range.end } },
     orderBy: { sentAt: "desc" },
@@ -226,7 +227,7 @@ export async function loadCsatReport(range: { start: Date; end: Date }, options:
       .sort((a, b) => b.summary.asked - a.summary.asked || a.label.localeCompare(b.label));
   };
 
-  const rows: CsatReportRow[] = asked.slice(0, LIST_LIMIT).map((r) => {
+  const rows: CsatReportRow[] = asked.slice(0, listLimit).map((r) => {
     const c = r.channelConversation;
     const customer = c ? (c.customerName ?? (c.customerUsername ? `@${c.customerUsername}` : (c.title ?? "Customer"))) : describeChat(r.chatId ?? "");
     const href =
@@ -255,7 +256,7 @@ export async function loadCsatReport(range: { start: Date; end: Date }, options:
     byAgent: group((r) => r.resolvedById ?? "", (key) => agentOf(key || null)),
     byChannel: group((r) => r.channel, (key) => CSAT_CHANNEL_LABELS[key as CsatChannel] ?? key),
     rows,
-    truncated: asked.length > LIST_LIMIT,
+    truncated: asked.length > listLimit,
   };
 }
 

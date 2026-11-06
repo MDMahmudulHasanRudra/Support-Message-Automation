@@ -209,13 +209,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CsatSurvey", "CsatSettings",
   // Follow-ups (FOLLOW_UPS.md).
   "FollowUp", "FollowUpEvent",
-  // Inbox V3 (INBOX_WORKSPACE.md) and automatic routing (AUTO_ROUTING.md). The three Inbox V3 tables were
-  // written as if scoped ("another project's conversation is simply not found") but had not been listed, so a
-  // read such as "this project's reopen policy" or "how many conversations does this person hold" could see
-  // another project's rows.
-  "WhatsAppConversationState", "InboxLifecycleSettings", "ConversationPresence", "RoutingSettings",
-  // Failed Replies history (FAILED_REPLIES.md): written with its project, read by its reply; listed for the same reason.
-  "FailedReplyAction",
+  // Automatic routing (AUTO_ROUTING.md).
+  "RoutingSettings",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([

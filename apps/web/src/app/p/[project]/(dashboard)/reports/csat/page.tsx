@@ -1,6 +1,6 @@
 import { ArrowLeft, Star } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import { Button, Card, EmptyState, Field, HelpButton, HelpSection, Input, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { Button, ButtonLink, Card, EmptyState, Field, HelpButton, HelpSection, Input, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { formatCsatPercent, formatDhakaDateKey, parseDhakaDayRangeFromInput, type CsatSummary } from "@support-automation/shared";
 import { requireAccess } from "@/server/authorize";
 import { hasPermission } from "@/server/permissions";
@@ -53,6 +53,8 @@ export default async function CsatReportPage({ searchParams }: { searchParams: P
         title="Customer Satisfaction (CSAT)"
         description="How did we do? 1–5 — asked after a conversation is resolved, on the channels chosen under Settings → Satisfaction surveys."
         actions={
+          <div className="flex gap-2">
+          <ButtonLink href={`/api/reports/csat/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`}>CSV</ButtonLink>
           <HelpButton moduleTitle="Customer Satisfaction">
             <HelpSection title="The figures">
               <p>
@@ -69,6 +71,7 @@ export default async function CsatReportPage({ searchParams }: { searchParams: P
               </p>
             </HelpSection>
           </HelpButton>
+          </div>
         }
       />
 

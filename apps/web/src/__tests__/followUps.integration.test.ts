@@ -167,6 +167,7 @@ describe("creating", () => {
       { title: `x ${tag}`, due: "IN_1_HOUR", assignedUserId: fx.outsider },
       { title: `x ${tag}`, due: "IN_1_HOUR", assignedTeamId: fx.bizTeam },
     ];
+    await feature(ORIGINAL_PROJECT_ID, "OMNICHANNEL", false);
     const results = await Promise.all(tries.map((t) => inIsp(() => actions.createFollowUp(t))));
     expect(results.map(errorOf)).toEqual([
       expect.stringMatching(/conversation could not be found/),
