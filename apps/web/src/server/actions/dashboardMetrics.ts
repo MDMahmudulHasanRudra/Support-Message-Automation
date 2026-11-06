@@ -450,3 +450,18 @@ export async function getExecutiveLoad(nowMs: number) {
     people: top.map(([id, value]) => ({ id, label: nameById.get(id) ?? "(removed team member)", value })),
   };
 }
+
+/**
+ * Customer messages per channel over the last 7 days: WhatsApp's stored messages beside the channels' own table.
+ * Null when the project has no other channel to compare, so the Overview shows something else in that place.
+ */
+export async function getChannelMix(nowMs: number, tints: Record<string, { label: string; color: string }>) {
+  const since = new Date(nowMs - 7 * 86_400_000);
+  const [whatsapp, channels] = await Promise.all([
+    prisma.message.count({ where: { direction: "INCOMING", isFromTeamMember: false, timestampWa: { gte: since } } }),
+    prisma.channelMessage.groupBy({ by: ["type"], where: { direction: "INBOUND", occurredAt: { gte: since } }, _count: { _all: true } }),
+  ]);
+  const rows = [{ key: "WHATSAPP", value: whatsapp }, ...channels.map((c) => ({ key: c.type as string, value: c._count._all }))];
+  const slices = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value).map((r) => ({ key: r.key, label: tints[r.key]?.label ?? r.key, value: r.value, color: tints[r.key]?.color ?? "var(--chart-4)" }));
+  return { slices, total: slices.reduce((sum, s) => sum + s.value, 0) };
+}

@@ -1,8 +1,8 @@
 "use client";
 
 import { Badge } from "@/components/ui";
-import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
-import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard, LogOut, ShieldCheck, X } from "lucide-react";
+import { navIconClass, navItemClass } from "@/components/shell/ShellParts";
+import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard,  ShieldCheck, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
@@ -110,29 +110,9 @@ function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; 
       href={link.href}
       aria-current={active ? "page" : undefined}
       title={collapsed ? link.label : undefined}
-      className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
-        collapsed ? "justify-center px-0" : ""
-      } ${
-        active
-          ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)]"
-          : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
-      }`}
+      className={navItemClass(active, collapsed ? "justify-center !px-0" : "")}
     >
-      {/* The one place brand indigo appears on every page: the active-item rail. */}
-      <span
-        aria-hidden
-        className={`absolute inset-y-1.5 left-0 w-[2px] origin-center rounded-full bg-[var(--color-accent)] transition-transform duration-[var(--duration-base)] ease-[var(--ease-spring)] ${
-          active ? "scale-y-100" : "scale-y-0"
-        }`}
-      />
-      <Icon
-        className={`size-4 shrink-0 transition-colors ${
-          active
-            ? "text-[color:var(--color-accent)]"
-            : "text-[color:var(--color-subtle-foreground)] group-hover:text-[color:var(--color-muted-foreground)]"
-        }`}
-        aria-hidden
-      />
+      <Icon className={navIconClass(active)} aria-hidden />
       {collapsed ? null : <span className="truncate">{link.label}</span>}
     </Link>
   );
@@ -167,14 +147,9 @@ function SectionLabel({ children, collapsed }: { children: string; collapsed: bo
 export function Sidebar({
   automationEnabled,
   automationMode,
-  onLogout,
   mobileOpen,
   onMobileClose,
   navGroups,
-  project,
-  switchableProjects,
-  canViewAdmin,
-  canCreateProject,
   workspace,
 }: {
   /**
@@ -183,13 +158,8 @@ export function Sidebar({
    * chosen by the tabs above the page, not by a second navigation.
    */
   workspace?: { globalGroups: NavGroup[]; mainAdminLinks: NavLink[] } | null;
-  project: SwitcherProject;
-  switchableProjects: SwitcherProject[];
-  canViewAdmin: boolean;
-  canCreateProject: boolean;
   automationEnabled: boolean;
   automationMode: string;
-  onLogout: () => Promise<void>;
   mobileOpen: boolean;
   onMobileClose: () => void;
   /** The nav already reduced to what this role can open — see navigation.navGroupsFor. */
@@ -245,14 +215,14 @@ export function Sidebar({
             aria-controls={panelId}
             // The module you are in stays open: closing it would hide the very page you are on.
             onClick={containsCurrentPage ? undefined : () => toggleOpenGroup(group.label)}
-            className={`group flex w-full items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2 pl-3 text-left text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
+            className={`group flex w-full items-center gap-2.5 rounded-[var(--radius-md)] py-[7px] pr-2 pl-3 text-left text-[13.5px] transition-[background-color,color] duration-[var(--duration-fast)] ${
               containsCurrentPage
                 ? "cursor-default font-medium text-[color:var(--color-foreground)]"
-                : "cursor-pointer text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
+                : "cursor-pointer text-[color:var(--color-muted-foreground)] hover:bg-white/[0.07] hover:text-[color:var(--color-foreground)]"
             }`}
           >
             <Icon
-              className={`size-4 shrink-0 ${containsCurrentPage ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`}
+              className={`size-[18px] shrink-0 ${containsCurrentPage ? "text-[color:var(--color-foreground)]" : "text-[color:var(--color-subtle-foreground)]"}`}
               aria-hidden
             />
             <span className="min-w-0 flex-1 truncate">{group.label}</span>
@@ -287,28 +257,18 @@ export function Sidebar({
       ) : null}
       <aside
         style={{ width: collapsed ? "var(--sidebar-width-collapsed)" : "var(--sidebar-width)" }}
-        className={`fixed inset-y-0 left-0 z-[var(--z-nav)] flex h-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] shadow-[var(--shadow-xl)] transition-[transform,width] duration-[var(--duration-base)] ease-[var(--ease-out)] lg:static lg:z-auto lg:translate-x-0 lg:shadow-none ${
+        className={`tide-field fixed inset-y-0 left-0 z-[var(--z-nav)] flex h-full shrink-0 flex-col bg-[var(--tide-bg)] shadow-[var(--shadow-xl)] transition-[transform,width] duration-[var(--duration-base)] ease-[var(--ease-out)] lg:relative lg:z-[1] lg:translate-x-0 lg:shadow-none ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className={`flex items-center gap-2.5 px-4 py-4 ${collapsed ? "justify-center px-2" : ""}`}>
-          {/* The project switcher IS the sidebar header: the name at the top of every page is the
-              project being worked on, and the menu under it lists exactly the projects this user
-              may enter. The signed-in user stays in the header's own profile menu. */}
-          <ProjectSwitcher
-            current={workspace ? null : project}
-            projects={switchableProjects}
-            canViewAdmin={canViewAdmin}
-            canCreate={canCreateProject}
-            collapsed={collapsed}
-          />
+        <div className="flex items-center justify-end px-3 pt-3 lg:hidden">
           <button
             type="button"
             onClick={onMobileClose}
             aria-label="Close navigation"
-            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] lg:hidden"
+            className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-white/[0.08] hover:text-[color:var(--color-foreground)]"
           >
-            <X className="size-4.5" aria-hidden />
+            <X className="size-5" aria-hidden />
           </button>
         </div>
 
@@ -331,7 +291,7 @@ export function Sidebar({
             />
           </div>
 
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
+          <div className="scroll-quiet min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
             {renderGroups(navGroups, 0)}
           </div>
         </nav>
@@ -342,12 +302,12 @@ export function Sidebar({
           type="button"
           onClick={toggleCollapsed}
           aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-          className="absolute top-16 -right-3 hidden size-6 cursor-pointer items-center justify-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] shadow-[var(--shadow-sm)] transition-colors hover:text-[color:var(--color-foreground)] lg:flex"
+          className="absolute top-3 -right-3 z-10 hidden size-6 cursor-pointer items-center justify-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-raised)] text-[color:var(--color-muted-foreground)] shadow-[var(--shadow-sm)] transition-colors hover:text-[color:var(--color-foreground)] lg:flex"
         >
           {collapsed ? <ChevronsRight className="size-3.5" aria-hidden /> : <ChevronsLeft className="size-3.5" aria-hidden />}
         </button>
 
-        <div className={`space-y-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-3 ${collapsed ? "px-2" : ""}`}>
+        <div className={`space-y-2.5 border-t border-[var(--color-border)] p-3 ${collapsed ? "px-2" : ""}`}>
           <div
             className={`flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 ${
               collapsed ? "justify-center" : "justify-between"
@@ -366,16 +326,6 @@ export function Sidebar({
 
           {collapsed ? null : <ThemeToggle />}
 
-          <form action={onLogout}>
-            <button
-              type="submit"
-              title={collapsed ? "Sign out" : undefined}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:border-[var(--color-danger-border)] hover:bg-[var(--color-danger-bg)] hover:text-[color:var(--color-danger-fg)]"
-            >
-              <LogOut className="size-3.5" aria-hidden />
-              {collapsed ? null : "Sign out"}
-            </button>
-          </form>
         </div>
       </aside>
     </>

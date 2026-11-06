@@ -44,10 +44,10 @@ export function KpiCard({
         <Icon className="size-[22px]" aria-hidden />
       </span>
       <div className="min-w-0">
-        <p className={`truncate text-[13px] ${mutedText}`}>{label}</p>
+        <p className={`text-[13px] ${mutedText}`}>{label}</p>
         <p className="flex flex-wrap items-center gap-2">
           <span
-            className={`font-semibold tabular-nums tracking-[-0.02em] ${value.length > 12 ? "line-clamp-2 text-base leading-snug" : "truncate text-2xl"} ${toneValue ? (VALUE_TONE[accent] ?? "") : ""}`}
+            className={`font-semibold tabular-nums tracking-[-0.02em] ${value.length > 12 ? "line-clamp-2 text-base leading-snug" : "text-2xl"} ${toneValue ? (VALUE_TONE[accent] ?? "") : ""}`}
             title={value}
           >
             {value}
@@ -55,7 +55,7 @@ export function KpiCard({
           {badge}
         </p>
         {hint ? (
-          <p className={`truncate text-xs ${mutedText}`} title={hint}>
+          <p className={`text-xs ${mutedText}`} title={hint}>
             {hint}
           </p>
         ) : null}

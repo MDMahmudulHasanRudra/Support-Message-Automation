@@ -100,7 +100,7 @@ export function ColumnChart({
         {data.map((point, index) => (
           <span
             key={point.label + index}
-            className="flex-1 truncate text-center text-[10px] text-[color:var(--color-muted-foreground)]"
+            className="min-w-0 flex-1 overflow-visible whitespace-nowrap text-center text-[11px] text-[color:var(--color-muted-foreground)]"
           >
             {index % labelEvery === 0 ? point.label : " "}
           </span>

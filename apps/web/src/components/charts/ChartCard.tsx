@@ -1,5 +1,5 @@
 import Link from "@/components/ProjectLink";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui";
 
@@ -23,6 +23,7 @@ export function ChartCard({
   className = "",
   href,
   linkLabel = "View",
+  icon: Icon,
 }: {
   title: string;
   description?: string;
@@ -33,16 +34,18 @@ export function ChartCard({
   /** Where the rows behind this plot live, already filtered. Omit when nowhere lists them. */
   href?: string;
   linkLabel?: string;
+  icon?: LucideIcon;
 }) {
   return (
     <Card className={`flex flex-col p-5 ${className}`}>
-      <div className="mb-5 flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-1 sm:flex-nowrap">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+          <h3 className="flex items-center gap-2 text-[14.5px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+            {Icon ? <Icon className="size-[18px] shrink-0 text-[color:var(--color-accent)]" aria-hidden /> : null}
             {title}
           </h3>
           {description ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+            <p className="mt-1 text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">
               {description}
             </p>
           ) : null}

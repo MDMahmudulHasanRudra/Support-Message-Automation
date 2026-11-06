@@ -1,32 +1,122 @@
 import NextLink from "next/link";
-import { Plus } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Archive,
+  ArrowRight,
+  Blocks,
+  Bot,
+  Building2,
+  CheckCircle2,
+  FolderKanban,
+  HeartPulse,
+  Layers,
+  MessagesSquare,
+  Palette,
+  PauseCircle,
+  Plus,
+  Rocket,
+  ShieldAlert,
+  ShieldCheck,
+  Smartphone,
+  TrendingUp,
+  Users,
+  UsersRound,
+  Wrench,
+  Zap,
+} from "lucide-react";
 import { PROJECT_STATUS_LABELS, type ProjectStatusValue } from "@support-automation/shared";
-import { Alert, Badge, ButtonLink, PageHeader, SectionHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { Badge, ButtonLink, Card, HeroKpi, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
+import { AreaChart, BarList, ChartCard, ChartHeadline, DonutChart, formatCount } from "@/components/charts";
+import { ActionList, ChartEmpty, GettingStarted, QuickActions, type ActionItem, type QuickAction, type SetupStep } from "@/components/dashboard";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
-import { combineKpis, getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
+import { combineKpis, getProjectMessageSeries, getProjectSummaries, requireMainAdminPage, type ProjectSummary } from "@/server/mainAdmin";
+import { getGrantedPermissionKeys } from "@/server/permissions";
 import { whatsappLine } from "./ProjectCard";
-import { getBranding } from "@/server/branding";
 
 export const metadata = { title: "Overview" };
 
+const STATUS_COLOR: Record<ProjectStatusValue, string> = {
+  ACTIVE: "var(--color-success)",
+  SETUP: "var(--chart-1)",
+  SUSPENDED: "var(--color-warning)",
+  ARCHIVED: "var(--color-border-strong)",
+};
+
+function greetingFor(nowMs: number): string {
+  const hour = new Date(nowMs + 6 * 3_600_000).getUTCHours();
+  return hour < 5 ? "Good night" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+}
+
+/** The project's reading in one word, from the same attention reasons the portal already worked out. */
+function healthOf(project: ProjectSummary): { label: string; color: "green" | "yellow" | "red" | "gray" } {
+  if (project.status === "SUSPENDED") return { label: "On hold", color: "yellow" };
+  if (project.whatsapp.down > 0 || project.whatsapp.needsPerson > 0) return { label: "Connection issue", color: "red" };
+  if (project.attention.length > 0) return { label: "Needs attention", color: "yellow" };
+  if (project.status === "SETUP") return { label: "Setting up", color: "gray" };
+  return { label: "Healthy", color: "green" };
+}
+
 /**
- * Main Admin Overview (MULTI_PROJECT_PLAN.md §8). Intentionally high-level: how many projects, in
- * which state, whether each one's WhatsApp is working, and a few counts. Every detailed figure is a
- * project's own report, inside the project.
+ * Main Admin Overview (MULTI_PROJECT_PLAN.md §8): this customer's own projects, in which state, whether each
+ * one's WhatsApp works, and what needs attention. Built from the same cards as the Project Overview. Figures
+ * add up only the projects this person can enter, and every detail stays inside the project. Never billing or
+ * plans: those belong to the platform (/platform), not to a customer's Main Admin.
  */
 export default async function MainAdminOverview() {
   const { session, canManage } = await requireMainAdminPage();
-  const [projects, { productName }] = await Promise.all([getProjectSummaries(session.userId, { includeArchived: true }), getBranding()]);
+  const [projects, grantedKeys] = await Promise.all([getProjectSummaries(session.userId, { includeArchived: true }), getGrantedPermissionKeys(session)]);
+  const granted = new Set(grantedKeys);
   const count = (status: ProjectStatusValue) => projects.filter((p) => p.status === status).length;
-  const needsAttention = projects.filter((p) => p.status !== "ARCHIVED" && p.attention.length > 0);
   const listed = projects.filter((p) => p.status !== "ARCHIVED");
+  const needsAttention = listed.filter((p) => p.attention.length > 0);
   const kpis = combineKpis(projects);
+  const enterable = listed.filter((p) => p.canEnter);
+  // eslint-disable-next-line react-hooks/purity -- server component runs fresh per request
+  const nowMs = Date.now();
+  const series = await getProjectMessageSeries(enterable.map((p) => p.id), nowMs);
+
+  // Attention first, then the busiest: what somebody came here to find.
+  const ordered = [...listed].sort((a, b) => b.attention.length - a.attention.length || b.messagesToday - a.messagesToday);
+  const actions: ActionItem[] = needsAttention.map((p) => ({
+    key: p.id,
+    kind: p.whatsapp.down > 0 || p.whatsapp.needsPerson > 0 ? "down" : "warning",
+    title: p.name,
+    detail: p.attention.join(" "),
+    href: `/admin/projects/${p.id}`,
+    action: "Review",
+  }));
+
+  const statusSlices = (["ACTIVE", "SETUP", "SUSPENDED", "ARCHIVED"] as ProjectStatusValue[])
+    .map((status) => ({ key: status, label: PROJECT_STATUS_LABELS[status], value: count(status), color: STATUS_COLOR[status] }))
+    .filter((s) => s.value > 0);
+
+  const quickActions: QuickAction[] = [
+    ...(canManage ? [{ label: "Create a project", href: "/admin/projects/new", icon: Plus }] : []),
+    { label: "All projects", href: "/admin/projects", icon: FolderKanban },
+    { label: "Module templates", href: "/admin/module-templates", icon: Blocks },
+    ...(granted.has("users.view") ? [{ label: "Users & permissions", href: "/admin/users", icon: ShieldCheck }] : []),
+    ...(granted.has("configuration.view") ? [{ label: "Configuration", href: "/admin/configuration", icon: Building2 }] : []),
+    { label: "Branding", href: "/admin/branding", icon: Palette },
+  ];
+
+  const setup: SetupStep[] = [
+    { key: "project", title: "Create your first project", detail: "A project is one business or team, with its own numbers, people and data.", done: listed.length > 0, href: canManage ? "/admin/projects/new" : undefined, action: "Create project" },
+    { key: "number", title: "Connect a WhatsApp number", detail: "Open a project, then link a number from WhatsApp Accounts.", done: kpis.whatsappTotal > 0, href: enterable[0] ? `/p/${enterable[0].slug}/accounts` : undefined, action: "Open accounts" },
+    { key: "team", title: "Add your team", detail: "Give people a login and the projects they may enter.", done: kpis.activeTeamMembers > 0, href: granted.has("users.view") ? "/admin/users" : undefined, action: "Open users" },
+    { key: "monitor", title: "Monitor your groups", detail: "Choose which groups automation and reports should follow.", done: kpis.monitoredGroups > 0, href: enterable[0] ? `/p/${enterable[0].slug}/groups` : undefined, action: "Open groups" },
+  ];
+
+  const description =
+    needsAttention.length > 0
+      ? `${needsAttention.length} project${needsAttention.length === 1 ? " needs" : "s need"} attention. Figures add up the ${kpis.projects} project${kpis.projects === 1 ? "" : "s"} you can enter${kpis.excludedProjects > 0 ? `; ${kpis.excludedProjects} more ${kpis.excludedProjects === 1 ? "is" : "are"} listed without access` : ""}.`
+      : `Every project is healthy. Figures add up the ${kpis.projects} project${kpis.projects === 1 ? "" : "s"} you can enter${kpis.excludedProjects > 0 ? `; ${kpis.excludedProjects} more ${kpis.excludedProjects === 1 ? "is" : "are"} listed without access` : ""}.`;
 
   return (
     <div>
       <PageHeader
-        title="Overview"
-        description={`Every project on this ${productName} installation. Open a project to work in it; its own pages and reports are where the detail lives.`}
+        title={`${greetingFor(nowMs)}, ${session.username}`}
+        description={description}
         actions={
           canManage ? (
             <ButtonLink href="/admin/projects/new" variant="primary">
@@ -37,100 +127,150 @@ export default async function MainAdminOverview() {
         }
       />
 
-      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatTile label="Projects" value={projects.length} href="/admin/projects" />
-        <StatTile label={PROJECT_STATUS_LABELS.ACTIVE} value={count("ACTIVE")} tone={count("ACTIVE") > 0 ? "success" : "neutral"} />
-        <StatTile label={PROJECT_STATUS_LABELS.SETUP} value={count("SETUP")} />
-        <StatTile label={PROJECT_STATUS_LABELS.SUSPENDED} value={count("SUSPENDED")} tone={count("SUSPENDED") > 0 ? "warning" : "neutral"} />
-        <StatTile label={PROJECT_STATUS_LABELS.ARCHIVED} value={count("ARCHIVED")} href="/admin/projects?archived=1" />
+      <div className="mb-4 empty:hidden">
+        <GettingStarted title="Set up your workspace" steps={setup} />
       </div>
 
-      <SectionHeader
-        title="Across your projects"
-        description={`Today, added up over the ${kpis.projects} project${kpis.projects === 1 ? "" : "s"} you can enter${
-          kpis.excludedProjects > 0 ? ` — ${kpis.excludedProjects} listed project${kpis.excludedProjects === 1 ? " is" : "s are"} left out because you cannot enter ${kpis.excludedProjects === 1 ? "it" : "them"}` : ""
-        }. Each figure is the same count the project's own pages show.`}
-      />
-      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4" data-kpis>
-        <StatTile
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <HeroKpi tone="tide" icon={Layers} label="Total projects" value={formatCount(projects.length)} href="/admin/projects" sub={`${count("ACTIVE")} active, ${count("SETUP")} in setup`} />
+        <HeroKpi
+          tone="sea"
+          icon={Smartphone}
           label="WhatsApp connected"
-          value={`${kpis.whatsappConnected} / ${kpis.whatsappTotal}`}
-          tone={kpis.whatsappNeedsAttention > 0 ? "warning" : kpis.whatsappTotal > 0 ? "success" : "neutral"}
-          hint={kpis.whatsappNeedsAttention > 0 ? `${kpis.whatsappNeedsAttention} need attention` : undefined}
+          value={`${formatCount(kpis.whatsappConnected)}/${formatCount(kpis.whatsappTotal)}`}
+          sub={kpis.whatsappTotal === 0 ? "No number linked yet" : kpis.whatsappNeedsAttention > 0 ? `${kpis.whatsappNeedsAttention} need attention` : "All numbers online"}
         />
-        <StatTile label="Messages today" value={kpis.messagesToday.toLocaleString()} />
-        <StatTile label="Open escalations" value={kpis.openEscalations.toLocaleString()} tone={kpis.openEscalations > 0 ? "warning" : "neutral"} />
-        <StatTile label="Support activity today" value={kpis.supportActivityToday.toLocaleString()} />
-        <StatTile label="AI answers today" value={kpis.aiRepliesToday.toLocaleString()} />
-        <StatTile label="Monitored groups" value={kpis.monitoredGroups.toLocaleString()} />
-        <StatTile label="Active team members" value={kpis.activeTeamMembers.toLocaleString()} />
-        <StatTile label="Projects you can enter" value={kpis.projects} />
+        <HeroKpi
+          tone="navy"
+          icon={MessagesSquare}
+          label="Messages today"
+          value={formatCount(kpis.messagesToday)}
+          sub="Across your projects, since midnight"
+          spark={series.daily.map((d) => d.value)}
+          sparkLabel="Incoming messages per day across your projects, last 14 days"
+        />
+        <HeroKpi tone={needsAttention.length > 0 ? "amber" : "tide"} icon={needsAttention.length > 0 ? AlertTriangle : CheckCircle2} label="Projects needing attention" value={formatCount(needsAttention.length)} sub={needsAttention.length > 0 ? (needsAttention[0]?.name ?? "") : `${listed.length} of ${listed.length} healthy`} />
       </div>
 
-      {needsAttention.length > 0 ? (
-        <div className="mb-8 space-y-2">
-          {needsAttention.map((project) => (
-            <Alert key={project.id} tone="warning" title={project.name}>
-              {project.attention.join(" ")}{" "}
-              <NextLink href={`/admin/projects/${project.id}`} className="font-medium underline">
-                Manage
-              </NextLink>
-            </Alert>
-          ))}
-        </div>
-      ) : null}
+      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <StatTile icon={Rocket} label={PROJECT_STATUS_LABELS.ACTIVE} value={count("ACTIVE")} tone={count("ACTIVE") > 0 ? "success" : "neutral"} href="/admin/projects" />
+        <StatTile icon={Wrench} label={PROJECT_STATUS_LABELS.SETUP} value={count("SETUP")} tone={count("SETUP") > 0 ? "accent" : "neutral"} href="/admin/projects" />
+        <StatTile icon={PauseCircle} label={PROJECT_STATUS_LABELS.SUSPENDED} value={count("SUSPENDED")} tone={count("SUSPENDED") > 0 ? "warning" : "neutral"} href="/admin/projects" />
+        <StatTile icon={Archive} label={PROJECT_STATUS_LABELS.ARCHIVED} value={count("ARCHIVED")} href="/admin/projects?archived=1" />
+        <StatTile icon={Smartphone} label="Connections needing attention" value={kpis.whatsappNeedsAttention} tone={kpis.whatsappNeedsAttention > 0 ? "danger" : "neutral"} />
+        <StatTile icon={Bot} label="AI answers today" value={formatCount(kpis.aiRepliesToday)} tone="accent" />
+        <StatTile icon={Activity} label="Support activity today" value={formatCount(kpis.supportActivityToday)} />
+        <StatTile icon={ShieldAlert} label="Open escalations" value={formatCount(kpis.openEscalations)} tone={kpis.openEscalations > 0 ? "warning" : "neutral"} />
+        <StatTile icon={UsersRound} label="Monitored groups" value={formatCount(kpis.monitoredGroups)} />
+        <StatTile icon={Users} label="Active team members" value={formatCount(kpis.activeTeamMembers)} />
+      </div>
 
-      <SectionHeader title="Projects" description="Archived projects are left out here; see Projects to include them." />
-      <Table>
-        <thead>
-          <tr>
-            <Th>Project</Th>
-            <Th>Status</Th>
-            <Th>WhatsApp</Th>
-            <Th>Monitored groups</Th>
-            <Th>Messages today</Th>
-            <Th>Open escalations</Th>
-            <Th>Users with access</Th>
-            <Th>
-              <span className="sr-only">Actions</span>
-            </Th>
-          </tr>
-        </thead>
-        <tbody>
-          {listed.map((project) => {
-            const wa = whatsappLine(project.whatsapp);
-            return (
-              <tr key={project.id}>
-                <Td>
-                  <NextLink href={`/admin/projects/${project.id}`} className="font-medium text-[color:var(--color-foreground)] hover:underline">
-                    {project.name}
-                  </NextLink>
-                  <div className="font-mono text-xs text-[color:var(--color-muted-foreground)]">/p/{project.slug}</div>
-                </Td>
-                <Td>
-                  <ProjectStatusBadge status={project.status} />
-                </Td>
-                <Td>
-                  <Badge color={wa.color} dot>
-                    {wa.text}
-                  </Badge>
-                </Td>
-                <Td className="tabular">{project.monitoredGroups.toLocaleString()}</Td>
-                <Td className="tabular">{project.messagesToday.toLocaleString()}</Td>
-                <Td className="tabular">{project.openEscalations.toLocaleString()}</Td>
-                <Td className="tabular">{project.usersWithAccess.toLocaleString()}</Td>
-                <Td>
-                  {project.canEnter ? (
-                    <ButtonLink href={`/p/${project.slug}/overview`}>Open</ButtonLink>
-                  ) : (
-                    <span className="text-xs text-[color:var(--color-muted-foreground)]">No access</span>
-                  )}
-                </Td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </Table>
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
+        <ChartCard
+          className="lg:col-span-2 xl:col-span-5"
+          icon={TrendingUp}
+          title="Incoming messages"
+          description="Across the projects you can enter, last 14 days."
+          headline={<ChartHeadline value={formatCount(series.windowTotal)} caption="14 days" />}
+        >
+          {series.windowTotal === 0 ? <ChartEmpty text="No messages yet. They start counting once a project has a connected number." /> : <AreaChart data={series.daily} ariaLabel="Incoming messages per day across your projects, last 14 days" />}
+        </ChartCard>
+        <ChartCard className="xl:col-span-4" icon={HeartPulse} title="Projects by status" description="Every project on this installation.">
+          {statusSlices.length === 0 ? <ChartEmpty text="No projects yet." href={canManage ? "/admin/projects/new" : undefined} action="Create a project" /> : <DonutChart slices={statusSlices} total={projects.length} centerLabel="projects" ariaLabel="Projects by status" />}
+        </ChartCard>
+        <ChartCard className="xl:col-span-3" icon={Zap} title="Busiest today" description="Messages per project, since midnight.">
+          <BarList items={[...enterable].sort((a, b) => b.messagesToday - a.messagesToday).filter((p) => p.messagesToday > 0).slice(0, 6).map((p) => ({ id: p.id, label: p.name, value: p.messagesToday }))} emptyMessage="No messages today yet." />
+        </ChartCard>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
+        <section className="min-w-0 xl:col-span-8" aria-label="Projects">
+          <Card className="!p-0">
+            <div className="flex items-center justify-between gap-3 px-5 pb-2.5 pt-4">
+              <h2 className="flex items-center gap-2 text-[14.5px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
+                <FolderKanban className="size-[18px] text-[color:var(--color-accent)]" aria-hidden />
+                Your projects
+              </h2>
+              <NextLink href="/admin/projects" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-[color:var(--color-accent-fg)] hover:underline">
+                View all
+                <ArrowRight className="size-3.5" aria-hidden />
+              </NextLink>
+            </div>
+            {listed.length === 0 ? (
+              <div className="px-5 pb-5">
+                <ChartEmpty text="No projects yet. A project is one business or team, with its own numbers, people and data." href={canManage ? "/admin/projects/new" : undefined} action="Create your first project" />
+              </div>
+            ) : (
+              <div className="px-2 pb-2">
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Project</Th>
+                      <Th>Status</Th>
+                      <Th>Health</Th>
+                      <Th>WhatsApp</Th>
+                      <Th>Today</Th>
+                      <Th>Cases</Th>
+                      <Th>
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ordered.map((project) => {
+                      const wa = whatsappLine(project.whatsapp);
+                      const health = healthOf(project);
+                      return (
+                        <tr key={project.id}>
+                          <Td>
+                            <div className="flex items-center gap-2.5">
+                              <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent-bg)] text-[12px] font-semibold text-[color:var(--color-accent-fg)]">
+                                {project.name.trim().charAt(0).toUpperCase()}
+                              </span>
+                              <span className="min-w-0">
+                                <NextLink href={`/admin/projects/${project.id}`} className="block max-w-[14rem] truncate font-medium text-[color:var(--color-foreground)] hover:underline">
+                                  {project.name}
+                                </NextLink>
+                                <span className="block text-[11.5px] text-[color:var(--color-muted-foreground)]">/p/{project.slug}</span>
+                              </span>
+                            </div>
+                          </Td>
+                          <Td>
+                            <ProjectStatusBadge status={project.status} />
+                          </Td>
+                          <Td>
+                            <Badge color={health.color} dot>
+                              {health.label}
+                            </Badge>
+                          </Td>
+                          <Td>
+                            <Badge color={wa.color} dot>
+                              {wa.text}
+                            </Badge>
+                          </Td>
+                          <Td className="tabular">{project.messagesToday.toLocaleString()}</Td>
+                          <Td className="tabular">{project.openEscalations.toLocaleString()}</Td>
+                          <Td>
+                            {project.canEnter ? (
+                              <ButtonLink href={`/p/${project.slug}/overview`}>Open</ButtonLink>
+                            ) : (
+                              <span className="text-xs text-[color:var(--color-muted-foreground)]">No access</span>
+                            )}
+                          </Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+            )}
+          </Card>
+        </section>
+        <div className="space-y-4 xl:col-span-4">
+          <ActionList items={actions.slice(0, 5)} hiddenCount={Math.max(0, actions.length - 5)} emptyText="A project with a connection problem or an unfinished setup appears here." />
+          <QuickActions icon={Zap} actions={quickActions} />
+        </div>
+      </div>
     </div>
   );
 }

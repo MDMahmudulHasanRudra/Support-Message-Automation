@@ -284,3 +284,24 @@ export function combineKpis(projects: ProjectSummary[]): CombinedKpis {
     excludedProjects: live.length - mine.length,
   };
 }
+
+/**
+ * Incoming messages per Dhaka day over the last 14 days, added up over the given projects. The caller passes
+ * only projects this person can enter, read through the customer-scoped project list.
+ */
+export async function getProjectMessageSeries(projectIds: string[], nowMs: number): Promise<{ daily: { label: string; value: number }[]; windowTotal: number }> {
+  const format = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Dhaka", month: "short", day: "numeric" });
+  const key = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" });
+  const days = Array.from({ length: 14 }, (_, i) => new Date(nowMs - (13 - i) * 86_400_000));
+  const totals = new Map<string, number>();
+  if (projectIds.length > 0) {
+    const rows = await platformPrisma.$queryRaw<Array<{ day: string; count: bigint }>>`
+      SELECT to_char(("timestampWa" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka')::date, 'YYYY-MM-DD') AS day, count(*)::bigint AS count
+      FROM "Message"
+      WHERE "projectId" = ANY(${projectIds}) AND direction = 'INCOMING' AND "timestampWa" >= ${new Date(nowMs - 14 * 86_400_000)}
+      GROUP BY 1`;
+    for (const row of rows) totals.set(row.day, Number(row.count));
+  }
+  const daily = days.map((d) => ({ label: format.format(d), value: totals.get(key.format(d)) ?? 0 }));
+  return { daily, windowTotal: daily.reduce((sum, d) => sum + d.value, 0) };
+}

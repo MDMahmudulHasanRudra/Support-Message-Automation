@@ -2,11 +2,13 @@
 
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
-import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, LogOut, Menu, Palette, ShieldCheck, UserRound, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, Menu, Palette, ShieldCheck, UserRound, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
+import { CommandPalette } from "@/app/p/[project]/(dashboard)/CommandPalette";
+import { navIconClass, navItemClass, ShellSearch, ShellUserMenu } from "@/components/shell/ShellParts";
 import { navGroupsFor, type NavLink } from "@/app/p/[project]/(dashboard)/navigation";
 import { isGlobalPage, workspaceOpenHref } from "@/lib/workspace";
 
@@ -102,6 +104,18 @@ export function AdminShell({
 
   // Below `lg` the sidebar is a drawer (the project portal's pattern: DashboardShell + Sidebar).
   const [navOpen, setNavOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
@@ -131,111 +145,86 @@ export function AdminShell({
   }, [navOpen]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-[var(--color-background)] lg:h-screen lg:flex-row lg:overflow-hidden">
+    <div className="flex h-screen flex-col overflow-hidden bg-[var(--tide-bg)]">
       <a href="#main-content" className="skip-link">
         Skip to content
       </a>
-      {navOpen ? (
-        <div aria-hidden onClick={() => setNavOpen(false)} className="fixed inset-0 z-[var(--z-nav-scrim)] bg-black/40 backdrop-blur-[2px] lg:hidden" />
-      ) : null}
-      <aside
-        id="admin-navigation"
-        aria-label="Main Admin navigation"
-        // Below lg: an off-canvas drawer, `invisible` while closed so its links are out of the tab order.
-        // From lg: the ordinary sidebar, exactly as before.
-        className={`fixed inset-y-0 left-0 z-[var(--z-nav)] flex h-full w-[min(var(--sidebar-width),85vw)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] shadow-[var(--shadow-xl)] transition-[transform,visibility] duration-[var(--duration-base)] ease-[var(--ease-out)] lg:visible lg:static lg:z-auto lg:w-[var(--sidebar-width)] lg:translate-x-0 lg:shadow-none ${
-          navOpen ? "visible translate-x-0" : "invisible -translate-x-full"
-        }`}
-      >
-        <div className="flex items-center gap-2.5 px-4 py-4">
+      {supportSession ? <SupportSessionBanner info={supportSession} /> : null}
+      <header className="tide-field flex h-14 shrink-0 items-center gap-2 bg-[var(--tide-bg)] px-3 sm:gap-3 sm:px-4">
+        <button
+          ref={menuButtonRef}
+          type="button"
+          onClick={() => setNavOpen(true)}
+          aria-label="Open navigation"
+          aria-controls="admin-navigation"
+          aria-expanded={navOpen}
+          className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-white/[0.08] hover:text-[color:var(--color-foreground)] lg:hidden"
+        >
+          <Menu className="size-5" aria-hidden />
+        </button>
+        <div className="flex min-w-0 flex-1 lg:w-[calc(var(--sidebar-width)-1.25rem)] lg:flex-none">
           <ProjectSwitcher current={null} projects={projects} canViewAdmin canCreate={canCreate} />
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={() => setNavOpen(false)}
-            aria-label="Close navigation"
-            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] lg:hidden"
-          >
-            <X className="size-4.5" aria-hidden />
-          </button>
         </div>
-        <nav aria-label="Main Admin" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-6">
-          {sections.map((section) => (
-            <div key={section.title} className="flex flex-col gap-0.5 pb-3">
-              <p className="px-3 pt-1 pb-2 text-[10px] font-semibold tracking-[0.06em] text-[color:var(--color-subtle-foreground)] uppercase">{section.title}</p>
-              {section.items.map((item) => {
-                const active = isActive(pathname, item.href, item.exact);
-                const Icon = item.icon;
-                return (
-                  <NextLink
-                    key={item.href}
-                    href={item.href}
-                    onClick={() => setNavOpen(false)}
-                    aria-current={active ? "page" : undefined}
-                    className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 ${item.sub ? "ml-[1.1rem] pl-2.5" : "pl-3"} text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
-                      active
-                        ? "bg-[var(--color-neutral-bg)] font-medium text-[color:var(--color-foreground)]"
-                        : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]/60 hover:text-[color:var(--color-foreground)]"
-                    }`}
-                  >
-                    <span
-                      aria-hidden
-                      className={`absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-[var(--color-accent)] transition-transform duration-[var(--duration-base)] ${
-                        active ? "scale-y-100" : "scale-y-0"
-                      }`}
-                    />
-                    <Icon className={`size-4 shrink-0 ${active ? "text-[color:var(--color-accent)]" : "text-[color:var(--color-subtle-foreground)]"}`} aria-hidden />
-                    <span className="truncate">{item.label}</span>
-                  </NextLink>
-                );
-              })}
-            </div>
-          ))}
+        <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px] max-lg:hidden">
+          <span className="truncate text-[color:var(--color-muted-foreground)]">Main Admin</span>
+          <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
+          <span aria-current="page" className="truncate font-medium text-[color:var(--color-foreground)]">
+            {currentLabel}
+          </span>
         </nav>
-        <div className="space-y-2.5 border-t border-[var(--color-border)] p-3">
-          <ThemeToggle />
-          <form action={onLogout}>
-            <button
-              type="submit"
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-medium text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:border-[var(--color-danger-border)] hover:bg-[var(--color-danger-bg)] hover:text-[color:var(--color-danger-fg)]"
-            >
-              <LogOut className="size-3.5" aria-hidden />
-              Sign out
-            </button>
-          </form>
-        </div>
-      </aside>
+        <div className="hidden flex-1 lg:block" />
+        <ShellSearch onOpen={() => setPaletteOpen(true)} />
+        <ShellUserMenu username={username} role="Main Admin" accountHref="/admin/account" onLogout={onLogout} />
+      </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {supportSession ? <SupportSessionBanner info={supportSession} /> : null}
-        <header className="flex h-13 shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 text-[13px] sm:px-6">
-          <button
-            ref={menuButtonRef}
-            type="button"
-            onClick={() => setNavOpen(true)}
-            aria-label="Open navigation"
-            aria-controls="admin-navigation"
-            aria-expanded={navOpen}
-            className="-ml-1 mr-1 flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] lg:hidden"
-          >
-            <Menu className="size-5" aria-hidden />
-          </button>
-          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5">
-            <NextLink href="/admin" className="shrink-0 font-medium text-[color:var(--color-accent)] hover:underline">
-              Main Admin
-            </NextLink>
-            <ChevronRight className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />
-            <span aria-current="page" className="truncate font-medium text-[color:var(--color-foreground)]">
-              {currentLabel}
-            </span>
+      <div className="flex min-h-0 flex-1">
+        {navOpen ? <div aria-hidden onClick={() => setNavOpen(false)} className="fixed inset-0 z-[var(--z-nav-scrim)] bg-black/40 backdrop-blur-[2px] lg:hidden" /> : null}
+        <aside
+          id="admin-navigation"
+          aria-label="Main Admin navigation"
+          // Below lg: an off-canvas drawer, `invisible` while closed so its links are out of the tab order.
+          className={`tide-field fixed inset-y-0 left-0 z-[var(--z-nav)] flex h-full w-[min(var(--sidebar-width),85vw)] shrink-0 flex-col bg-[var(--tide-bg)] shadow-[var(--shadow-xl)] transition-transform duration-[var(--duration-base)] ease-[var(--ease-out)] lg:visible lg:relative lg:z-[1] lg:w-[var(--sidebar-width)] lg:translate-x-0 lg:shadow-none ${
+            navOpen ? "visible translate-x-0" : "invisible -translate-x-full"
+          }`}
+        >
+          <div className="flex items-center justify-end px-3 pt-3 lg:hidden">
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={() => setNavOpen(false)}
+              aria-label="Close navigation"
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-white/[0.08] hover:text-[color:var(--color-foreground)]"
+            >
+              <X className="size-5" aria-hidden />
+            </button>
+          </div>
+          <nav aria-label="Main Admin" className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-2.5 pb-6 pt-2">
+            {sections.map((section) => (
+              <div key={section.title} className="flex flex-col gap-0.5 pb-3">
+                <p className="px-3 pb-1.5 pt-2 text-[11px] font-medium text-[color:var(--color-subtle-foreground)]">{section.title}</p>
+                {section.items.map((item) => {
+                  const active = isActive(pathname, item.href, item.exact);
+                  const Icon = item.icon;
+                  return (
+                    <NextLink key={item.href} href={item.href} onClick={() => setNavOpen(false)} aria-current={active ? "page" : undefined} className={navItemClass(active, item.sub ? "ml-[1.1rem] !pl-2.5" : "")}>
+                      <Icon className={navIconClass(active)} aria-hidden />
+                      <span className="truncate">{item.label}</span>
+                    </NextLink>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
-          <span className="flex-1" />
-          <span className="max-w-[40%] truncate text-xs text-[color:var(--color-muted-foreground)]">{username}</span>
-        </header>
-        <main id="main-content" className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-5 py-7 sm:px-8 sm:py-9">{children}</div>
+          <div className="border-t border-[var(--color-border)] p-3">
+            <ThemeToggle />
+          </div>
+        </aside>
+
+        <main id="main-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--color-background)] lg:rounded-tl-[22px]">
+          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7">{children}</div>
         </main>
       </div>
+      {paletteOpen ? <CommandPalette onClose={closePalette} links={sections.flatMap((section) => section.items.map(({ href, label, icon }) => ({ href, label, icon, group: section.title })))} /> : null}
     </div>
   );
 }

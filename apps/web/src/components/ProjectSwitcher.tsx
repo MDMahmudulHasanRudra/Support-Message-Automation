@@ -92,11 +92,11 @@ export function ProjectSwitcher({
         {collapsed ? null : (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-semibold leading-tight tracking-[-0.01em] text-[color:var(--color-foreground)]">
-                {title}
+              <span className="block truncate text-[14px] font-semibold leading-tight tracking-[-0.01em] text-[color:var(--color-foreground)]">
+                {productName}
               </span>
-              <span className="block truncate text-[11px] text-[color:var(--color-muted-foreground)]">
-                {current ? `${productName} project` : productName}
+              <span className="block truncate text-[11.5px] text-[color:var(--color-muted-foreground)]">
+                {title}
               </span>
             </span>
             <ChevronsUpDown className="size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)]" aria-hidden />

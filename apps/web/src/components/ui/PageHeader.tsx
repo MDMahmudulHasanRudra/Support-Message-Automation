@@ -11,7 +11,7 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-8 flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-[var(--color-border)] pb-6">
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
       <div className="min-w-0">
         <h1 className="text-[27px] font-semibold leading-[1.15] tracking-[-0.025em] text-[color:var(--color-foreground)]">
           {title}
