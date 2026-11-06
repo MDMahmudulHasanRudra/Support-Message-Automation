@@ -499,8 +499,11 @@ function DetailsTab({ data }: { data: WorkspaceData }) {
           <ol className="space-y-1.5 text-[12px] text-[color:var(--color-muted-foreground)]">
             {data.history.map((h) => (
               <li key={h.id}>
-                <span className="text-[color:var(--color-foreground)]">{h.actorName ?? "Someone"}</span>{" "}
+                <span className="text-[color:var(--color-foreground)]">{h.actorName ?? (h.auto ? "Automatic routing" : "Someone")}</span>{" "}
                 {describeHistory(h)} · <RelTime iso={h.at} />
+                {h.auto ? (
+                  <span className="ml-1.5 rounded-[var(--radius-sm)] px-1 text-[10.5px] ring-1 ring-[var(--color-border)]">Auto</span>
+                ) : null}
               </li>
             ))}
           </ol>

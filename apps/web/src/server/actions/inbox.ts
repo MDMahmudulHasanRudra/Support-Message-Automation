@@ -9,6 +9,7 @@ import { activeProjectId } from "@/server/projectContext";
 import { hasPermission } from "@/server/permissions";
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { mentionablePeople } from "@/server/inboxWorkspace";
+import { distributeConversations } from "@/server/autoRouting";
 import { assignChannelConversation, assignChannelConversationTeam, setChannelConversationStatus } from "@/server/channels/replies";
 import {
   conversationRefColumns,
@@ -228,7 +229,9 @@ export type BulkOp =
   | { op: "team"; teamId: string | null }
   | { op: "status"; status: "OPEN" | "CLOSED" }
   /** Inbox V3 (UNIFIED_INBOX_V3): OPEN / PENDING / RESOLVED, or SNOOZED with `until` (ISO). */
-  | { op: "lifecycle"; to: string; until?: string };
+  | { op: "lifecycle"; to: string; until?: string }
+  /** Automatic routing (AUTO_ROUTING + UNIFIED_INBOX_V3): spread the unassigned ones round robin over the routing pool. */
+  | { op: "distribute" };
 
 export interface BulkResult {
   changed: number;
@@ -262,6 +265,8 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
     return { error: "Assignment is switched off for this project." };
   }
   if (opInput.op === "lifecycle" && !lifecycleOn) return { error: "Conversation status is switched off for this project." };
+  if (opInput.op === "distribute" && (!lifecycleOn || disabled.has("AUTO_ROUTING"))) return { error: "Automatic routing is switched off for this project." };
+  const toDistribute: ConversationRef[] = [];
 
   const canWhatsApp = !disabled.has("WHATSAPP_CHAT") && (await hasPermission(session, "messages.reply"));
   const canChannel = !disabled.has("OMNICHANNEL") && (await hasPermission(session, "conversations.reply"));
@@ -337,6 +342,12 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
           );
           continue;
         }
+      }
+
+      if (opInput.op === "distribute") {
+        // Checked for existence and permission above; routed together below, in the order selected.
+        toDistribute.push(ref);
+        continue;
       }
 
       if (opInput.op === "priority" || opInput.op === "addTag" || opInput.op === "removeTag") {
@@ -416,6 +427,14 @@ export async function bulkUpdateConversations(refsInput: unknown[], opInput: Bul
       result.failed++;
       note("Some changes failed; try those conversations again.");
     }
+  }
+  if (toDistribute.length) {
+    const spread = await distributeConversations(toDistribute, session.userId);
+    if ("error" in spread) return spread;
+    result.changed += spread.assigned;
+    result.unchanged += spread.alreadyAssigned;
+    result.skipped += spread.skipped;
+    for (const s of spread.notes) note(s);
   }
   return result;
 }

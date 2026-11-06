@@ -71,6 +71,8 @@ export interface InboxOptions {
   collaboration: boolean;
   /** Inbox V3 status, snooze and WhatsApp assignment (UNIFIED_INBOX_V3) are on for this project. */
   lifecycle: boolean;
+  /** Automatic routing (AUTO_ROUTING with UNIFIED_INBOX_V3) is on: offers "Distribute evenly". */
+  autoRouting: boolean;
   /** May share views with the team (channels.manage). */
   canShare: boolean;
 }
@@ -849,6 +851,17 @@ function BulkBar({
               </option>
             ))}
           </select>
+        ) : null}
+        {options.autoRouting ? (
+          <button
+            type="button"
+            disabled={none}
+            onClick={() => onRun({ op: "distribute" })}
+            title="Give the selected unassigned conversations to the routing pool in turn"
+            className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50"
+          >
+            Distribute evenly
+          </button>
         ) : null}
         {options.lifecycle ? (
           <>

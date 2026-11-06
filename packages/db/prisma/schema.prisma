@@ -736,6 +736,7 @@ model Project {
   conversationPresence                 ConversationPresence[]
   whatsAppConversationStates           WhatsAppConversationState[]
   inboxLifecycleSettings               InboxLifecycleSettings?
+  routingSettings                      RoutingSettings?
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -9574,6 +9575,44 @@ model InboxLifecycleSettings {
   reopenSnoozedOnCustomerMessage  Boolean  @default(true)
   updatedById                     String?
   updatedAt                       DateTime @updatedAt
+}
+
+/// Automatic conversation routing (AUTO_ROUTING.md; features AUTO_ROUTING + UNIFIED_INBOX_V3, both off by
+/// default). One row per project; no row = routing off. Who may receive a conversation is decided at the
+/// moment of routing (packages/shared autoRouting.ts) and never stored; only the round-robin pointer and a
+/// count-only note of the last time nobody could take one are kept here.
+model RoutingSettings {
+  id                    String    @id @default(cuid())
+  projectId             String    @unique @default(dbgenerated("project_id_required()"))
+  project               Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  enabled               Boolean   @default(false)
+  /// When it was last switched on. Only conversations a customer wrote in since then are routed by
+  /// themselves, so switching it on never hands out an old backlog.
+  enabledAt             DateTime?
+  /// WEBCHAT | MESSENGER | INSTAGRAM | TELEGRAM | WHATSAPP_PERSONAL (ROUTING_CHANNELS).
+  channels              String[]  @default([])
+  /// WhatsApp groups, separately and off by default. A group with an owner
+  /// (WhatsAppGroup.assignedTeamMemberId, on any of our numbers' copies) is never routed.
+  includeWhatsAppGroups Boolean   @default(false)
+  /// ROUND_ROBIN | LEAST_OPEN (CHECK).
+  method                String    @default("ROUND_ROBIN")
+  /// The most OPEN + PENDING conversations one person may hold before routing passes them by.
+  maxOpenPerAgent       Int       @default(15)
+  /// The pool: people in these Teams at the moment of routing, plus these logins.
+  poolTeamIds           String[]  @default([])
+  poolUserIds           String[]  @default([])
+  /// Only people whose linked team member is on duty now by the roster.
+  onlyOnDuty            Boolean   @default(false)
+  /// Only people who used the dashboard within recentlySeenMinutes (their session's last use).
+  requireRecentlySeen   Boolean   @default(false)
+  recentlySeenMinutes   Int       @default(15)
+  /// Round-robin pointer: the last person routing picked. Moved only under the project's routing lock.
+  lastPickedUserId      String?
+  /// The last time a conversation could not be routed, and why: counts per reason, nothing else.
+  lastUnroutedAt        DateTime?
+  lastUnroutedReasons   Json?
+  updatedById           String?
+  updatedAt             DateTime  @updatedAt
 }
 
 /// Inbox V3 agent presence (V3-05): who has a conversation open, and who is typing in it, as a heartbeat.

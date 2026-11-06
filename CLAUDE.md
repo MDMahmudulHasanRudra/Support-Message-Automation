@@ -2933,6 +2933,15 @@ Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker 
 - **Message search** (`server/whatsAppMessageSearch.ts`, `INBOX_WORKSPACE.md` § Message search): full history through the trigram index `Message_body_search_idx` (build it CONCURRENTLY by hand before deploying its migration). Two phases: recent rows per account first, the index only for older history; only the window EVERY account was read through counts from phase 1. One core, 3 s timeout, ≥3 characters, 100 a page / 1,000 in all, snippets only, never revoked messages. With V3 off the search is names only.
 - **Triage** (`INBOX_WORKSPACE.md` § Triage): a waiting row shows the wait from the customer's FIRST message after our last reply (a failed send is no reply); Sort newest / oldest / longest waiting through one stable `orderInboxItems`; Last message from customer / us. Longest waiting must keep every unanswered conversation, never only the 300 most recent.
 
+### Automatic routing (`AUTO_ROUTING.md`, 7 Nov 2026)
+
+Feature `AUTO_ROUTING`, **off by default**, needs `UNIFIED_INBOX_V3` and its own settings on. One function, `routeConversation` (packages/db), serves the message hooks, the 60 s sweep and "Distribute evenly". Rules worth not undoing:
+- Never replaces an assignee. Nobody eligible leaves it unassigned and records why, by counts. Never assigns in a held project.
+- The per-project advisory lock covers the pointer, the counts, the pick, the write and the event. A test fails without it.
+- Permission is the existing resolver (`resolveRoleKeys`, `levelAllows`, page selection), never a second one. Leave always excludes; the roster applies only with "only on duty".
+- A group with an owner is never routed; groups are off unless switched on separately; one copy assigned means the other copy is not routed.
+- `enabledAt` keeps an old backlog from being handed out. An assignment is an `ASSIGNEE` event with `{ reason: "AUTO_ROUTING" }` in its context.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

@@ -10,6 +10,7 @@ import {
   type ConversationPriorityValue,
   type ConversationRef,
   type ConversationStatus,
+  isAutoRoutingContext,
 } from "@support-automation/shared";
 import { loadLifecycle } from "@/server/conversationLifecycle";
 
@@ -118,7 +119,7 @@ export interface WorkspaceData {
   /** Channel conversations: the person handling it. */
   assignedUserId: string | null;
   /** Channel conversations: assignment / status history, newest first. */
-  history: { id: string; kind: string; from: string | null; to: string | null; actorName: string | null; at: string }[];
+  history: { id: string; kind: string; from: string | null; to: string | null; actorName: string | null; /** Given by automatic routing (AUTO_ROUTING.md). */ auto: boolean; at: string }[];
   /** WhatsApp groups: the owner set on the Groups page (read here, changed there). */
   groupOwner: { name: string; groupName: string } | null;
   /** Inbox V3 (UNIFIED_INBOX_V3): the conversation status. Null while the feature is off. */
@@ -231,7 +232,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
           where: ref.kind === "channel" ? { channelConversationId: ref.conversationId } : { accountId: ref.accountId, chatId: ref.chatId },
           orderBy: { createdAt: "desc" },
           take: 20,
-          select: { id: true, kind: true, fromValue: true, toValue: true, createdAt: true, actor: { select: { name: true } } },
+          select: { id: true, kind: true, fromValue: true, toValue: true, context: true, createdAt: true, actor: { select: { name: true } } },
         })
       : [],
     ref.kind === "whatsapp" && ref.chatId.endsWith("@g.us") && access.collaboration
@@ -267,7 +268,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     teams,
     assignedTeamId: lifecycle ? lifecycle.assignedTeamId : (channel?.assignedTeamId ?? null),
     assignedUserId: lifecycle ? lifecycle.assignedUserId : (channel?.assignedUserId ?? null),
-    history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, at: e.createdAt.toISOString() })),
+    history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, auto: isAutoRoutingContext(e.context), at: e.createdAt.toISOString() })),
     groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
     lifecycle: lifecycle
       ? { status: lifecycle.status, snoozedUntil: lifecycle.snoozedUntil?.toISOString() ?? null, statusChangedAt: lifecycle.statusChangedAt?.toISOString() ?? null }

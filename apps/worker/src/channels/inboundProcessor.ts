@@ -16,6 +16,7 @@ import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { applyChannelCustomerMessage } from "../inbox/lifecycle.js";
+import { routeChannelConversationOnMessage } from "../routing/autoRouting.js";
 import { getAiSettings } from "../ai/settings.js";
 import { metaAppSecretFor, fetchMetaProfileName, type FetchImpl } from "./providerApi.js";
 
@@ -210,6 +211,8 @@ async function storeMessage(connection: Connection, event: Extract<NormalizedCha
     direction: "INBOUND",
     inbound: true,
   });
+  // Automatic routing (routing/autoRouting.ts): a no-op unless AUTO_ROUTING and UNIFIED_INBOX_V3 are on. Never throws.
+  await routeChannelConversationOnMessage(conversation.id, event.occurredAt);
 }
 
 async function findOrOpenConversation(connection: Connection, event: Extract<NormalizedChannelEvent, { type: "MESSAGE" }>, fetchImpl: FetchImpl) {

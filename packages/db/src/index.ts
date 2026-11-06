@@ -28,8 +28,33 @@ import {
   SUPPORT_ASSIGNMENT_TEMPLATE_KEYS,
   supportAssignmentDedupKey,
   supportAssignmentNoticeVars,
+  countIneligible,
+  decideRoutingEligibility,
+  dhakaMinuteOfDay,
+  dutyNow,
+  isRoutingChannel,
+  isRoutingMethod,
+  levelAllows,
+  pickRoutingAgent,
+  resolveRoleKeys,
+  ROUTING_CHANNELS,
+  ROUTING_POOL_MAX,
+  routingReplyKey,
+  routingReplyPages,
+  toDhakaDateOnly,
+  whatsAppConversationType,
 } from "@support-automation/shared";
-import type { RuleAction, SubscriptionReading } from "@support-automation/shared";
+import type {
+  DutyNow,
+  RosterDay,
+  RoutingConversationKind,
+  RoutingEventContext,
+  RoutingIneligibleReason,
+  RoutingMethod,
+  RoutingSettingsValue,
+  RuleAction,
+  SubscriptionReading,
+} from "@support-automation/shared";
 
 // Standard Next.js/Node singleton pattern: avoids exhausting Postgres
 // connections from hot-reload creating a new PrismaClient per request in dev.
@@ -175,6 +200,13 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // Client CRM & Billing V7 (CLIENT_CRM_V7.md).
   "ClientRenewalOffer", "ClientRenewalOfferEvent", "ClientMessageTemplate", "ClientMessageTemplateVersion", "ClientMessageBatch", "ClientMessage",
   "ClientDocumentSettingsVersion", "ClientDocumentAsset",
+  // Inbox V3 (INBOX_WORKSPACE.md) and automatic routing (AUTO_ROUTING.md). The three Inbox V3 tables were
+  // written as if scoped ("another project's conversation is simply not found") but had not been listed, so a
+  // read such as "this project's reopen policy" or "how many conversations does this person hold" could see
+  // another project's rows.
+  "WhatsAppConversationState", "InboxLifecycleSettings", "ConversationPresence", "RoutingSettings",
+  // Failed Replies history (FAILED_REPLIES.md): written with its project, read by its reply; listed for the same reason.
+  "FailedReplyAction",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
@@ -2194,4 +2226,286 @@ export async function recomputeCustomerBilling(db: PrismaClient, customerId: str
     });
   }
   return { reading, holdChanged };
+}
+
+// -------------------------------------------------------------------------------------------------
+// Automatic conversation routing (AUTO_ROUTING.md; features AUTO_ROUTING + UNIFIED_INBOX_V3)
+// -------------------------------------------------------------------------------------------------
+//
+// Shared by the worker (automatic routing on a customer message and the 60 s sweep) and the web (the inbox's
+// "Distribute evenly" and the settings page's Routing panel), so who is eligible and whom to pick are decided
+// in one place. Every function takes the CALLER's project-scoped client: the pool, the counts and the writes
+// are therefore confined to the project the work is for. The pure rules are packages/shared autoRouting.ts.
+
+export interface RoutingSettingsRecord extends RoutingSettingsValue {
+  enabledAt: Date | null;
+  lastPickedUserId: string | null;
+}
+
+/** The project's routing settings, or null when nobody has saved any (= routing off). */
+export async function readRoutingSettings(db: PrismaClient): Promise<RoutingSettingsRecord | null> {
+  const row = await db.routingSettings.findFirst({
+    select: {
+      enabled: true,
+      enabledAt: true,
+      channels: true,
+      includeWhatsAppGroups: true,
+      method: true,
+      maxOpenPerAgent: true,
+      poolTeamIds: true,
+      poolUserIds: true,
+      onlyOnDuty: true,
+      requireRecentlySeen: true,
+      recentlySeenMinutes: true,
+      lastPickedUserId: true,
+    },
+  });
+  if (!row) return null;
+  return { ...row, channels: row.channels.filter(isRoutingChannel), method: isRoutingMethod(row.method) ? row.method : "ROUND_ROBIN" };
+}
+
+/** What routing knows about one person in the pool, except their open conversations (counted under the lock). */
+export interface RoutingPoolMember {
+  userId: string;
+  name: string;
+  activeLogin: boolean;
+  projectAccess: boolean;
+  teamMemberLinked: boolean;
+  duty: DutyNow | null;
+  lastSeenAt: Date | null;
+  /** Whether they may reply to each kind of conversation in this project. */
+  replyByKind: Record<RoutingConversationKind, boolean>;
+}
+
+const ROUTING_KINDS: readonly RoutingConversationKind[] = [...ROUTING_CHANNELS, "WHATSAPP_GROUP"];
+
+/**
+ * The pool at `now`: the people in the chosen Teams AT THIS MOMENT (open TeamMembership, active member, active
+ * Team, a linked login) plus the chosen logins, with every fact eligibility needs.
+ *
+ * Permission is the existing resolver, not a second one: the global role, the project role in THIS project
+ * (`resolveRoleKeys`), the project access level (`levelAllows`) and — for a member whose project role selects
+ * pages — that page at Full (`routingReplyPages`), as `server/permissions.ts` decides a reply. The project's
+ * feature switches are the caller's to check. PROJECT_ROLES_DISABLED / PROJECT_ROLE_PAGES_DISABLED are honoured
+ * from this process's environment.
+ */
+export async function loadRoutingPool(
+  db: PrismaClient,
+  projectId: string,
+  settings: Pick<RoutingSettingsValue, "poolTeamIds" | "poolUserIds">,
+  now: Date,
+): Promise<RoutingPoolMember[]> {
+  const fromTeams = settings.poolTeamIds.length
+    ? await db.teamMembership.findMany({
+        where: {
+          teamId: { in: settings.poolTeamIds },
+          endedAt: null,
+          OR: [{ startedAt: null }, { startedAt: { lte: now } }],
+          team: { status: "ACTIVE" },
+          teamMember: { status: "ACTIVE", userId: { not: null } },
+        },
+        select: { teamMember: { select: { userId: true } } },
+      })
+    : [];
+  const userIds = [...new Set([...settings.poolUserIds, ...fromTeams.map((m) => m.teamMember.userId!)])].slice(0, ROUTING_POOL_MAX);
+  if (userIds.length === 0) return [];
+
+  const today = toDhakaDateOnly(now);
+  const yesterday = new Date(today.getTime() - 86_400_000);
+  const [users, access, memberships, members, sessions] = await Promise.all([
+    db.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, isActive: true, supportOperatorId: true, permissionModule: { select: { permissions: { select: { permission: { select: { key: true } } } } } } },
+    }),
+    db.projectAccess.findMany({ where: { projectId, userId: { in: userIds } }, select: { userId: true, level: true } }),
+    db.projectMemberRole.findMany({
+      where: { projectId, userId: { in: userIds } },
+      select: { userId: true, isLead: true, projectRoleId: true, projectRole: { select: { projectId: true, permissionKeys: true, sectionAccess: true } } },
+    }),
+    db.internalTeamMember.findMany({ where: { userId: { in: userIds }, status: "ACTIVE" }, select: { id: true, userId: true }, orderBy: { createdAt: "asc" } }),
+    db.userSession.groupBy({
+      by: ["userId"],
+      where: { userId: { in: userIds }, revokedAt: null, expiresAt: { gt: now }, supportAccessSessionId: null },
+      _max: { lastUsedAt: true },
+    }),
+  ]);
+  const memberOf = new Map<string, string>();
+  for (const m of members) if (m.userId && !memberOf.has(m.userId)) memberOf.set(m.userId, m.id);
+  const memberIds = [...memberOf.values()];
+  const [duties, leave, attendance] = memberIds.length
+    ? await Promise.all([
+        db.dutyAssignment.findMany({
+          where: { teamMemberId: { in: memberIds }, dutyDate: { in: [today, yesterday] } },
+          select: { teamMemberId: true, dutyDate: true, status: true, shiftStartMinute: true, shiftEndMinute: true },
+        }),
+        db.leaveRequest.findMany({ where: { teamMemberId: { in: memberIds }, status: "APPROVED", startDate: { lte: today }, endDate: { gte: today } }, select: { teamMemberId: true } }),
+        db.teamAttendanceDay.findMany({ where: { teamMemberId: { in: memberIds }, activityDate: today }, select: { teamMemberId: true, override: true } }),
+      ])
+    : [[], [], []];
+
+  const rolesDisabled = process.env.PROJECT_ROLES_DISABLED === "true";
+  const pagesDisabled = process.env.PROJECT_ROLE_PAGES_DISABLED === "true";
+  const accessOf = new Map(access.map((a) => [a.userId, a]));
+  const membershipOf = new Map(memberships.map((m) => [m.userId, m]));
+  const seenOf = new Map(sessions.map((s) => [s.userId, s._max.lastUsedAt]));
+  const onLeave = new Set(leave.map((l) => l.teamMemberId));
+  const overrideOf = new Map(attendance.map((a) => [a.teamMemberId, a.override]));
+  const rosterDay = (memberId: string, date: Date): RosterDay | null => {
+    const d = duties.find((x) => x.teamMemberId === memberId && x.dutyDate.getTime() === date.getTime());
+    return d ? { status: d.status, shiftStartMinute: d.shiftStartMinute, shiftEndMinute: d.shiftEndMinute } : null;
+  };
+  const minute = dhakaMinuteOfDay(now);
+
+  return users.map((u) => {
+    const grant = accessOf.get(u.id);
+    const row = membershipOf.get(u.id) ?? null;
+    const globalKeys = u.permissionModule?.permissions.map((p) => p.permission.key) ?? [];
+    // A role of another project means nothing here (a trigger refuses attaching one), as in server/permissions.ts.
+    const ownRole = row?.projectRole && row.projectRole.projectId === projectId ? row.projectRole : null;
+    const membership = row ? { isLead: row.isLead, projectRoleKeys: row.projectRoleId ? (ownRole?.permissionKeys ?? []) : null } : null;
+    const keys = resolveRoleKeys(globalKeys, membership, rolesDisabled);
+    const sections = ownRole?.sectionAccess && typeof ownRole.sectionAccess === "object" && !Array.isArray(ownRole.sectionAccess) ? (ownRole.sectionAccess as Record<string, unknown>) : null;
+    const pagesApply = Boolean(row && !row.isLead && ownRole && ownRole.sectionAccess !== null && !globalKeys.includes("projects.manage") && !pagesDisabled && !rolesDisabled);
+    const replyByKind = Object.fromEntries(
+      ROUTING_KINDS.map((kind) => {
+        const key = routingReplyKey(kind);
+        const page = !pagesApply || routingReplyPages(kind).some((p) => sections?.[p] === "FULL");
+        return [kind, keys.has(key) && levelAllows(grant?.level ?? null, key) && page];
+      }),
+    ) as Record<RoutingConversationKind, boolean>;
+    const memberId = memberOf.get(u.id) ?? null;
+    return {
+      userId: u.id,
+      name: u.name,
+      activeLogin: u.isActive && u.supportOperatorId === null,
+      projectAccess: grant !== undefined,
+      teamMemberLinked: memberId !== null,
+      duty: memberId
+        ? dutyNow({
+            today: rosterDay(memberId, today),
+            yesterday: rosterDay(memberId, yesterday),
+            onApprovedLeave: onLeave.has(memberId),
+            override: overrideOf.get(memberId) ?? null,
+            minuteOfDay: minute,
+          })
+        : null,
+      lastSeenAt: seenOf.get(u.id) ?? null,
+      replyByKind,
+    };
+  });
+}
+
+/** OPEN + PENDING conversations each person holds in this project (WhatsApp states and channel conversations). */
+export async function countOpenAssigned(db: PrismaClient | Prisma.TransactionClient, userIds: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>(userIds.map((id) => [id, 0]));
+  if (userIds.length === 0) return out;
+  const wa = await db.whatsAppConversationState.groupBy({ by: ["assignedUserId"], where: { assignedUserId: { in: [...userIds] }, status: { in: ["OPEN", "PENDING"] } }, _count: { _all: true } });
+  const ch = await db.channelConversation.groupBy({ by: ["assignedUserId"], where: { assignedUserId: { in: [...userIds] }, status: { in: ["OPEN", "PENDING"] } }, _count: { _all: true } });
+  for (const r of [...wa, ...ch]) if (r.assignedUserId) out.set(r.assignedUserId, (out.get(r.assignedUserId) ?? 0) + r._count._all);
+  return out;
+}
+
+export type RoutingTargetRef = { kind: "channel"; conversationId: string } | { kind: "whatsapp"; accountId: string; chatId: string };
+
+export type RouteOutcome =
+  | { outcome: "ASSIGNED"; userId: string }
+  /** Somebody (a person, another worker) assigned it first: left alone. */
+  | { outcome: "ALREADY_ASSIGNED" }
+  | { outcome: "NOT_OPEN" }
+  | { outcome: "NOT_FOUND" }
+  | { outcome: "NOBODY_ELIGIBLE"; reasons: Partial<Record<RoutingIneligibleReason, number>> };
+
+/**
+ * Gives ONE conversation to one eligible person, or to nobody. Everything that decides happens inside one
+ * transaction holding the project's routing lock (`pg_advisory_xact_lock`, held in Postgres so it holds across
+ * worker processes and the web): the conversation is re-read (still OPEN, still unassigned), the round-robin
+ * pointer and every person's open count are read, one person is picked, the conversation is assigned by a
+ * conditional update ("still unassigned"), its ConversationEvent (kind ASSIGNEE, context
+ * { reason: "AUTO_ROUTING", method, via }) is written and the pointer is moved — so two callers can neither
+ * pick the same next person nor both push someone past capacity, and a replay assigns nothing twice.
+ * A WhatsApp conversation with no state row gets one here (no row = OPEN, unassigned).
+ */
+export async function routeConversation(
+  db: PrismaClient,
+  input: {
+    projectId: string;
+    target: RoutingTargetRef;
+    kind: RoutingConversationKind;
+    settings: Pick<RoutingSettingsValue, "onlyOnDuty" | "requireRecentlySeen" | "recentlySeenMinutes" | "maxOpenPerAgent">;
+    method: RoutingMethod;
+    pool: readonly RoutingPoolMember[];
+    via: RoutingEventContext["via"];
+    actorId: string | null;
+    now: Date;
+    /** Test seam only: awaited inside the lock after the pointer and counts were read. */
+    afterReadForTests?: () => Promise<unknown>;
+  },
+): Promise<RouteOutcome> {
+  const { target, projectId, now } = input;
+  return db.$transaction(
+    async (tx): Promise<RouteOutcome> => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`auto-routing:${projectId}`})::bigint)`;
+
+      let stateId: string | null = null;
+      if (target.kind === "channel") {
+        const c = await tx.channelConversation.findFirst({ where: { id: target.conversationId }, select: { status: true, assignedUserId: true } });
+        if (!c) return { outcome: "NOT_FOUND" };
+        if (c.assignedUserId) return { outcome: "ALREADY_ASSIGNED" };
+        if (c.status !== "OPEN") return { outcome: "NOT_OPEN" };
+      } else {
+        if (!whatsAppConversationType(target.chatId)) return { outcome: "NOT_FOUND" };
+        const s = await tx.whatsAppConversationState.findFirst({ where: { accountId: target.accountId, chatId: target.chatId }, select: { id: true, status: true, assignedUserId: true } });
+        if (s?.assignedUserId) return { outcome: "ALREADY_ASSIGNED" };
+        if (s && s.status !== "OPEN") return { outcome: "NOT_OPEN" };
+        // A group two of our numbers are in is one conversation for the customer: once any copy has a person,
+        // the others are not routed again (a personal chat belongs to its own number, so this is groups only).
+        if (target.chatId.endsWith("@g.us")) {
+          const sibling = await tx.whatsAppConversationState.findFirst({ where: { chatId: target.chatId, assignedUserId: { not: null } }, select: { id: true } });
+          if (sibling) return { outcome: "ALREADY_ASSIGNED" };
+        }
+        stateId = s?.id ?? null;
+      }
+
+      const pointer = (await tx.routingSettings.findFirst({ select: { lastPickedUserId: true } }))?.lastPickedUserId ?? null;
+      const counts = await countOpenAssigned(tx, input.pool.map((p) => p.userId));
+      const decisions = input.pool.map((p) => ({
+        userId: p.userId,
+        d: decideRoutingEligibility({ ...p, canReply: p.replyByKind[input.kind], openCount: counts.get(p.userId) ?? 0 }, input.settings, now),
+      }));
+      const eligible = decisions.filter((x) => x.d.eligible).map((x) => ({ userId: x.userId, openCount: counts.get(x.userId) ?? 0 }));
+      if (input.afterReadForTests) await input.afterReadForTests();
+      const picked = pickRoutingAgent(eligible, input.method, pointer);
+      if (!picked) return { outcome: "NOBODY_ELIGIBLE", reasons: countIneligible(decisions.map((x) => x.d)) };
+
+      let moved: number;
+      if (target.kind === "channel") {
+        moved = (await tx.channelConversation.updateMany({ where: { id: target.conversationId, assignedUserId: null, status: "OPEN" }, data: { assignedUserId: picked } })).count;
+      } else if (stateId) {
+        moved = (await tx.whatsAppConversationState.updateMany({ where: { id: stateId, assignedUserId: null, status: "OPEN" }, data: { assignedUserId: picked } })).count;
+      } else {
+        // ON CONFLICT DO NOTHING: a person who created the row meanwhile wins, and this transaction stays usable.
+        moved = (
+          await tx.whatsAppConversationState.createMany({
+            data: [{ projectId, accountId: target.accountId, chatId: target.chatId, conversationType: whatsAppConversationType(target.chatId)!, assignedUserId: picked }],
+            skipDuplicates: true,
+          })
+        ).count;
+      }
+      if (moved === 0) return { outcome: "ALREADY_ASSIGNED" };
+
+      const context: RoutingEventContext = { reason: "AUTO_ROUTING", method: input.method, via: input.via };
+      const ref = target.kind === "channel" ? { channelConversationId: target.conversationId } : { accountId: target.accountId, chatId: target.chatId };
+      await tx.conversationEvent.create({
+        data: { projectId, ...ref, kind: "ASSIGNEE", fromValue: null, toValue: picked, actorId: input.actorId, context: context as unknown as Prisma.InputJsonValue },
+      });
+      await tx.routingSettings.updateMany({ data: { lastPickedUserId: picked } });
+      return { outcome: "ASSIGNED", userId: picked };
+    },
+    { maxWait: 10_000, timeout: 30_000 },
+  );
+}
+
+/** Records, by counts only, that a conversation could not be routed. Best effort. */
+export async function noteUnrouted(db: PrismaClient, reasons: Partial<Record<RoutingIneligibleReason, number>>, now: Date): Promise<void> {
+  await db.routingSettings.updateMany({ data: { lastUnroutedAt: now, lastUnroutedReasons: reasons as Prisma.InputJsonValue } }).catch(() => undefined);
 }
