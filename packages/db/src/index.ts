@@ -175,6 +175,11 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // Client CRM & Billing V7 (CLIENT_CRM_V7.md).
   "ClientRenewalOffer", "ClientRenewalOfferEvent", "ClientMessageTemplate", "ClientMessageTemplateVersion", "ClientMessageBatch", "ClientMessage",
   "ClientDocumentSettingsVersion", "ClientDocumentAsset",
+  // Inbox V3 (INBOX_WORKSPACE.md). Written as if scoped ("another project's conversation is simply not found") but not listed,
+  // so "this project's reopen policy" or the snooze sweep could read another project's rows.
+  "WhatsAppConversationState", "InboxLifecycleSettings", "ConversationPresence",
+  // Failed Replies history (FAILED_REPLIES.md): written with its project, read by its reply; listed for the same reason.
+  "FailedReplyAction",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
