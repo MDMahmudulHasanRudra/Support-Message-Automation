@@ -30,6 +30,7 @@ import { recordMessagePictures } from "../avatars/whatsappPictures.js";
 import { trackSupportResponse } from "../supportResponse/tracker.js";
 import { trackSupportAssignment } from "../supportAssignment/tracker.js";
 import { recordWhatsAppConversationActivity } from "../inbox/lifecycle.js";
+import { recordCsatAnswerFromWhatsApp } from "../csat/csatSurveys.js";
 import { recordMoodSignal } from "../mood/moodDetection.js";
 import { currentProjectId, projectIsOperating, withAccountProject } from "../project/context.js";
 import { messageTraceId } from "../logging/logRef.js";
@@ -650,6 +651,11 @@ async function persistIncomingMessage(
   // Inbox V3 (inbox/lifecycle.ts): a customer's message reopens a recorded WhatsApp conversation by the
   // project's policy. A no-op while UNIFIED_INBOX_V3 is off or nobody has acted on this chat. Never throws.
   await recordWhatsAppConversationActivity({ accountId: raw.accountId, chatId: raw.chatId, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
+
+  // Satisfaction surveys (CSAT.md): a customer's next message after a survey is read once; if it is nothing but
+  // a rating it is also recorded as the answer. The message is processed exactly as before. A no-op while
+  // CSAT_SURVEYS is off or nothing was asked in this chat. Never throws.
+  await recordCsatAnswerFromWhatsApp({ accountId: raw.accountId, chatId: raw.chatId, messageId: message.id, body: raw.body, at: raw.timestampWa, fromCustomer: !isFromTeamMember });
 
   return { message, group, isFromTeamMember, quotedMessage, previous };
 }

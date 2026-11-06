@@ -736,6 +736,8 @@ model Project {
   conversationPresence                 ConversationPresence[]
   whatsAppConversationStates           WhatsAppConversationState[]
   inboxLifecycleSettings               InboxLifecycleSettings?
+  csatSurveys                          CsatSurvey[]
+  csatSettings                         CsatSettings?
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -1232,6 +1234,7 @@ model WhatsAppAccount {
   scopedKnowledge      AiKnowledgeItem[]           @relation("AiKnowledgeScopeAccount")
   conversationStates   WhatsAppConversationState[]
   conversationEvents   ConversationEvent[]         @relation("ConversationEventAccount")
+  csatSurveys          CsatSurvey[]
   conversationLabels   ConversationLabel[]
   conversationNotes    ConversationNote[]
   aiDrafts             AiDraft[]
@@ -1888,6 +1891,8 @@ model OutboundMessage {
   replyResolvedById   String?
   replyResolutionNote String?
   failedReplyActions  FailedReplyAction[]
+  /// The satisfaction survey this message asked (CSAT.md), if it was one.
+  csatSurvey          CsatSurvey?
 
   aiFallbackDecision AiFallbackDecision?
 
@@ -6579,6 +6584,7 @@ model ChannelConversation {
   notes             ConversationNote[]
   aiDrafts          AiDraft[]
   events            ConversationEvent[]
+  csatSurveys       CsatSurvey[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -6650,6 +6656,8 @@ model ChannelMessage {
   replyResolvedById   String?
   replyResolutionNote String?
   failedReplyActions  FailedReplyAction[]
+  /// The satisfaction survey this message asked (CSAT.md), if it was one.
+  csatSurvey          CsatSurvey?
 
   @@unique([projectId, connectionId, externalMessageId])
   @@unique([projectId, idempotencyKey])
@@ -8206,6 +8214,8 @@ model ConversationEvent {
   /// Why and how, never message text: e.g. { reason: "CUSTOMER_MESSAGE" } or { snoozedUntil }.
   context               Json?
   createdAt             DateTime             @default(now())
+  /// The satisfaction survey a RESOLVE event led to (CSAT.md): at most one per resolution.
+  csatSurvey            CsatSurvey?
 
   @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
@@ -9593,4 +9603,92 @@ model ConversationPresence {
   @@unique([projectId, conversationKey, userId])
   @@index([projectId, conversationKey, seenAt])
   @@index([projectId, seenAt])
+}
+
+/// CSAT.md: where a satisfaction survey was asked. A WhatsApp group is never one of them (CHECK on chatId too).
+enum CsatChannel {
+  WHATSAPP_PERSONAL
+  WEBCHAT
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+}
+
+enum CsatSurveyStatus {
+  /// Recorded when a person resolved the conversation; the worker has not decided yet.
+  PENDING
+  /// Asked: the message was queued through the channel's one send queue, or the website chat card is showing.
+  SENT
+  /// Not asked, with the reason (cooldown, team member, outside the reply window, automation paused…).
+  SKIPPED
+}
+
+/// One "How did we do? 1–5" per resolution of one conversation (feature CSAT_SURVEYS, CSAT.md). Exactly one
+/// conversation, the ConversationEvent shape: a channel conversation, or a WhatsApp personal chat
+/// (accountId + chatId). The answer is append-only: once answered, rating, comment and answeredAt never change
+/// (a database trigger refuses it). No message text is copied here except the customer's own optional comment.
+model CsatSurvey {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  channel               CsatChannel
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  /// The RESOLVE event this survey is about. Unique: one survey per resolution, however often it is replayed.
+  resolutionEventId     String               @unique
+  resolutionEvent       ConversationEvent    @relation(fields: [resolutionEventId], references: [id], onDelete: Cascade)
+  /// Who the cooldown counts against (csatCustomerKey): "wa:<chatId>" or "ch:<connectionId>:<threadId>".
+  customerKey           String
+  resolvedAt            DateTime
+  /// The person who resolved it, and the conversation's Team then. Plain ids: history keeps its owner.
+  resolvedById          String?
+  teamId                String?
+  status                CsatSurveyStatus     @default(PENDING)
+  skipReason            String?
+  /// The question exactly as asked.
+  question              String?
+  sentAt                DateTime?
+  /// WhatsApp: the queued survey message. Channels: the queued ChannelMessage. Website chat: neither (a card).
+  outboundMessageId     String?              @unique
+  outboundMessage       OutboundMessage?     @relation(fields: [outboundMessageId], references: [id], onDelete: SetNull)
+  channelMessageId      String?              @unique
+  channelMessage        ChannelMessage?      @relation(fields: [channelMessageId], references: [id], onDelete: SetNull)
+  /// When the customer's next message (rating or not) arrived, or the answer: no later message is read as one.
+  answerClosedAt        DateTime?
+  answeredAt            DateTime?
+  rating                Int?
+  comment               String?
+  /// WIDGET (website chat card) or MESSAGE (the customer's next message was a rating).
+  answerSource          String?
+  /// The Message / ChannelMessage that carried the rating (plain id, for the audit trail).
+  answerMessageId       String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([projectId, status, createdAt])
+  @@index([projectId, sentAt])
+  @@index([projectId, customerKey, sentAt])
+  @@index([projectId, accountId, chatId, sentAt])
+  @@index([channelConversationId, sentAt])
+}
+
+/// CSAT.md: which channels ask, the question and the per-customer cooldown. No row = every channel off.
+model CsatSettings {
+  id                      String   @id @default(cuid())
+  projectId               String   @unique @default(dbgenerated("project_id_required()"))
+  project                 Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  whatsappPersonalEnabled Boolean  @default(false)
+  webchatEnabled          Boolean  @default(false)
+  messengerEnabled        Boolean  @default(false)
+  instagramEnabled        Boolean  @default(false)
+  telegramEnabled         Boolean  @default(false)
+  /// Null = the built-in Bangla/English question (packages/shared csat.ts), so Reset is "forget my edit".
+  questionText            String?
+  /// At most one survey per customer within this many days. 0 = after every resolution.
+  cooldownDays            Int      @default(7)
+  updatedById             String?
+  updatedAt               DateTime @updatedAt
 }

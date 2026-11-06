@@ -2933,6 +2933,14 @@ Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker 
 - **Message search** (`server/whatsAppMessageSearch.ts`, `INBOX_WORKSPACE.md` § Message search): full history through the trigram index `Message_body_search_idx` (build it CONCURRENTLY by hand before deploying its migration). Two phases: recent rows per account first, the index only for older history; only the window EVERY account was read through counts from phase 1. One core, 3 s timeout, ≥3 characters, 100 a page / 1,000 in all, snippets only, never revoked messages. With V3 off the search is names only.
 - **Triage** (`INBOX_WORKSPACE.md` § Triage): a waiting row shows the wait from the customer's FIRST message after our last reply (a failed send is no reply); Sort newest / oldest / longest waiting through one stable `orderInboxItems`; Last message from customer / us. Longest waiting must keep every unanswered conversation, never only the 300 most recent.
 
+### Satisfaction surveys (`CSAT.md`, 7 Nov 2026)
+
+Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every channel is off until switched on in Settings. A person's Resolve records one PENDING `CsatSurvey`, unique on its RESOLVE event; the worker's `csat-surveys` loop asks it through that channel's one send queue, or as a website chat card. Rules worth not undoing:
+- Never in a group (database CHECK for WhatsApp), never to a team member or our own number, at most once per customer per cooldown (advisory lock). The kill switch and MANUAL_ONLY stop every channel, the card too: `dispatchOne` is the only gate for the channels and the card.
+- A refusal is SKIPPED with its reason. Nothing is retried, and nothing goes out more than 30 minutes after the resolution.
+- The customer's next message is read once within 24 hours; only a message that is nothing but a rating counts (`parseCsatRating`). The message itself stays ordinary and the hooks never throw. An answer is final (trigger).
+- Channels use the automated window only, never the HUMAN_AGENT tag. A survey is not an AI answer, so the AI reply cooldown ignores its variant.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

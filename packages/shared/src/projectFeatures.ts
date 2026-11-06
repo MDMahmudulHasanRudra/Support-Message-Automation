@@ -271,6 +271,16 @@ export const PROJECT_FEATURES = [
     workerEffect: "Stops reopening snoozed conversations and stops applying the reopen policy to new customer messages.",
   },
   {
+    key: "CSAT_SURVEYS",
+    label: "Satisfaction surveys (CSAT)",
+    description:
+      "\"How did we do? 1–5\" after a conversation is resolved, on the channels the project chooses (website chat card, Messenger, Instagram, Telegram, WhatsApp personal chats), with a CSAT report per agent and channel (CSAT.md). Never in a WhatsApp group, never to a team member, at most once per customer per cooldown. Needs Inbox V3. Off = nothing is asked; recorded answers are kept.",
+    defaultEnabled: false,
+    routes: ["/settings/csat", "/reports/csat"],
+    permissionKeys: [],
+    workerEffect: "Stops asking satisfaction surveys and stops reading ratings from customer messages; surveys waiting to go out are skipped.",
+  },
+  {
     key: "PRODUCT_CATALOG",
     label: "Product Catalog",
     description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",

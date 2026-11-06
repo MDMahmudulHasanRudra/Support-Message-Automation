@@ -72,6 +72,7 @@ import {
   SlidersHorizontal,
   Smartphone,
   Smile,
+  Star,
   CircleDot,
   Sparkles,
   Terminal as ConsoleIcon,
@@ -209,6 +210,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
       { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
       { href: "/settings/inbox-status", label: "Inbox status", icon: CircleDot },
+      { href: "/settings/csat", label: "Satisfaction surveys", icon: Star },
       { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
     ],
   },
@@ -343,6 +345,7 @@ const REPORT_PRESENTATION: Record<string, { icon: LucideIcon; module: string }> 
   heatmap: { icon: Grid3x3, module: "WhatsApp support" },
   calls: { icon: PhoneCall, module: "WhatsApp support" },
   distribution: { icon: PieChart, module: "WhatsApp support" },
+  csat: { icon: Star, module: "Inbox" },
 };
 
 export const REPORT_PAGES: ReportPage[] = REPORT_CATALOGUE.map((entry) => ({
@@ -667,6 +670,8 @@ const NAV_KEY_EXACT: Record<string, string> = {
   "/team-management/settings": "team_management.manage",
   // Shows message text, so it needs the chat's key rather than the other reports' support_activity.view.
   "/reports/whatsapp-user-activity": "messages.view",
+  // Satisfaction surveys (CSAT.md): its own page, the other reports' key.
+  "/reports/csat": "support_activity.view",
 };
 
 /** Longest prefix wins, so `/ai-learning/providers` resolves before `/ai-learning`. */
