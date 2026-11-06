@@ -429,6 +429,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  FOLLOW_UPS: {
+    category: "Support",
+    benefits: ["Call-backs, visits and promised replies with a due date and an owner", "Overdue and due-today reminders inside the app", "Created from a conversation or a client, and kept when the chat is resolved"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "A follow-up is usually about a conversation, and is created from its side panel." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Follow-ups and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "FOLLOW_UPS.md",
+  },
   AI_COPILOT: {
     category: "AI",
     benefits: ["Conversation summaries and suggested replies for agents", "Nothing is sent without the agent"],

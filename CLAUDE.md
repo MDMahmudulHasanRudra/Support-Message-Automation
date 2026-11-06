@@ -2933,6 +2933,10 @@ Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker 
 - **Message search** (`server/whatsAppMessageSearch.ts`, `INBOX_WORKSPACE.md` § Message search): full history through the trigram index `Message_body_search_idx` (build it CONCURRENTLY by hand before deploying its migration). Two phases: recent rows per account first, the index only for older history; only the window EVERY account was read through counts from phase 1. One core, 3 s timeout, ≥3 characters, 100 a page / 1,000 in all, snippets only, never revoked messages. With V3 off the search is names only.
 - **Triage** (`INBOX_WORKSPACE.md` § Triage): a waiting row shows the wait from the customer's FIRST message after our last reply (a failed send is no reply); Sort newest / oldest / longest waiting through one stable `orderInboxItems`; Last message from customer / us. Longest waiting must keep every unanswered conversation, never only the 300 most recent.
 
+### Follow-ups (`FOLLOW_UPS.md`, 7 Nov 2026)
+
+Feature `FOLLOW_UPS`, **off by default**: an internal to-do list for call-backs, visits and promised replies. It **never sends anything to a customer**. Rules worth not undoing: reading needs `messages.view`; changing one needs the reply key of the conversation it is about; a linked conversation, client, person or Team must be this project's; every change is a conditional update with its `FollowUpEvent` (append-only) in the same transaction; buckets split at Dhaka midnight by plain instants (`followUpBucketRange`), with no SQL day arithmetic.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →

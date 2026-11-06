@@ -347,6 +347,18 @@ export const PROJECT_FEATURES = [
     workerEffect:
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
+  {
+    key: "FOLLOW_UPS",
+    label: "Follow-ups",
+    description:
+      "A personal and team to-do list for call-backs, technician visits and promised replies: due dates, a person or Team, priority, a link to the conversation or client, and Overdue / Due today reminders inside the app (FOLLOW_UPS.md). Nothing is ever sent to a customer.",
+    // Reading uses messages.view; changing one uses the reply key of the conversation it is about
+    // (messages.reply / conversations.reply). No key of its own.
+    defaultEnabled: false,
+    routes: ["/follow-ups"],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Follow-ups and their history are kept; the reminder badge disappears.",
+  },
 ] as const satisfies readonly ProjectFeatureDefinition[];
 
 export type ProjectFeatureKey = (typeof PROJECT_FEATURES)[number]["key"];

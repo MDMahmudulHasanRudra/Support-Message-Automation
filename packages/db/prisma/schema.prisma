@@ -736,6 +736,8 @@ model Project {
   conversationPresence                 ConversationPresence[]
   whatsAppConversationStates           WhatsAppConversationState[]
   inboxLifecycleSettings               InboxLifecycleSettings?
+  followUps                            FollowUp[]
+  followUpEvents                       FollowUpEvent[]
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -998,6 +1000,9 @@ model User {
   conversationPresence          ConversationPresence[]
   whatsAppConversationsAssigned WhatsAppConversationState[] @relation("WhatsAppConversationAssignee")
   conversationEvents            ConversationEvent[]         @relation("ConversationEventActor")
+  followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
+  followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
+  followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
 
   @@index([customerId])
 }
@@ -1232,6 +1237,7 @@ model WhatsAppAccount {
   scopedKnowledge      AiKnowledgeItem[]           @relation("AiKnowledgeScopeAccount")
   conversationStates   WhatsAppConversationState[]
   conversationEvents   ConversationEvent[]         @relation("ConversationEventAccount")
+  followUps            FollowUp[]
   conversationLabels   ConversationLabel[]
   conversationNotes    ConversationNote[]
   aiDrafts             AiDraft[]
@@ -1611,6 +1617,7 @@ model Team {
   assignedClients               Client[]
   soldSubscriptions             ClientSubscription[]
   assignedWhatsAppConversations WhatsAppConversationState[] @relation("WhatsAppConversationTeam")
+  followUps                     FollowUp[]
   assignedChannelConversations  ChannelConversation[]       @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
@@ -6579,6 +6586,7 @@ model ChannelConversation {
   notes             ConversationNote[]
   aiDrafts          AiDraft[]
   events            ConversationEvent[]
+  followUps         FollowUp[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -6822,6 +6830,7 @@ model Client {
   renewalOffers      ClientRenewalOffer[]
   renewalOfferEvents ClientRenewalOfferEvent[]
   messages           ClientMessage[]
+  followUps          FollowUp[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -9593,4 +9602,76 @@ model ConversationPresence {
   @@unique([projectId, conversationKey, userId])
   @@index([projectId, conversationKey, seenAt])
   @@index([projectId, seenAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Follow-ups (FOLLOW_UPS.md, feature FOLLOW_UPS): call-backs, technician visits and promised replies.
+// Internal work only: nothing here is read by any send path, and nothing is ever sent to a customer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum FollowUpStatus {
+  OPEN
+  DONE
+  DISCARDED
+}
+
+/// One follow-up: what, when, for whom, and (optionally) which conversation and/or client it is about.
+/// The conversation is the ConversationRef shape — a WhatsApp chat (accountId + chatId) OR a channel
+/// conversation, never both (CHECK). Every change is a conditional update with its FollowUpEvent in the
+/// same transaction.
+model FollowUp {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  title                 String
+  note                  String?
+  dueAt                 DateTime
+  priority              ConversationPriority @default(NONE)
+  status                FollowUpStatus       @default(OPEN)
+  assignedUserId        String?
+  assignedUser          User?                @relation("FollowUpAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?                @relation(fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  clientId              String?
+  client                Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  createdById           String?
+  createdBy             User?                @relation("FollowUpCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  completedAt           DateTime?
+  completedById         String?
+  completedBy           User?                @relation("FollowUpCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  events                FollowUpEvent[]
+
+  @@index([projectId, status, dueAt])
+  @@index([projectId, assignedUserId, status, dueAt])
+  @@index([projectId, assignedTeamId, status, dueAt])
+  @@index([projectId, accountId, chatId])
+  @@index([channelConversationId])
+  @@index([clientId])
+}
+
+/// Append-only history of one follow-up (a trigger refuses UPDATE). The actor is a plain id plus the name
+/// at that moment — no foreign key, so deleting a login never has to rewrite history.
+model FollowUpEvent {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  followUpId  String
+  followUp    FollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  /// CREATED | EDITED | REASSIGNED | RESCHEDULED | DONE | DISCARDED | REOPENED (CHECK).
+  kind        String
+  fromValue   String?
+  toValue     String?
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime @default(now())
+
+  @@index([followUpId, createdAt])
+  @@index([projectId, createdAt])
 }

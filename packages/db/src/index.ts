@@ -175,6 +175,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   // Client CRM & Billing V7 (CLIENT_CRM_V7.md).
   "ClientRenewalOffer", "ClientRenewalOfferEvent", "ClientMessageTemplate", "ClientMessageTemplateVersion", "ClientMessageBatch", "ClientMessage",
   "ClientDocumentSettingsVersion", "ClientDocumentAsset",
+  // Follow-ups (FOLLOW_UPS.md).
+  "FollowUp", "FollowUpEvent",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
