@@ -233,7 +233,7 @@ export async function removeWorkspaceMediaFiles(projectIds: string[]): Promise<b
     }
     for (const area of WORKSPACE_MEDIA_AREAS) {
       try {
-        await rm(path.join(storage.root, area, id), { recursive: true, force: true });
+        await rm(path.join(/*turbopackIgnore: true*/ storage.root, area, id), { recursive: true, force: true });
       } catch (err) {
         console.error(`[platform] could not remove media for a deleted workspace (${area}/${id})`, err);
         ok = false;
