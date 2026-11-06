@@ -312,7 +312,7 @@ export function GettingStarted({ title = "Get set up", steps }: { title?: string
   const percent = Math.round((done / steps.length) * 100);
   return (
     <Card className="!p-0">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-5 pb-3 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-3 pl-5 pr-14 pt-4">
         <div>
           <h2 className="text-[14.5px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">{title}</h2>
           <p className="mt-0.5 text-[12.5px] text-[color:var(--color-muted-foreground)]">
@@ -359,4 +359,11 @@ export function ChartEmpty({ text, href, action }: { text: string; href?: string
       ) : null}
     </div>
   );
+}
+
+export { ClosableGuide } from "./ClosableGuide";
+
+/** The cookie that says this person closed this guide. Ids only, so it is always a valid cookie name. */
+export function setupGuideCookie(place: string, userId: string): string {
+  return `ga_setup_closed_${place}_${userId}`.replace(/[^A-Za-z0-9_-]/g, "_");
 }

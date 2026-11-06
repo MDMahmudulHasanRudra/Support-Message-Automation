@@ -30,7 +30,9 @@ import { formatHoursMinutes, pathAllowedByFeatures } from "@support-automation/s
 import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { countMyAttention } from "@/server/followUps";
 import { getGrantedPermissionKeys } from "@/server/permissions";
-import { ActionList, ActivityFeed, ChartEmpty, GettingStarted, HealthList, ModuleSummary, QuickActions, type ActionItem, type ActivityEntry, type HealthRow, type QuickAction } from "@/components/dashboard";
+import { cookies } from "next/headers";
+import { activeProjectId } from "@/server/projectContext";
+import { ActionList, ActivityFeed, ChartEmpty, ClosableGuide, GettingStarted, HealthList, ModuleSummary, QuickActions, setupGuideCookie, type ActionItem, type ActivityEntry, type HealthRow, type QuickAction } from "@/components/dashboard";
 import { CHANNEL_PRESENTATION } from "../conversations/ChannelMark";
 import { navPermissionFor } from "../navigation";
 import { requireSession } from "@/server/auth";
@@ -105,7 +107,7 @@ function formatAgeShort(ms: number): string {
 export default async function OverviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string; unavailable?: string; level?: string; page?: string }>;
+  searchParams: Promise<{ denied?: string; unavailable?: string; level?: string; page?: string; guide?: string }>;
 }) {
   const session = await requireSession();
   // Set by requirePermission when a page or an action refused this user. Only a known key is
@@ -414,6 +416,12 @@ export default async function OverviewPage({
     .filter((a) => canUse(a.href))
     .slice(0, 5);
 
+  // The setup guide: closed by this person for this project stays closed, until they ask for it from Quick actions.
+  const guideCookie = setupGuideCookie(await activeProjectId(), session.userId);
+  const guideClosed = (await cookies()).get(guideCookie)?.value === "1" && (await searchParams).guide !== "1";
+  const guideUnfinished = gettingStarted.some((step) => !step.done);
+  if (guideClosed && guideUnfinished) quickActions.push({ label: "Setup guide", href: "/overview?guide=1", icon: ListChecks });
+
   // ── Recent activity ─────────────────────────────────────────────────────────────────────────
   const activity: ActivityEntry[] = recentActivity.recentMessages.slice(0, 6).map((m) => ({
     key: m.id,
@@ -474,9 +482,11 @@ export default async function OverviewPage({
 
       {notices}
 
-      {show("dashboard:alerts") ? (
+      {show("dashboard:alerts") && guideUnfinished && !guideClosed ? (
         <div className="mb-4">
-          <GettingStarted steps={gettingStarted} />
+          <ClosableGuide cookieName={guideCookie}>
+            <GettingStarted steps={gettingStarted} />
+          </ClosableGuide>
         </div>
       ) : null}
 

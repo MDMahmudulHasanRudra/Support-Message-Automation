@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import NextLink from "next/link";
 import {
   Activity,
@@ -11,6 +12,7 @@ import {
   FolderKanban,
   HeartPulse,
   Layers,
+  ListChecks,
   MessagesSquare,
   Palette,
   PauseCircle,
@@ -28,7 +30,7 @@ import {
 import { PROJECT_STATUS_LABELS, type ProjectStatusValue } from "@support-automation/shared";
 import { Badge, ButtonLink, Card, HeroKpi, PageHeader, StatTile, Table, Td, Th } from "@/components/ui";
 import { AreaChart, BarList, ChartCard, ChartHeadline, DonutChart, formatCount } from "@/components/charts";
-import { ActionList, ChartEmpty, GettingStarted, QuickActions, type ActionItem, type QuickAction, type SetupStep } from "@/components/dashboard";
+import { ActionList, ChartEmpty, ClosableGuide, GettingStarted, QuickActions, setupGuideCookie, type ActionItem, type QuickAction, type SetupStep } from "@/components/dashboard";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { combineKpis, getProjectMessageSeries, getProjectSummaries, requireMainAdminPage, type ProjectSummary } from "@/server/mainAdmin";
 import { getGrantedPermissionKeys } from "@/server/permissions";
@@ -63,7 +65,7 @@ function healthOf(project: ProjectSummary): { label: string; color: "green" | "y
  * add up only the projects this person can enter, and every detail stays inside the project. Never billing or
  * plans: those belong to the platform (/platform), not to a customer's Main Admin.
  */
-export default async function MainAdminOverview() {
+export default async function MainAdminOverview({ searchParams }: { searchParams: Promise<{ guide?: string }> }) {
   const { session, canManage } = await requireMainAdminPage();
   const [projects, grantedKeys] = await Promise.all([getProjectSummaries(session.userId, { includeArchived: true }), getGrantedPermissionKeys(session)]);
   const granted = new Set(grantedKeys);
@@ -107,6 +109,12 @@ export default async function MainAdminOverview() {
     { key: "monitor", title: "Monitor your groups", detail: "Choose which groups automation and reports should follow.", done: kpis.monitoredGroups > 0, href: enterable[0] ? `/p/${enterable[0].slug}/groups` : undefined, action: "Open groups" },
   ];
 
+  // The setup guide: closed by this person stays closed, until they ask for it from Quick actions.
+  const guideCookie = setupGuideCookie("admin", session.userId);
+  const guideClosed = (await cookies()).get(guideCookie)?.value === "1" && (await searchParams).guide !== "1";
+  const guideUnfinished = setup.some((step) => !step.done);
+  if (guideClosed && guideUnfinished) quickActions.push({ label: "Setup guide", href: "/admin?guide=1", icon: ListChecks });
+
   const description =
     needsAttention.length > 0
       ? `${needsAttention.length} project${needsAttention.length === 1 ? " needs" : "s need"} attention. Figures add up the ${kpis.projects} project${kpis.projects === 1 ? "" : "s"} you can enter${kpis.excludedProjects > 0 ? `; ${kpis.excludedProjects} more ${kpis.excludedProjects === 1 ? "is" : "are"} listed without access` : ""}.`
@@ -127,9 +135,13 @@ export default async function MainAdminOverview() {
         }
       />
 
-      <div className="mb-4 empty:hidden">
-        <GettingStarted title="Set up your workspace" steps={setup} />
-      </div>
+      {guideUnfinished && !guideClosed ? (
+        <div className="mb-4">
+          <ClosableGuide cookieName={guideCookie}>
+            <GettingStarted title="Set up your workspace" steps={setup} />
+          </ClosableGuide>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <HeroKpi tone="tide" icon={Layers} label="Total projects" value={formatCount(projects.length)} href="/admin/projects" sub={`${count("ACTIVE")} active, ${count("SETUP")} in setup`} />
