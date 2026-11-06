@@ -21,9 +21,16 @@ export interface InboxFilterSet {
   assigneeId: string | null;
   /** `wa:<WhatsAppAccount id>` or `ch:<ChannelConnection id>`. */
   account: string | null;
+  /**
+   * Inbox V3 (UNIFIED_INBOX_V3): only conversations in this status. Null = the active ones (Open and Pending);
+   * ignored while the feature is off.
+   */
+  status: "OPEN" | "PENDING" | "SNOOZED" | "RESOLVED" | null;
 }
 
-export const EMPTY_INBOX_FILTERS: InboxFilterSet = { view: "all", within: null, search: "", tag: null, teamId: null, assigneeId: null, account: null };
+const LIFECYCLE_FILTERS = ["OPEN", "PENDING", "SNOOZED", "RESOLVED"] as const;
+
+export const EMPTY_INBOX_FILTERS: InboxFilterSet = { view: "all", within: null, search: "", tag: null, teamId: null, assigneeId: null, account: null, status: null };
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ACCOUNT = /^(wa|ch):[A-Za-z0-9_-]{1,64}$/;
@@ -45,17 +52,18 @@ export function parseInboxFilterSet(input: unknown): InboxFilterSet {
     teamId: str(v.teamId, ID),
     assigneeId: str(v.assigneeId, ID),
     account: str(v.account, ACCOUNT),
+    status: pick(v.status, LIFECYCLE_FILTERS),
   };
 }
 
 /** True when nothing but the default "open conversations" view is asked for. */
 export function isDefaultInboxFilters(f: InboxFilterSet): boolean {
-  return f.view === "all" && !f.within && !f.search && !f.tag && !f.teamId && !f.assigneeId && !f.account;
+  return f.view === "all" && !f.within && !f.search && !f.tag && !f.teamId && !f.assigneeId && !f.account && !f.status;
 }
 
 /** A stable key for "which query does this result answer". */
 export function inboxFilterKey(f: InboxFilterSet): string {
-  return [f.view, f.within ?? "", f.search, f.tag ?? "", f.teamId ?? "", f.assigneeId ?? "", f.account ?? ""].join("|");
+  return [f.view, f.within ?? "", f.search, f.tag ?? "", f.teamId ?? "", f.assigneeId ?? "", f.account ?? "", f.status ?? ""].join("|");
 }
 
 /** The priorities a view asks for, or null when it does not filter by priority. */

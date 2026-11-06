@@ -1,3 +1,5 @@
+import { channelStatusOf, channelStorageOf, type ConversationStatus } from "@support-automation/shared";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { Prisma } from "@prisma/client";
 import {
   CHANNELS,
@@ -71,6 +73,8 @@ export interface InboxItem {
   needsReply: boolean;
   isGroup: boolean;
   status: "OPEN" | "CLOSED";
+  /** Inbox V3 status (UNIFIED_INBOX_V3 on), or null while it is off. */
+  lifecycleStatus: ConversationStatus | null;
   /** Channel: the assigned user. WhatsApp group: its owner (team member) from the Groups page. */
   assigneeName: string | null;
   assignedToMe: boolean;
@@ -109,7 +113,7 @@ interface ChannelRow {
   customerName: string | null;
   customerUsername: string | null;
   externalThreadId: string;
-  status: "OPEN" | "CLOSED";
+  status: "OPEN" | "CLOSED" | "PENDING" | "SNOOZED";
   assignedUserId: string | null;
   assigneeName: string | null;
   teamName: string | null;
@@ -138,12 +142,20 @@ const NEEDS_REPLY_SQL = Prisma.sql`(c."lastInboundAt" IS NOT NULL AND NOT EXISTS
   WHERE m."projectId" = c."projectId" AND m."conversationId" = c."id" AND m."direction" = 'OUTBOUND'
     AND m."occurredAt" >= c."lastInboundAt" AND m."deliveryStatus" IS DISTINCT FROM 'FAILED'))`;
 
-type ListOpts = { types: ChannelType[]; filters: InboxFilterSet; viewerId: string; now: Date };
+type ListOpts = { types: ChannelType[]; filters: InboxFilterSet; viewerId: string; now: Date; lifecycle: boolean };
+
+/**
+ * Which channel conversations the default views list. Inbox V3 on: the active ones, Open and Pending (Snoozed
+ * and Resolved have their own status filter). Off: anything not CLOSED — a conversation left Pending or Snoozed
+ * while the feature was on is still open here, never hidden.
+ */
+const activeChannelSql = (lifecycle: boolean) => (lifecycle ? Prisma.sql`c."status"::text IN ('OPEN', 'PENDING')` : Prisma.sql`c."status"::text <> 'CLOSED'`);
 
 function channelFilters(opts: ListOpts): Prisma.Sql {
   const f = opts.filters;
   const parts: Prisma.Sql[] = [Prisma.sql`c."type"::text IN (${Prisma.join(opts.types)})`];
-  parts.push(f.view === "closed" ? Prisma.sql`c."status" = 'CLOSED'` : Prisma.sql`c."status" = 'OPEN'`);
+  if (opts.lifecycle && f.status) parts.push(Prisma.sql`c."status"::text = ${channelStorageOf(f.status)}`);
+  else parts.push(f.view === "closed" ? Prisma.sql`c."status" = 'CLOSED'` : activeChannelSql(opts.lifecycle));
   if (f.view === "unread") parts.push(Prisma.sql`${NEEDS_REPLY_SQL} AND (c."reviewedAt" IS NULL OR c."reviewedAt" < c."lastInboundAt")`);
   if (f.view === "needs-reply") parts.push(NEEDS_REPLY_SQL);
   if (f.view === "mine") parts.push(Prisma.sql`c."assignedUserId" = ${opts.viewerId}`);
@@ -199,7 +211,7 @@ export function channelConversationTitle(row: { title: string | null; customerNa
   return row.title ?? row.customerName ?? (row.customerUsername ? `@${row.customerUsername}` : `${CHANNELS[row.type].label} user ${row.externalThreadId.slice(-6)}`);
 }
 
-function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string): InboxItem {
+function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string, lifecycle: boolean): InboxItem {
   return {
     key: `ch:${row.id}`,
     ref: { kind: "channel", conversationId: row.id },
@@ -216,6 +228,7 @@ function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string): I
     isGroup: row.kind === "GROUP",
     // Inbox V3 may store PENDING / SNOOZED; for this view anything not CLOSED is open, as before.
     status: row.status === "CLOSED" ? "CLOSED" : "OPEN",
+    lifecycleStatus: lifecycle ? channelStatusOf(row.status) : null,
     assigneeName: row.assigneeName,
     assignedToMe: row.assignedUserId === viewerId,
     teamName: row.teamName,
@@ -227,16 +240,16 @@ function fromChannelRow(row: ChannelRow, scope: InboxScope, viewerId: string): I
   };
 }
 
-async function channelCounts(types: ChannelType[], viewerId: string): Promise<Omit<InboxCounts, "byChannel"> & { byChannel: Partial<Record<InboxChannel, number>> }> {
+async function channelCounts(types: ChannelType[], viewerId: string, lifecycle: boolean): Promise<Omit<InboxCounts, "byChannel"> & { byChannel: Partial<Record<InboxChannel, number>> }> {
   const empty = { all: 0, unread: 0, needsReply: 0, mine: 0, closed: 0, byChannel: {} };
   if (types.length === 0) return empty;
   const projectId = await activeProjectId();
   const rows = await prisma.$queryRaw<Array<{ type: ChannelType; all: bigint; unread: bigint; needsReply: bigint; mine: bigint; closed: bigint }>>`
     SELECT c."type"::text AS "type",
-      COUNT(*) FILTER (WHERE c."status" = 'OPEN') AS "all",
-      COUNT(*) FILTER (WHERE c."status" = 'OPEN' AND ${NEEDS_REPLY_SQL} AND (c."reviewedAt" IS NULL OR c."reviewedAt" < c."lastInboundAt")) AS "unread",
-      COUNT(*) FILTER (WHERE c."status" = 'OPEN' AND ${NEEDS_REPLY_SQL}) AS "needsReply",
-      COUNT(*) FILTER (WHERE c."status" = 'OPEN' AND c."assignedUserId" = ${viewerId}) AS "mine",
+      COUNT(*) FILTER (WHERE ${activeChannelSql(lifecycle)}) AS "all",
+      COUNT(*) FILTER (WHERE ${activeChannelSql(lifecycle)} AND ${NEEDS_REPLY_SQL} AND (c."reviewedAt" IS NULL OR c."reviewedAt" < c."lastInboundAt")) AS "unread",
+      COUNT(*) FILTER (WHERE ${activeChannelSql(lifecycle)} AND ${NEEDS_REPLY_SQL}) AS "needsReply",
+      COUNT(*) FILTER (WHERE ${activeChannelSql(lifecycle)} AND c."assignedUserId" = ${viewerId}) AS "mine",
       COUNT(*) FILTER (WHERE c."status" = 'CLOSED') AS "closed"
     FROM "ChannelConversation" c
     WHERE c."projectId" = ${projectId} AND c."type"::text IN (${Prisma.join(types)})
@@ -261,8 +274,16 @@ interface GroupOwner {
   teamName: string | null;
 }
 
-function fromWhatsApp(c: ConversationSummary, owners: ReadonlyMap<string, GroupOwner>, labels: ReadonlyMap<string, { priority: ConversationPriorityValue; tags: string[] }>, viewerId: string): InboxItem {
-  const owner = c.kind === "GROUP" ? owners.get(c.id) : undefined;
+function fromWhatsApp(
+  c: ConversationSummary,
+  owners: ReadonlyMap<string, GroupOwner>,
+  labels: ReadonlyMap<string, { priority: ConversationPriorityValue; tags: string[] }>,
+  viewerId: string,
+  states: ReadonlyMap<string, WhatsAppStateView> | null,
+): InboxItem {
+  const state = states?.get(`${c.accountId}|${c.chatId}`);
+  // Inbox V3: a person or Team assigned to the conversation itself comes before the group's owner.
+  const owner = state && (state.userId || state.teamName) ? { name: state.userName ?? "", userId: state.userId, teamName: state.teamName } : c.kind === "GROUP" ? owners.get(c.id) : undefined;
   const label = labels.get(`${c.accountId}|${c.chatId}`);
   return {
     key: `wa:${c.accountId}:${c.id}`,
@@ -279,6 +300,7 @@ function fromWhatsApp(c: ConversationSummary, owners: ReadonlyMap<string, GroupO
     needsReply: c.isUnanswered,
     isGroup: c.kind === "GROUP",
     status: "OPEN",
+    lifecycleStatus: states ? (state?.status ?? "OPEN") : null,
     assigneeName: owner?.name ?? null,
     assignedToMe: Boolean(owner?.userId && owner.userId === viewerId),
     teamName: owner?.teamName ?? null,
@@ -305,7 +327,7 @@ async function whatsAppGroupsAssignedTo(viewerId: string): Promise<Set<string>> 
  * and recorded in GroupResponsibilityChange for the Team Report); personal chats have no owner. The
  * inbox only reads it — no second assignment for WhatsApp exists.
  */
-async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, viewerId: string): Promise<{ include: Map<string, Set<string>> | null; exclude: Map<string, Set<string>> }> {
+async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, viewerId: string, lifecycle = false): Promise<{ include: Map<string, Set<string>> | null; exclude: Map<string, Set<string>> }> {
   const toMap = (rows: Array<{ accountId: string | null; chatId: string | null }>) => {
     const m = new Map<string, Set<string>>();
     for (const r of rows) if (r.accountId && r.chatId) (m.get(r.accountId) ?? m.set(r.accountId, new Set()).get(r.accountId)!).add(r.chatId);
@@ -325,10 +347,27 @@ async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, 
     });
     includes.push(toMap(rows));
   }
-  if (f.view === "mine") includes.push(await groupsWhere({ assignedTeamMember: { userId: viewerId } }));
-  if (f.assigneeId) includes.push(await groupsWhere({ assignedTeamMember: { userId: f.assigneeId } }));
-  if (f.teamId) includes.push(await groupsWhere({ assignedTeamMember: { teamId: f.teamId } }));
-  const exclude = f.view === "unassigned" ? await groupsWhere({ assignedTeamMemberId: { not: null } }) : new Map<string, Set<string>>();
+  // Inbox V3: a conversation's own state (status, person, Team), read for the whole project before the ranker.
+  const statesWhere = (where: Prisma.WhatsAppConversationStateWhereInput) =>
+    prisma.whatsAppConversationState.findMany({ where: { accountId: { in: accountIds }, ...where }, select: { accountId: true, chatId: true } }).then(toMap);
+  const union = (a: Map<string, Set<string>>, b: Map<string, Set<string>>) => {
+    for (const [k, set] of b) for (const id of set) (a.get(k) ?? a.set(k, new Set()).get(k)!).add(id);
+    return a;
+  };
+  const owned = async (groupWhere: Prisma.WhatsAppGroupWhereInput, stateWhere: Prisma.WhatsAppConversationStateWhereInput) =>
+    lifecycle ? union(await groupsWhere(groupWhere), await statesWhere(stateWhere)) : groupsWhere(groupWhere);
+  if (f.view === "mine") includes.push(await owned({ assignedTeamMember: { userId: viewerId } }, { assignedUserId: viewerId }));
+  if (f.assigneeId) includes.push(await owned({ assignedTeamMember: { userId: f.assigneeId } }, { assignedUserId: f.assigneeId }));
+  if (f.teamId) includes.push(await owned({ assignedTeamMember: { teamId: f.teamId } }, { assignedTeamId: f.teamId }));
+  let exclude =
+    f.view === "unassigned"
+      ? await owned({ assignedTeamMemberId: { not: null } }, { OR: [{ assignedUserId: { not: null } }, { assignedTeamId: { not: null } }] })
+      : new Map<string, Set<string>>();
+  if (lifecycle) {
+    const wanted = f.status ?? (f.view === "closed" ? "RESOLVED" : null);
+    if (wanted && wanted !== "OPEN") includes.push(await statesWhere({ status: wanted }));
+    else exclude = union(exclude, await statesWhere({ status: { in: wanted === "OPEN" ? ["PENDING", "SNOOZED", "RESOLVED"] : ["SNOOZED", "RESOLVED"] } }));
+  }
 
   if (includes.length === 0) return { include: null, exclude };
   // Every include filter must hold: intersect per account.
@@ -340,7 +379,14 @@ async function whatsAppChatRestriction(accountIds: string[], f: InboxFilterSet, 
   return { include, exclude };
 }
 
-async function decorateWhatsApp(list: ConversationSummary[], viewerId: string): Promise<InboxItem[]> {
+interface WhatsAppStateView {
+  status: ConversationStatus;
+  userId: string | null;
+  userName: string | null;
+  teamName: string | null;
+}
+
+async function decorateWhatsApp(list: ConversationSummary[], viewerId: string, lifecycle: boolean): Promise<InboxItem[]> {
   if (list.length === 0) return [];
   const groupIds = list.filter((c) => c.kind === "GROUP").map((c) => c.id);
   const accountIds = [...new Set(list.map((c) => c.accountId))];
@@ -360,22 +406,32 @@ async function decorateWhatsApp(list: ConversationSummary[], viewerId: string): 
   const owners = new Map<string, GroupOwner>();
   for (const g of groups) if (g.assignedTeamMember) owners.set(g.id, { name: g.assignedTeamMember.name, userId: g.assignedTeamMember.userId, teamName: g.assignedTeamMember.team?.name ?? null });
   const labels = new Map(labelRows.map((l) => [`${l.accountId}|${l.chatId}`, { priority: l.priority, tags: l.tags }]));
-  return list.map((c) => fromWhatsApp(c, owners, labels, viewerId));
+  let states: Map<string, WhatsAppStateView> | null = null;
+  if (lifecycle) {
+    const rows = await prisma.whatsAppConversationState.findMany({
+      where: { accountId: { in: accountIds }, chatId: { in: chatIds } },
+      select: { accountId: true, chatId: true, status: true, assignedUserId: true, assignedUser: { select: { name: true } }, assignedTeam: { select: { name: true } } },
+    });
+    states = new Map(rows.map((r) => [`${r.accountId}|${r.chatId}`, { status: r.status, userId: r.assignedUserId, userName: r.assignedUser?.name ?? null, teamName: r.assignedTeam?.name ?? null }]));
+  }
+  return list.map((c) => fromWhatsApp(c, owners, labels, viewerId, states));
 }
 
-async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; now: Date }) {
+async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; now: Date; lifecycle: boolean }) {
   const f = opts.filters;
   const all = await getChatAccounts();
   const mine = await whatsAppGroupsAssignedTo(opts.viewerId);
   const countsOf = () => Promise.all(all.map((a) => getChatInbox(a.id).then((i) => i.counts)));
   // Closed is a channel state; WhatsApp conversations have none. A channel account filter excludes WhatsApp.
-  if (f.view === "closed" || f.account?.startsWith("ch:")) return { items: [] as InboxItem[], counts: sumWhatsApp(await countsOf(), mine.size) };
+  // Without Inbox V3, closed is a channel state and WhatsApp has none. A channel account filter excludes WhatsApp.
+  if ((f.view === "closed" && !opts.lifecycle) || f.account?.startsWith("ch:")) return { items: [] as InboxItem[], counts: sumWhatsApp(await countsOf(), mine.size) };
 
   const accounts = f.account ? all.filter((a) => `wa:${a.id}` === f.account) : all;
   const restriction = await whatsAppChatRestriction(
     accounts.map((a) => a.id),
     f,
     opts.viewerId,
+    opts.lifecycle,
   );
   const state = f.view === "unread" ? ("waiting" as const) : f.view === "needs-reply" ? ("unanswered" as const) : undefined;
   const plain = restriction.include === null && restriction.exclude.size === 0 && !state && !f.search;
@@ -404,6 +460,7 @@ async function loadWhatsApp(opts: { filters: InboxFilterSet; viewerId: string; n
   const items = await decorateWhatsApp(
     list.filter((c) => within === null || (c.lastMessageAt && c.lastMessageAt.getTime() >= within)),
     opts.viewerId,
+    opts.lifecycle,
   );
   return { items, counts: sumWhatsApp(counts, mine.size) };
 }
@@ -435,14 +492,15 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
   const scopedType = channelBySlug(opts.scope);
   const types: ChannelType[] = opts.scope === "all" ? ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] : scopedType ? [scopedType] : [];
   const includeWhatsApp = opts.scope === "all" || opts.scope === "whatsapp";
+  const lifecycle = !(await activeDisabledFeatures()).has("UNIFIED_INBOX_V3");
 
   const [rows, chCounts, wa] = await Promise.all([
-    loadChannelRows({ types, filters, viewerId: opts.viewerId, now }),
-    channelCounts(types, opts.viewerId),
-    includeWhatsApp ? loadWhatsApp({ filters, viewerId: opts.viewerId, now }) : Promise.resolve(null),
+    loadChannelRows({ types, filters, viewerId: opts.viewerId, now, lifecycle }),
+    channelCounts(types, opts.viewerId, lifecycle),
+    includeWhatsApp ? loadWhatsApp({ filters, viewerId: opts.viewerId, now, lifecycle }) : Promise.resolve(null),
   ]);
 
-  const merged = [...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId)), ...(wa?.items ?? [])].sort(
+  const merged = [...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId, lifecycle)), ...(wa?.items ?? [])].sort(
     (a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.key.localeCompare(b.key),
   );
   const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 };

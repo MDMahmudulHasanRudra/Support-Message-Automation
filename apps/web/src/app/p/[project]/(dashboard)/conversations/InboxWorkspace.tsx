@@ -38,6 +38,8 @@ import type { InboxCounts, InboxItem, InboxChannel } from "@/server/channels/inb
 import {
   CONVERSATION_PRIORITIES,
   CONVERSATION_PRIORITY_LABEL,
+  CONVERSATION_STATUS_LABELS,
+  CONVERSATION_STATUSES,
   EMPTY_INBOX_FILTERS,
   inboxFilterKey,
   isDefaultInboxFilters,
@@ -407,6 +409,14 @@ export function InboxWorkspace({
               <FilterSelect label="Last activity" value={filters.within} onChange={(v) => set({ within: v as InboxFilterSet["within"] })} options={[{ value: "24h", label: "Last 24 h" }, { value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }]} />
               <FilterSelect label="Assigned to" value={filters.assigneeId} onChange={(v) => set({ assigneeId: v })} options={options.people.map((p) => ({ value: p.id, label: p.name }))} />
               <FilterSelect label="Team" value={filters.teamId} onChange={(v) => set({ teamId: v })} options={options.teams.map((t) => ({ value: t.id, label: t.name }))} />
+              {options.lifecycle ? (
+                <FilterSelect
+                  label="Status"
+                  value={filters.status}
+                  onChange={(v) => set({ status: (v as InboxFilterSet["status"]) ?? null })}
+                  options={CONVERSATION_STATUSES.map((st) => ({ value: st, label: CONVERSATION_STATUS_LABELS[st] }))}
+                />
+              ) : null}
               {options.collaboration ? (
                 <label className="col-span-2 flex items-center gap-1.5 text-[11.5px] text-[color:var(--color-muted-foreground)]">
                   Tag
@@ -928,7 +938,11 @@ function InboxRow({ item, active, compact, selecting, selected, onToggle }: { it
             <span className="text-[10.5px] text-[color:var(--color-subtle-foreground)]">
               {CHANNEL_PRESENTATION[item.channel].short} · {item.via}
             </span>
-            {item.status === "CLOSED" ? <Chip>Closed</Chip> : null}
+            {item.lifecycleStatus ? (
+              item.lifecycleStatus !== "OPEN" ? <Chip>{CONVERSATION_STATUS_LABELS[item.lifecycleStatus]}</Chip> : null
+            ) : item.status === "CLOSED" ? (
+              <Chip>Closed</Chip>
+            ) : null}
             {item.assigneeName ? (
               <Chip>
                 <UserRound className="size-2.5" aria-hidden />
