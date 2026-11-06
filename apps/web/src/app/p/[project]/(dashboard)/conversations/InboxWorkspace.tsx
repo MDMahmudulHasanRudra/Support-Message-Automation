@@ -67,6 +67,8 @@ export interface InboxOptions {
   people: { id: string; name: string }[];
   /** Notes / tags / priority (INBOX_COLLABORATION) are on for this project. */
   collaboration: boolean;
+  /** Inbox V3 status, snooze and WhatsApp assignment (UNIFIED_INBOX_V3) are on for this project. */
+  lifecycle: boolean;
   /** May share views with the team (channels.manage). */
   canShare: boolean;
 }
@@ -765,7 +767,7 @@ function BulkBar({
             + Tag
           </button>
         ) : null}
-        {options.collaboration ? (
+        {options.collaboration || options.lifecycle ? (
           <select disabled={none} value="" onChange={(e) => pick(e.target.value, (v) => onRun({ op: "assignee", userId: v === "__none" ? null : v }))} className="h-7 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 disabled:opacity-50" aria-label="Assign to">
             <option value="">Assign…</option>
             <option value="__none">Nobody</option>
@@ -776,7 +778,7 @@ function BulkBar({
             ))}
           </select>
         ) : null}
-        {options.collaboration && options.teams.length ? (
+        {(options.collaboration || options.lifecycle) && options.teams.length ? (
           <select disabled={none} value="" onChange={(e) => pick(e.target.value, (v) => onRun({ op: "team", teamId: v === "__none" ? null : v }))} className="h-7 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 disabled:opacity-50" aria-label="Team">
             <option value="">Team…</option>
             <option value="__none">No Team</option>
@@ -787,12 +789,41 @@ function BulkBar({
             ))}
           </select>
         ) : null}
-        <button type="button" disabled={none} onClick={() => onRun({ op: "status", status: "CLOSED" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
-          Close
-        </button>
-        <button type="button" disabled={none} onClick={() => onRun({ op: "status", status: "OPEN" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
-          Reopen
-        </button>
+        {options.lifecycle ? (
+          <>
+            <button type="button" disabled={none} onClick={() => onRun({ op: "lifecycle", to: "PENDING" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+              Pending
+            </button>
+            <select
+              disabled={none}
+              value=""
+              onChange={(e) => pick(e.target.value, (v) => onRun({ op: "lifecycle", to: "SNOOZED", until: new Date(Date.now() + Number(v) * 3_600_000).toISOString() }))}
+              className="h-7 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 disabled:opacity-50"
+              aria-label="Snooze"
+            >
+              <option value="">Snooze…</option>
+              <option value="1">1 hour</option>
+              <option value="4">4 hours</option>
+              <option value="24">1 day</option>
+              <option value="168">1 week</option>
+            </select>
+            <button type="button" disabled={none} onClick={() => onRun({ op: "lifecycle", to: "RESOLVED" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+              Resolve
+            </button>
+            <button type="button" disabled={none} onClick={() => onRun({ op: "lifecycle", to: "OPEN" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+              Reopen
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" disabled={none} onClick={() => onRun({ op: "status", status: "CLOSED" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+              Close
+            </button>
+            <button type="button" disabled={none} onClick={() => onRun({ op: "status", status: "OPEN" })} className="rounded-[var(--radius-sm)] px-2 ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
+              Reopen
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

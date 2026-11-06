@@ -12,6 +12,7 @@ import {
 } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 
 /**
  * Unified Inbox V3 — conversation lifecycle for the dashboard (packages/shared conversationLifecycle.ts,
@@ -194,4 +195,31 @@ export async function loadConversationEvents(ref: ConversationRef, take = 30): P
     select: { id: true, kind: true, fromValue: true, toValue: true, context: true, createdAt: true, actor: { select: { name: true } } },
   });
   return rows.map((r) => ({ id: r.id, kind: r.kind, fromValue: r.fromValue, toValue: r.toValue, context: r.context, actorName: r.actor?.name ?? null, createdAt: r.createdAt }));
+}
+
+/**
+ * Inbox V3 history for priority and tags (V3-04). Written only while UNIFIED_INBOX_V3 is on, so the label
+ * tools behave exactly as before with it off; records what changed and nothing else (tags are the team's
+ * own labels, never message text). Best effort: the label is already saved, and a history row that cannot be
+ * written must not undo it.
+ */
+export async function recordLabelChange(
+  ref: ConversationRef,
+  before: { priority: string; tags: readonly string[] },
+  after: { priority: string; tags: readonly string[] },
+  actorId: string,
+): Promise<void> {
+  try {
+    if ((await activeDisabledFeatures()).has("UNIFIED_INBOX_V3")) return;
+    const projectId = await activeProjectId();
+    const target = ref.kind === "whatsapp" ? { accountId: ref.accountId, chatId: ref.chatId } : { channelConversationId: ref.conversationId };
+    const rows: Prisma.ConversationEventCreateManyInput[] = [];
+    if (before.priority !== after.priority) rows.push({ projectId, ...target, kind: "PRIORITY", fromValue: before.priority, toValue: after.priority, actorId });
+    const added = after.tags.filter((t) => !before.tags.includes(t));
+    const removed = before.tags.filter((t) => !after.tags.includes(t));
+    if (added.length || removed.length) rows.push({ projectId, ...target, kind: "TAGS", actorId, context: { added, removed } });
+    if (rows.length) await prisma.conversationEvent.createMany({ data: rows });
+  } catch (err) {
+    console.error("[inbox] could not record a label change in the history", err);
+  }
 }

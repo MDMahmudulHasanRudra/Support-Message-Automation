@@ -9,6 +9,7 @@ import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { mentionablePeople, resolveWorkspaceAccess } from "@/server/inboxWorkspace";
 import { assignChannelConversation, assignChannelConversationTeam } from "@/server/channels/replies";
 import { assignWhatsAppConversation, changeConversationStatus, LifecycleChangeError, saveLifecyclePolicy } from "@/server/conversationLifecycle";
+import { readPresence, recordPresence, type PresencePeer } from "@/server/conversationPresence";
 import type { Session } from "@/server/auth";
 
 /**
@@ -99,4 +100,20 @@ export async function saveInboxLifecyclePolicy(input: { reopenResolved: boolean;
   await saveLifecyclePolicy({ reopenResolvedOnCustomerMessage: input.reopenResolved === true, reopenSnoozedOnCustomerMessage: input.reopenSnoozed === true }, granted.session.userId);
   revalidatePath(await projectPath("/settings/inbox-status"));
   return { ok: true };
+}
+
+/**
+ * The presence heartbeat (V3-05), polled every few seconds by an open conversation: records this person and
+ * returns who else is here. Polled, so a refusal is "nobody to show", never a redirect or an error toast.
+ */
+export async function presenceHeartbeat(refInput: unknown, typing: boolean): Promise<{ peers: PresencePeer[] }> {
+  const ref = parseConversationRef(refInput);
+  if (!ref) return { peers: [] };
+  const granted = await checkPermission("messages.view");
+  if ("denied" in granted) return { peers: [] };
+  if ((await activeDisabledFeatures()).has("UNIFIED_INBOX_V3")) return { peers: [] };
+  const access = await resolveWorkspaceAccess(granted.session, ref);
+  if (!access?.lifecycle) return { peers: [] };
+  await recordPresence(ref, granted.session.userId, typing === true);
+  return { peers: await readPresence(ref, granted.session.userId) };
 }

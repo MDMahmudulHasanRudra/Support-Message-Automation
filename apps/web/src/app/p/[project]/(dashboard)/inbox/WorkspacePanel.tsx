@@ -51,6 +51,7 @@ import {
 } from "@/server/actions/inboxWorkspace";
 import { setConversationAssignee, setConversationTeam } from "@/server/actions/inboxLifecycle";
 import { ConversationStatusSection } from "./ConversationStatusSection";
+import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
 
 type TabKey = "details" | "notes" | "copilot";
 
@@ -122,6 +123,8 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const [tab, setTab] = useState<TabKey>(firstTab);
   const width = useSyncExternalStore(subscribe, readWidth, () => 340);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // Inbox V3 presence: one heartbeat per open conversation, whether the panel is open, collapsed or a sheet.
+  const peers = useConversationPresence(data.ref, data.access.lifecycle);
 
   const tabs = [
     hasDetails ? { key: "details" as const, label: "Details", icon: Tag } : null,
@@ -169,6 +172,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
 
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
+      <PresenceBanner peers={peers} />
       <div role="tablist" aria-label="Conversation workspace" className="flex shrink-0 items-center gap-1 border-b border-[var(--color-border)] px-2 py-1.5">
         {tabs.map((t) => (
           <button

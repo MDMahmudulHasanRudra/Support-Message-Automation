@@ -27,6 +27,9 @@ vi.mock("@/server/projectPaths", () => ({ projectPath: async (p: string) => `/p/
 const { runWithProject } = await import("@/server/projectContext");
 const { forgetProjectFeatureStates } = await import("@/server/projectFeatures");
 const actions = await import("@/server/actions/inboxLifecycle");
+const inboxActions = await import("@/server/actions/inbox");
+const workspaceActions = await import("@/server/actions/inboxWorkspace");
+const presence = await import("@/server/conversationPresence");
 const lifecycle = await import("@/server/conversationLifecycle");
 const { loadWorkspace } = await import("@/server/inboxWorkspace");
 
@@ -36,7 +39,7 @@ let BIZ = { id: "", slug: `v3-biz-${tag}`, name: `V3 Biz ${tag}`, status: "ACTIV
 const inIsp = <T,>(fn: () => Promise<T>) => runWithProject(ISP, fn);
 const inBiz = <T,>(fn: () => Promise<T>) => runWithProject(BIZ, fn);
 const ids = { users: [] as string[], roles: [] as string[], accounts: [] as string[], teams: [] as string[] };
-const s = {} as Record<"agent" | "viewer" | "admin" | "bizAgent", Session>;
+const s = {} as Record<"agent" | "agent2" | "viewer" | "admin" | "bizAgent", Session>;
 const fx = {} as { account: string; groupChat: string; bizAccount: string; bizGroupChat: string; connection: string; conversation: string; team: string; bizTeam: string; outsider: string };
 
 const WA = () => ({ kind: "whatsapp" as const, accountId: fx.account, chatId: fx.groupChat });
@@ -93,6 +96,7 @@ beforeAll(async () => {
   const viewer = await role("V3 viewer", ["messages.view"]);
   const admin = await role("V3 admin", ["messages.view", "settings.view", "settings.edit"]);
   s.agent = await user("v3_agent", agent, [ORIGINAL_PROJECT_ID]);
+  s.agent2 = await user("v3_agent2", agent, [ORIGINAL_PROJECT_ID]);
   s.viewer = await user("v3_viewer", viewer, [ORIGINAL_PROJECT_ID]);
   s.admin = await user("v3_admin", admin, [ORIGINAL_PROJECT_ID]);
   s.bizAgent = await user("v3_bizagent", agent, [BIZ.id]);
@@ -219,5 +223,80 @@ describe("the reopen policy", () => {
     current = s.admin;
     expect(await inIsp(() => actions.saveInboxLifecyclePolicy({ reopenResolved: false, reopenSnoozed: true }))).toEqual({ ok: true });
     expect(await inIsp(() => lifecycle.loadLifecyclePolicy())).toEqual({ reopenResolvedOnCustomerMessage: false, reopenSnoozedOnCustomerMessage: true });
+  });
+});
+
+describe("bulk actions (V3-03)", () => {
+  it("resolves, reopens and snoozes WhatsApp rows together, and assigns them", async () => {
+    current = s.agent;
+    const second = { kind: "whatsapp" as const, accountId: fx.account, chatId: `v3-second-${tag}@g.us` };
+    await rawPrisma.whatsAppGroup.create({ data: { projectId: ORIGINAL_PROJECT_ID, accountId: fx.account, whatsappGroupId: second.chatId, name: `Second ${tag}`, isActive: true } });
+    await inIsp(() => actions.setConversationStatus(WA(), { to: "OPEN" }));
+    const resolved = await inIsp(() => inboxActions.bulkUpdateConversations([WA(), second], { op: "lifecycle", to: "RESOLVED" }));
+    expect(resolved).toMatchObject({ changed: 2, failed: 0 });
+    const again = await inIsp(() => inboxActions.bulkUpdateConversations([WA(), second], { op: "lifecycle", to: "RESOLVED" }));
+    expect(again).toMatchObject({ changed: 0, unchanged: 2 });
+    // A resolved conversation cannot be snoozed: skipped with the reason, nothing changed.
+    const snooze = await inIsp(() => inboxActions.bulkUpdateConversations([WA()], { op: "lifecycle", to: "SNOOZED", until: inHours(3) }));
+    expect(snooze).toMatchObject({ changed: 0, skipped: 1 });
+    expect("notes" in snooze ? snooze.notes.join(" ") : "").toMatch(/Reopen it first/);
+    expect(await inIsp(() => inboxActions.bulkUpdateConversations([WA(), second], { op: "lifecycle", to: "OPEN" }))).toMatchObject({ changed: 2 });
+    expect(await inIsp(() => inboxActions.bulkUpdateConversations([second], { op: "assignee", userId: s.agent.userId }))).toMatchObject({ changed: 1 });
+    expect(await rawPrisma.whatsAppConversationState.findFirst({ where: { accountId: fx.account, chatId: second.chatId } })).toMatchObject({ status: "OPEN", assignedUserId: s.agent.userId });
+    // A snooze too far ahead is refused before anything is touched.
+    expect(errorOf(await inIsp(() => inboxActions.bulkUpdateConversations([second], { op: "lifecycle", to: "SNOOZED", until: inHours(24 * 200) })))).toMatch(/90 days/);
+  });
+
+  it("with the feature off, the lifecycle op is refused", async () => {
+    current = s.agent;
+    await feature(ORIGINAL_PROJECT_ID, "UNIFIED_INBOX_V3", false);
+    expect(errorOf(await inIsp(() => inboxActions.bulkUpdateConversations([WA()], { op: "lifecycle", to: "PENDING" })))).toMatch(/switched off/);
+  });
+});
+
+describe("priority and tag history (V3-04)", () => {
+  it("records PRIORITY and TAGS changes with the actor, only what changed", async () => {
+    current = s.agent;
+    await feature(ORIGINAL_PROJECT_ID, "INBOX_COLLABORATION", true);
+    const kinds = { in: ["PRIORITY", "TAGS"] };
+    const before = await rawPrisma.conversationEvent.count({ where: { accountId: fx.account, chatId: fx.groupChat, kind: kinds } });
+    await inIsp(() => workspaceActions.setConversationPriority(WA(), "HIGH"));
+    await inIsp(() => workspaceActions.setConversationTags(WA(), ["billing", "vip"]));
+    await inIsp(() => workspaceActions.setConversationTags(WA(), ["vip"]));
+    await inIsp(() => workspaceActions.setConversationPriority(WA(), "HIGH")); // no change, no event
+    const rows = await rawPrisma.conversationEvent.findMany({ where: { accountId: fx.account, chatId: fx.groupChat, kind: kinds }, orderBy: { createdAt: "asc" } });
+    const mine = rows.slice(before);
+    expect(mine.map((e) => e.kind)).toEqual(["PRIORITY", "TAGS", "TAGS"]);
+    expect(mine[0]).toMatchObject({ fromValue: "NONE", toValue: "HIGH", actorId: s.agent.userId });
+    expect(mine[1]?.context).toEqual({ added: ["billing", "vip"], removed: [] });
+    expect(mine[2]?.context).toEqual({ added: [], removed: ["billing"] });
+    await feature(ORIGINAL_PROJECT_ID, "INBOX_COLLABORATION", false);
+  });
+});
+
+describe("agent presence (V3-05)", () => {
+  it("shows the other agent viewing, then typing; never yourself; and it expires by time", async () => {
+    current = s.agent;
+    await inIsp(() => actions.presenceHeartbeat(WA(), false));
+    current = s.agent2;
+    const seen = await inIsp(() => actions.presenceHeartbeat(WA(), true));
+    expect(seen.peers).toEqual([expect.objectContaining({ userId: s.agent.userId, typing: false })]);
+    current = s.agent;
+    const back = await inIsp(() => actions.presenceHeartbeat(WA(), false));
+    expect(back.peers).toEqual([expect.objectContaining({ userId: s.agent2.userId, typing: true })]);
+    // 31 seconds later nobody is still viewing.
+    expect(await inIsp(() => presence.readPresence(WA(), s.agent.userId, new Date(Date.now() + 31_000)))).toEqual([]);
+  });
+
+  it("shows nothing across projects or with the feature off", async () => {
+    current = s.agent;
+    await inIsp(() => actions.presenceHeartbeat(WA(), false));
+    current = s.bizAgent;
+    // From Biz, the ISP Digital conversation does not exist.
+    expect((await inBiz(() => actions.presenceHeartbeat(WA(), false))).peers).toEqual([]);
+    expect(await rawPrisma.conversationPresence.count({ where: { projectId: BIZ.id } })).toBe(0);
+    current = s.agent2;
+    await feature(ORIGINAL_PROJECT_ID, "UNIFIED_INBOX_V3", false);
+    expect((await inIsp(() => actions.presenceHeartbeat(WA(), false))).peers).toEqual([]);
   });
 });

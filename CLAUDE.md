@@ -2928,6 +2928,8 @@ Feature `UNIFIED_INBOX_V3`, **off by default**; off = every view and the worker 
 - **Every change is a conditional update with its `ConversationEvent` in the same transaction**, so replays and concurrent calls give one change and one event. Events carry statuses, times and a reason (`CUSTOMER_MESSAGE`, `SNOOZE_ENDED`), never message text or the resolution note.
 - **The reopen policy is per project** (`InboxLifecycleSettings`, Settings → Inbox status, `settings.edit`): PENDING always reopens on a customer message; RESOLVED and SNOOZED by policy (both default on). A team member message never changes the status.
 - Writes check the conversation module reply key (`messages.reply` / `conversations.reply`) through `resolveWorkspaceAccess`, plus the feature; assignment re-checks the person (`mentionablePeople`) and the Team (scoped client; the database refuses another project Team).
+- **Bulk** (`bulkUpdateConversations`, op `lifecycle`) and the panel share `changeConversationStatus` / `assignWhatsAppConversation`; with V3 off WhatsApp rows keep the old skip. Priority/tag changes write PRIORITY / TAGS events (`recordLabelChange`, V3 on only).
+- **Presence** (`ConversationPresence`, `presenceHeartbeat`): one heartbeat hook per open conversation (`useConversationPresence`, visible tab only), viewing = 30 s, typing = 8 s, never yourself, never message text, pruned after a day by the next heartbeat. Polled: a refusal is an empty list.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

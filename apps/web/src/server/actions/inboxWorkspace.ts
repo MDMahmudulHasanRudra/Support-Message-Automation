@@ -16,6 +16,7 @@ import {
 } from "@/server/inboxWorkspace";
 import type { Session } from "@/server/auth";
 import { assignChannelConversation, assignChannelConversationTeam } from "@/server/channels/replies";
+import { recordLabelChange } from "@/server/conversationLifecycle";
 import {
   conversationRefColumns,
   extractNoteMentions,
@@ -109,9 +110,12 @@ export async function deleteConversationNote(noteId: string): Promise<{ ok: true
 // ── Priority, tags, Team ─────────────────────────────────────────────────────────────────────────
 
 async function upsertLabel(ref: ConversationRef, userId: string, data: { priority?: ConversationPriorityValue; tags?: string[] }) {
-  const existing = await prisma.conversationLabel.findFirst({ where: refWhere(ref), select: { id: true } });
+  const existing = await prisma.conversationLabel.findFirst({ where: refWhere(ref), select: { id: true, priority: true, tags: true } });
+  const before = { priority: existing?.priority ?? "NONE", tags: existing?.tags ?? [] };
+  const after = { priority: data.priority ?? before.priority, tags: data.tags ?? before.tags };
   if (existing) {
     await prisma.conversationLabel.update({ where: { id: existing.id }, data: { ...data, updatedById: userId } });
+    await recordLabelChange(ref, before, after, userId);
     return;
   }
   try {
@@ -124,6 +128,7 @@ async function upsertLabel(ref: ConversationRef, userId: string, data: { priorit
     if ((err as { code?: string }).code !== "P2002") throw err;
     await prisma.conversationLabel.updateMany({ where: refWhere(ref), data: { ...data, updatedById: userId } });
   }
+  await recordLabelChange(ref, before, after, userId);
 }
 
 export async function setConversationPriority(refInput: unknown, priority: string): Promise<{ ok: true } | Fail> {

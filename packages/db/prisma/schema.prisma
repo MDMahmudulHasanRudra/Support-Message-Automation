@@ -733,6 +733,7 @@ model Project {
   aiDrafts                             AiDraft[]
   inboxSavedViews                      InboxSavedView[]
   inboxMentions                        InboxMention[]
+  conversationPresence                 ConversationPresence[]
   whatsAppConversationStates           WhatsAppConversationState[]
   inboxLifecycleSettings               InboxLifecycleSettings?
   conversationEvents                   ConversationEvent[]
@@ -994,6 +995,7 @@ model User {
   inboxSavedViews               InboxSavedView[]            @relation("InboxSavedViewOwner")
   listSavedViews                ListSavedView[]             @relation("ListSavedViewOwner")
   inboxMentions                 InboxMention[]              @relation("InboxMentionUser")
+  conversationPresence          ConversationPresence[]
   whatsAppConversationsAssigned WhatsAppConversationState[] @relation("WhatsAppConversationAssignee")
   conversationEvents            ConversationEvent[]         @relation("ConversationEventActor")
 
@@ -9572,4 +9574,23 @@ model InboxLifecycleSettings {
   reopenSnoozedOnCustomerMessage  Boolean  @default(true)
   updatedById                     String?
   updatedAt                       DateTime @updatedAt
+}
+
+/// Inbox V3 agent presence (V3-05): who has a conversation open, and who is typing in it, as a heartbeat.
+/// Expires by time (viewing 30 s, typing 8 s), never by a cleanup someone must run; rows past a day are
+/// pruned on the next heartbeat. Holds no message text. conversationKey is "wa:<accountId>:<chatId>" or
+/// "ch:<conversationId>" (presenceKey in conversationLifecycle.ts).
+model ConversationPresence {
+  id              String    @id @default(cuid())
+  projectId       String    @default(dbgenerated("project_id_required()"))
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  conversationKey String
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seenAt          DateTime
+  typingAt        DateTime?
+
+  @@unique([projectId, conversationKey, userId])
+  @@index([projectId, conversationKey, seenAt])
+  @@index([projectId, seenAt])
 }

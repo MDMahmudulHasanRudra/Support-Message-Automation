@@ -94,7 +94,7 @@ export function snoozeHasEnded(status: ConversationStatus, snoozedUntil: Date | 
 }
 
 /** The kinds of `ConversationEvent` the lifecycle writes (the older STATUS / ASSIGNEE / TEAM kinds stay). */
-export const LIFECYCLE_EVENT_KINDS = ["REOPEN", "PENDING", "RESOLVE", "SNOOZE", "UNSNOOZE", "ASSIGNEE", "TEAM"] as const;
+export const LIFECYCLE_EVENT_KINDS = ["REOPEN", "PENDING", "RESOLVE", "SNOOZE", "UNSNOOZE", "ASSIGNEE", "TEAM", "PRIORITY", "TAGS"] as const;
 export type LifecycleEventKind = (typeof LIFECYCLE_EVENT_KINDS)[number];
 
 /** Why the system (not a person) changed a status — kept in the event's context, never message text. */
@@ -106,3 +106,13 @@ export function whatsAppConversationType(chatId: string): "GROUP" | "PERSONAL" |
   if (chatId.endsWith("@c.us") || chatId.endsWith("@lid")) return "PERSONAL";
   return null;
 }
+
+/** Inbox V3 agent presence (V3-05): one key per conversation, the same in every reader and writer. */
+export function presenceKey(ref: { kind: "whatsapp"; accountId: string; chatId: string } | { kind: "channel"; conversationId: string }): string {
+  return ref.kind === "whatsapp" ? `wa:${ref.accountId}:${ref.chatId}` : `ch:${ref.conversationId}`;
+}
+/** Someone counts as viewing for this long after their last heartbeat, and as typing for this long after a keystroke. */
+export const PRESENCE_VIEWING_MS = 30_000;
+export const PRESENCE_TYPING_MS = 8_000;
+/** How often an open conversation sends its heartbeat. Well inside the viewing window, so a live viewer never flickers. */
+export const PRESENCE_HEARTBEAT_MS = 10_000;
