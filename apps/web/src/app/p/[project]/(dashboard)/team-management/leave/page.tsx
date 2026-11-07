@@ -1,11 +1,12 @@
+import { formatDhakaDateKey } from "@support-automation/shared";
 import { prisma } from "@/server/db";
-import Link from "@/components/ProjectLink";
 
 import { requireSession } from "@/server/auth";
 import { hasPermission, requirePermission } from "@/server/permissions";
 import { getLeaveRequests } from "@/server/teamManagementReports";
-import { Alert, PageHeader } from "@/components/ui";
+import { PageHeader, StatTile } from "@/components/ui";
 import { LeaveManager } from "./LeaveManager";
+import { LeaveSetup } from "./LeaveSetup";
 
 /**
  * Leave: requested, approved, rejected.
@@ -33,6 +34,16 @@ export default async function LeavePage() {
     }),
   ]);
 
+  // Leave dates are whole Dhaka days, stored as dates.
+  const today = formatDhakaDateKey(new Date());
+  const day = (when: Date) => when.toISOString().slice(0, 10);
+  const inSevenDays = formatDhakaDateKey(new Date(Date.now() + 7 * 86_400_000));
+  const approved = requests.filter((r) => r.status === "APPROVED");
+  const awayToday = approved.filter((r) => day(r.startDate) <= today && day(r.endDate) >= today);
+  const startingSoon = approved.filter((r) => day(r.startDate) > today && day(r.startDate) <= inSevenDays);
+  const waiting = requests.filter((r) => r.status === "REQUESTED");
+  const names = (rows: typeof requests) => [...new Set(rows.map((r) => r.memberName))].slice(0, 3).join(", ");
+
   return (
     <div>
       <PageHeader
@@ -40,14 +51,14 @@ export default async function LeavePage() {
         description="Approving leave keeps the duty rows that already existed and marks them as leave, so the shifts they were on report the gap instead of quietly looking empty."
       />
 
-      {leaveTypes.length === 0 ? (
-        <Alert tone="warning">
-          No leave types defined.{" "}
-          <Link href="/team-management/settings" className="underline">
-            Add the kinds of leave your organisation offers
-          </Link>{" "}
-          — this app states no policy of its own.
-        </Alert>
+      {leaveTypes.length === 0 ? <LeaveSetup canManage={canManage} /> : null}
+
+      {requests.length > 0 ? (
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <StatTile label="Waiting for a decision" value={waiting.length} tone={waiting.length > 0 ? "warning" : "neutral"} hint={names(waiting) || undefined} />
+          <StatTile label="Away today" value={awayToday.length} hint={names(awayToday) || undefined} />
+          <StatTile label="Starting in 7 days" value={startingSoon.length} hint={names(startingSoon) || undefined} />
+        </div>
       ) : null}
 
       <LeaveManager requests={requests} members={members} leaveTypes={leaveTypes} canManage={canManage} />

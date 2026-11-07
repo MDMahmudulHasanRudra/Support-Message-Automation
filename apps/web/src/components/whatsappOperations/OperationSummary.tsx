@@ -62,16 +62,20 @@ export function OperationSummary({
           </div>
           <StateBadge op={op} />
         </div>
-        <div className="mt-2 mb-1 flex items-baseline justify-between text-xs text-[color:var(--color-muted-foreground)]">
-          <span className="tabular">
-            <span className="font-medium text-[color:var(--color-foreground)]">
-              {n(op.processed)} / {n(op.total)}
-            </span>{" "}
-            {op.progressLabel.toLowerCase()}
-          </span>
-          <span className="tabular">{percent(op)}%</span>
-        </div>
-        <ProgressBar value={op.processed} max={op.total} />
+        {op.total > 0 ? (
+          <>
+            <div className="mt-2 mb-1 flex items-baseline justify-between text-xs text-[color:var(--color-muted-foreground)]">
+              <span className="tabular">
+                <span className="font-medium text-[color:var(--color-foreground)]">
+                  {n(op.processed)} / {n(op.total)}
+                </span>{" "}
+                {op.progressLabel.toLowerCase()}
+              </span>
+              <span className="tabular">{percent(op)}%</span>
+            </div>
+            <ProgressBar value={op.processed} max={op.total} />
+          </>
+        ) : null}
         {op.current ? <p className="mt-1.5 truncate text-xs text-[color:var(--color-muted-foreground)]">{op.current}</p> : null}
         <p className="tabular mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-[color:var(--color-muted-foreground)]">
           {op.counts.map((c) => (
@@ -113,13 +117,17 @@ export function OperationSummary({
           <Alert tone={op.state === "REVIEW" ? "info" : "warning"}>{op.detail}</Alert>
         </div>
       ) : null}
-      <div className="mb-2 flex items-baseline justify-between text-[13px] text-[color:var(--color-muted-foreground)]">
-        <span>{op.progressLabel}</span>
-        <span className="tabular font-medium text-[color:var(--color-foreground)]">
-          {n(op.processed)} / {n(op.total)} · {percent(op)}%
-        </span>
-      </div>
-      <ProgressBar value={op.processed} max={op.total} />
+      {op.total > 0 ? (
+        <>
+          <div className="mb-2 flex items-baseline justify-between text-[13px] text-[color:var(--color-muted-foreground)]">
+            <span>{op.progressLabel}</span>
+            <span className="tabular font-medium text-[color:var(--color-foreground)]">
+              {n(op.processed)} / {n(op.total)} · {percent(op)}%
+            </span>
+          </div>
+          <ProgressBar value={op.processed} max={op.total} />
+        </>
+      ) : null}
       {op.current ? <p className="mt-2 truncate text-[13px] text-[color:var(--color-muted-foreground)]">{op.current}</p> : null}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {op.counts.map((c) => (

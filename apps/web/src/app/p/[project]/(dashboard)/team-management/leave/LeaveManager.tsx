@@ -108,7 +108,7 @@ export function LeaveManager({
 
   return (
     <>
-      {canManage ? (
+      {canManage && leaveTypes.length > 0 ? (
         <div className="mb-3 flex justify-end">
           <Button onClick={() => setCreating(true)}>
             <Plus className="size-4" aria-hidden />
@@ -119,7 +119,7 @@ export function LeaveManager({
 
       <Card>
         {requests.length === 0 ? (
-          <EmptyState>No leave requests recorded.</EmptyState>
+          <EmptyState>Nobody has leave recorded yet. Approved leave shows here and on the Roster and Today pages.</EmptyState>
         ) : (
           <Table>
             <thead>

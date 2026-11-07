@@ -12,12 +12,13 @@
  * Pure: no database, no clock except the one passed in.
  */
 
-export const WHATSAPP_OPERATION_KINDS = ["ADD_NUMBER_TO_GROUPS", "ADMIN_MAKER"] as const;
+export const WHATSAPP_OPERATION_KINDS = ["ADD_NUMBER_TO_GROUPS", "ADMIN_MAKER", "GROUP_SYNC"] as const;
 export type WhatsAppOperationKind = (typeof WHATSAPP_OPERATION_KINDS)[number];
 
 export const WHATSAPP_OPERATION_TITLES: Record<WhatsAppOperationKind, string> = {
   ADD_NUMBER_TO_GROUPS: "Add Number to Groups",
   ADMIN_MAKER: "Groups Admin Maker",
+  GROUP_SYNC: "Group sync",
 };
 
 /**
@@ -85,7 +86,7 @@ export interface WhatsAppOperation {
   stateLabel: string;
   /** What is happening or what to do, in a sentence; null when the label says it all. */
   detail: string | null;
-  /** Work done of `total`, for the progress bar. */
+  /** Work done of `total`, for the progress bar. A total of 0 means nobody can know it yet: no bar is drawn. */
   processed: number;
   total: number;
   /** What `processed / total` counts: "Groups checked", "Adds done". */
@@ -299,6 +300,61 @@ export function summariseAdminJob(job: AdminJobInput): WhatsAppOperation {
       return { ...base, state: "FAILED", stateLabel: "Failed", detail: job.statusReason };
     default:
       return { ...base, state: "CANCELLED", stateLabel: "Cancelled", detail: job.statusReason };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Group sync (GROUP_SYNC.md): one per account, read from WhatsAppAccount.groupSync*. WhatsApp never says how many
+// groups a number has, so there is no percentage, only how many have been found.
+
+export interface GroupSyncInput {
+  accountId: string;
+  accountLabel: string;
+  status: string;
+  stage: string | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  discovered: number | null;
+  added: number | null;
+  failed: number | null;
+  error: string | null;
+  /** What the result rests on, in words (describeGroupSyncBasis). */
+  basis: string | null;
+}
+
+/** Null when there is nothing to show: a sync stopped on purpose by a Logout or Reconnect is not news. */
+export function summariseGroupSync(sync: GroupSyncInput): WhatsAppOperation | null {
+  const counts: WhatsAppOperationCount[] = [
+    { label: "Groups found", value: sync.discovered ?? 0, tone: "neutral" },
+    { label: "New", value: sync.added ?? 0, tone: (sync.added ?? 0) > 0 ? "success" : "neutral" },
+    ...((sync.failed ?? 0) > 0 ? [{ label: "Could not save", value: sync.failed ?? 0, tone: "danger" as const }] : []),
+  ];
+  const base = {
+    id: sync.accountId,
+    kind: "GROUP_SYNC" as const,
+    title: WHATSAPP_OPERATION_TITLES.GROUP_SYNC,
+    href: "/accounts",
+    target: "All groups of this number",
+    accountLabel: sync.accountLabel,
+    processed: 0,
+    total: 0,
+    progressLabel: "Groups found",
+    counts,
+    current: null,
+    createdAt: (sync.startedAt ?? sync.completedAt ?? new Date(0)).toISOString(),
+    finishedAt: iso(sync.completedAt),
+  };
+  switch (sync.status) {
+    case "RUNNING":
+      return { ...base, state: "RUNNING", stateLabel: "Syncing", detail: null, current: sync.stage };
+    case "COMPLETED":
+      return { ...base, state: "COMPLETED", stateLabel: "Completed", detail: sync.basis };
+    case "PARTIAL":
+      return { ...base, state: "PARTIAL", stateLabel: "Completed with gaps", detail: sync.error ?? sync.basis };
+    case "FAILED":
+      return { ...base, state: "FAILED", stateLabel: "Failed", detail: sync.error };
+    default:
+      return null;
   }
 }
 

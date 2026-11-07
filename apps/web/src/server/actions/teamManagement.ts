@@ -944,6 +944,21 @@ export async function setAttendanceOverride(
 
 // --------------------------------------------------------------- leave types + holidays (7)
 
+/** The usual three, with no allowance: this adds names, not a policy. A name already there is left as it is. */
+export async function addCommonLeaveTypes(): Promise<TeamManagementResult> {
+  const auth = await requireManage();
+  if ("error" in auth) return auth;
+  const names = ["Annual", "Sick", "Casual"];
+  const existing = await prisma.leaveType.findMany({ where: { name: { in: names } }, select: { name: true } });
+  const have = new Set(existing.map((row) => row.name));
+  for (const [position, name] of names.entries()) {
+    if (!have.has(name)) await prisma.leaveType.create({ data: { name, annualAllowanceDays: null, isPaid: true, isActive: true, position } });
+  }
+  revalidatePath(await projectPath("/team-management/leave"));
+  revalidatePath(await projectPath("/team-management/settings"));
+  return { message: "Added." };
+}
+
 export async function saveLeaveType(formData: FormData): Promise<TeamManagementResult> {
   const auth = await requireManage();
   if ("error" in auth) return auth;
