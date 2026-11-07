@@ -43,6 +43,50 @@ function run<T>(key: string, load: () => Promise<T>): Promise<T> {
   return started;
 }
 
+const REPORT_FRESH_MS = 60_000;
+/** A report older than this waits for a new reading: it names who is waiting right now. */
+const REPORT_USABLE_MS = 5 * 60_000;
+/** Each entry holds a period's classified messages, so only the few reports in use are kept. */
+const REPORT_MAX_ENTRIES = 10;
+const reports = new Map<string, { at: number; value: unknown }>();
+const readingReports = new Map<string, Promise<unknown>>();
+
+function readReport<T>(key: string, load: (moment: Date) => Promise<T>): Promise<{ value: T; moment: Date }> {
+  const running = readingReports.get(key);
+  if (running) return running as Promise<{ value: T; moment: Date }>;
+  const moment = new Date();
+  const started = load(moment)
+    .then((value) => {
+      reports.delete(key);
+      reports.set(key, { at: moment.getTime(), value });
+      if (reports.size > REPORT_MAX_ENTRIES) {
+        const oldest = reports.keys().next().value;
+        if (oldest !== undefined) reports.delete(oldest);
+      }
+      return { value, moment };
+    })
+    .finally(() => readingReports.delete(key));
+  readingReports.set(key, started);
+  return started;
+}
+
+/**
+ * A report page's dataset: opening the same period again, or another report on it, does not read every message
+ * again. Returns the moment the figures were read, which the page's exports carry so a file says what the screen
+ * said. Only for a page, never an export or a test. The key always carries the project.
+ */
+export async function reportCached<T>(name: string, load: (moment: Date) => Promise<T>): Promise<{ value: T; moment: Date }> {
+  const project = await requireActiveProject();
+  const key = `${project.id}:${name}`;
+  const known = reports.get(key);
+  const age = known ? Date.now() - known.at : Infinity;
+  if (known && age < REPORT_USABLE_MS) {
+    if (age >= REPORT_FRESH_MS) after(() => runWithProject(project, () => readReport(key, load).catch(() => undefined)));
+    return { value: known.value as T, moment: new Date(known.at) };
+  }
+  return readReport(key, load);
+}
+
 export const FIGURES_FRESH_MS = 60_000;
 /** Older than this the page waits for a new answer: half an hour old is no longer "just now". */
 export const FIGURES_USABLE_MS = 30 * 60_000;

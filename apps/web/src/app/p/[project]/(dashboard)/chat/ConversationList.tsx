@@ -523,205 +523,207 @@ export function ChatWorkspace({
     <PicturesContext.Provider value={pictures}>
     <LabelsContext.Provider value={labels}>
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* ── Account, search, filters ─────────────────────────────────────────────────────────── */}
-      <div
-        className={`${onIndex ? "flex" : "hidden md:flex"} shrink-0 flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 py-3 sm:px-4 group-data-[v2]/chat:gap-3 group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:sm:px-5 group-data-[v2]/chat:sm:py-4`}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <AccountSelector
-            account={account}
-            accounts={accounts}
-            onSwitch={(targetId) =>
-              startTransition(async () => {
-                const target = await chatAccountSwitchTarget(targetId, activeGroupId ?? null);
-                rememberChatAccount(targetId);
-                router.push(target ?? `/chat/account/${targetId}`);
-              })
-            }
-            switching={pending}
-          />
-
-          {/* v2 on a phone only: search and filters open from here instead of always taking two rows. */}
-          {v2 ? (
-            <>
-              <button
-                type="button"
-                onClick={() => toggleMobilePanel("search")}
-                aria-expanded={mobilePanel === "search" || Boolean(query)}
-                aria-label="Search conversations"
-                className={`hidden size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border max-sm:flex ${
-                  mobilePanel === "search" || query
-                    ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
-                }`}
-              >
-                <Search className="size-4" aria-hidden />
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleMobilePanel("filters")}
-                aria-expanded={mobilePanel === "filters"}
-                aria-label={`Filters: ${filterSummary}`}
-                className={`hidden h-10 max-w-[8rem] shrink items-center gap-1.5 rounded-[var(--radius-md)] border px-2.5 text-[12px] font-medium max-sm:flex ${
-                  mobilePanel === "filters" || filterActive
-                    ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
-                }`}
-              >
-                <SlidersHorizontal className="size-4 shrink-0" aria-hidden />
-                <span className="truncate">{filterSummary}</span>
-              </button>
-            </>
-          ) : null}
-
-          <div
-            className={`relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full ${v2 && mobilePanel !== "search" && !query ? "max-sm:hidden" : ""}`}
-          >
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)] group-data-[v2]/chat:left-3.5"
-              aria-hidden
-            />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                // Back to the top on every keystroke: after filtering, "the third one down" is a
-                // different conversation than it was.
-                setCursor(-1);
-              }}
-              onKeyDown={onSearchKeyDown}
-              placeholder={v2 ? "Search conversations and contacts…" : `Search ${account.label} conversations`}
-              aria-label={`Search ${account.label} conversations`}
-              aria-keyshortcuts="/"
-              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base group-data-[v2]/chat:text-ellipsis group-data-[v2]/chat:h-11 group-data-[v2]/chat:rounded-[var(--radius-lg)] group-data-[v2]/chat:pl-10 group-data-[v2]/chat:text-[13.5px] group-data-[v2]/chat:focus-visible:border-[var(--wa-green)] group-data-[v2]/chat:focus-visible:ring-[var(--wa-green)]/15 outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
-            />
-            {query ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  setCursor(-1);
-                  searchRef.current?.focus();
-                }}
-                aria-label="Clear search"
-                className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-xs)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
-              >
-                <X className="size-3.5" aria-hidden />
-              </button>
-            ) : (
-              <kbd
-                aria-hidden
-                className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border max-sm:hidden border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
-              >
-                /
-              </kbd>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={toggleDensity}
-            data-v2-phone-hidden={v2 ? "" : undefined}
-            aria-pressed={compact}
-            title={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
-            aria-label={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
-            className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] data-[v2-phone-hidden]:max-sm:hidden"
-          >
-            {compact ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
-          </button>
-
-          <Link
-            href={`${base}/archived`}
-            className="flex h-10 shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            <Archive className="size-3.5" aria-hidden />
-            <span className="max-sm:sr-only">Archived</span>
-          </Link>
-        </div>
-
-        {/* One row of filters, scrolled sideways rather than wrapped, so the header never grows
-            downward into the conversation's space however many categories the team keeps. */}
-        <div
-          className={`-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:thin] ${v2 && mobilePanel !== "filters" ? "max-sm:hidden" : ""}`}
-          role="group"
-          aria-label="Filter conversations"
-        >
-          {/* "All" is the whole inbox, as it always was: both types and no view. Groups and Personal
-              narrow the type and keep the view, so Personal + Waiting is both. */}
-          <FilterChip
-            v2={v2}
-            active={type === "all" && filter.kind === "all"}
-            onClick={() => {
-              setType("all");
-              setFilter({ kind: "all" });
-            }}
-          >
-            All
-            <ChipCount>{counts.total}</ChipCount>
-          </FilterChip>
-          <FilterChip v2={v2} active={type === "groups"} onClick={() => setType(type === "groups" ? "all" : "groups")}>
-            <Users className="size-3.5" aria-hidden />
-            Groups
-            <ChipCount>{counts.groups.total}</ChipCount>
-          </FilterChip>
-          <FilterChip v2={v2} active={type === "personal"} onClick={() => setType(type === "personal" ? "all" : "personal")}>
-            <User className="size-3.5" aria-hidden />
-            Personal
-            <ChipCount>{counts.personal.total}</ChipCount>
-          </FilterChip>
-
-          <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" />
-
-          <FilterChip v2={v2} tone="warning" active={filter.kind === "waiting"} onClick={() => toggleFilter({ kind: "waiting" })}>
-            {v2 ? <Clock className="size-3.5" aria-hidden /> : <Inbox className="size-3.5" aria-hidden />}
-            Waiting
-            <ChipCount>{typeCounts.waiting}</ChipCount>
-          </FilterChip>
-          {/* Separate from "waiting" on purpose: conversations somebody has already opened and the
-              customer still has no answer. They leave the waiting count by design — this is where
-              they went, so they cannot quietly disappear. */}
-          {typeCounts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
-            <FilterChip v2={v2} active={filter.kind === "seen-unanswered"} onClick={() => toggleFilter({ kind: "seen-unanswered" })}>
-              <EyeOff className="size-3.5" aria-hidden />
-              Seen, unanswered
-              <ChipCount>{typeCounts.seenUnanswered}</ChipCount>
-            </FilterChip>
-          ) : null}
-
-          {categories.length ? <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" /> : null}
-
-          {categories.map((category) => (
-            <FilterChip
-              v2={v2}
-              key={category.id}
-              active={filter.kind === "category" && filter.id === category.id}
-              onClick={() => toggleFilter({ kind: "category", id: category.id })}
-            >
-              <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
-              {category.name}
-              <ChipCount>{totalFor({ kind: "category", id: category.id })}</ChipCount>
-            </FilterChip>
-          ))}
-
-          <button
-            type="button"
-            onClick={() => setManagingCategories(true)}
-            title="Manage categories"
-            className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-[var(--color-border-strong)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
-          >
-            <Settings2 className="size-3.5" aria-hidden />
-            {categories.length ? "Categories" : "Add a category"}
-          </button>
-        </div>
-      </div>
-
       <div className="flex min-h-0 flex-1">
         {/* ── The account's conversations ─────────────────────────────────────────────────────── */}
         <aside
           aria-label={`${account.label} conversations`}
-          className={`${onIndex ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] md:flex md:w-[21rem] group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:md:w-[22rem] group-data-[v2]/chat:xl:w-[26rem]`}
+          className={`${onIndex ? "flex" : "hidden"} w-full shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface-sunken)] lg:flex lg:w-[21rem] group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:lg:w-[22rem] group-data-[v2]/chat:xl:w-[26rem]`}
         >
+          {/* ── Account, search, filters: inside the list, so the open conversation keeps the full height. ── */}
+          <div
+            className={`relative z-20 flex shrink-0 flex-col gap-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-3 py-3 sm:px-4 group-data-[v2]/chat:gap-3 group-data-[v2]/chat:bg-[var(--color-surface)] group-data-[v2]/chat:sm:px-5 group-data-[v2]/chat:sm:py-4 group-data-[v2]/chat:lg:gap-2.5 group-data-[v2]/chat:lg:px-3 group-data-[v2]/chat:lg:py-3`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <AccountSelector
+                account={account}
+                accounts={accounts}
+                onSwitch={(targetId) =>
+                  startTransition(async () => {
+                    const target = await chatAccountSwitchTarget(targetId, activeGroupId ?? null);
+                    rememberChatAccount(targetId);
+                    router.push(target ?? `/chat/account/${targetId}`);
+                  })
+                }
+                switching={pending}
+              />
+
+              {/* v2 on a phone only: search and filters open from here instead of always taking two rows. */}
+              {v2 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => toggleMobilePanel("search")}
+                    aria-expanded={mobilePanel === "search" || Boolean(query)}
+                    aria-label="Search conversations"
+                    className={`hidden size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] border max-sm:flex ${
+                      mobilePanel === "search" || query
+                        ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
+                        : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
+                    }`}
+                  >
+                    <Search className="size-4" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggleMobilePanel("filters")}
+                    aria-expanded={mobilePanel === "filters"}
+                    aria-label={`Filters: ${filterSummary}`}
+                    className={`hidden h-10 max-w-[8rem] shrink items-center gap-1.5 rounded-[var(--radius-md)] border px-2.5 text-[12px] font-medium max-sm:flex ${
+                      mobilePanel === "filters" || filterActive
+                        ? "border-[var(--wa-green-strong)] bg-[var(--wa-green-soft)] text-[color:var(--wa-green-strong)]"
+                        : "border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)]"
+                    }`}
+                  >
+                    <SlidersHorizontal className="size-4 shrink-0" aria-hidden />
+                    <span className="truncate">{filterSummary}</span>
+                  </button>
+                </>
+              ) : null}
+
+              <div
+                className={`relative min-w-[12rem] flex-1 max-sm:order-last max-sm:basis-full lg:order-last lg:basis-full ${v2 && mobilePanel !== "search" && !query ? "max-sm:hidden" : ""}`}
+              >
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[color:var(--color-muted-foreground)] group-data-[v2]/chat:left-3.5"
+                  aria-hidden
+                />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    // Back to the top on every keystroke: after filtering, "the third one down" is a
+                    // different conversation than it was.
+                    setCursor(-1);
+                  }}
+                  onKeyDown={onSearchKeyDown}
+                  placeholder={v2 ? "Search conversations and contacts…" : `Search ${account.label} conversations`}
+                  aria-label={`Search ${account.label} conversations`}
+                  aria-keyshortcuts="/"
+                  className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-9 pr-14 text-[13px] text-[color:var(--color-foreground)] max-sm:pr-10 max-sm:text-base group-data-[v2]/chat:text-ellipsis group-data-[v2]/chat:h-11 group-data-[v2]/chat:rounded-[var(--radius-lg)] group-data-[v2]/chat:pl-10 group-data-[v2]/chat:text-[13.5px] group-data-[v2]/chat:focus-visible:border-[var(--wa-green)] group-data-[v2]/chat:focus-visible:ring-[var(--wa-green)]/15 outline-none transition-[border-color,box-shadow] duration-[var(--duration-fast)] placeholder:text-[color:var(--color-muted-foreground)] focus-visible:border-[var(--color-primary)] focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12"
+                />
+                {query ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery("");
+                      setCursor(-1);
+                      searchRef.current?.focus();
+                    }}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-xs)] text-[color:var(--color-muted-foreground)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+                  >
+                    <X className="size-3.5" aria-hidden />
+                  </button>
+                ) : (
+                  <kbd
+                    aria-hidden
+                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded-[var(--radius-xs)] border max-sm:hidden border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-subtle-foreground)]"
+                  >
+                    /
+                  </kbd>
+                )}
+              </div>
+
+              <span aria-hidden className="hidden flex-1 lg:block" />
+
+              <button
+                type="button"
+                onClick={toggleDensity}
+                data-v2-phone-hidden={v2 ? "" : undefined}
+                aria-pressed={compact}
+                title={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
+                aria-label={compact ? "Switch to comfortable rows" : "Switch to compact rows"}
+                className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] data-[v2-phone-hidden]:max-sm:hidden"
+              >
+                {compact ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
+              </button>
+
+              <Link
+                href={`${base}/archived`}
+                className="flex h-10 shrink-0 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color] duration-[var(--duration-fast)] hover:border-[var(--color-border-strong)] hover:text-[color:var(--color-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+              >
+                <Archive className="size-3.5" aria-hidden />
+                <span className="max-sm:sr-only lg:max-xl:sr-only">Archived</span>
+              </Link>
+            </div>
+
+            {/* One row of filters, scrolled sideways rather than wrapped, so the header never grows
+                downward into the conversation's space however many categories the team keeps. */}
+            <div
+              className={`-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:[&>button]:px-2 lg:[&>button>svg]:hidden lg:[&>span[aria-hidden]]:hidden xl:[&>button]:px-2.5 ${v2 && mobilePanel !== "filters" ? "max-sm:hidden" : ""}`}
+              role="group"
+              aria-label="Filter conversations"
+            >
+              {/* "All" is the whole inbox, as it always was: both types and no view. Groups and Personal
+                  narrow the type and keep the view, so Personal + Waiting is both. */}
+              <FilterChip
+                v2={v2}
+                active={type === "all" && filter.kind === "all"}
+                onClick={() => {
+                  setType("all");
+                  setFilter({ kind: "all" });
+                }}
+              >
+                All
+                <ChipCount>{counts.total}</ChipCount>
+              </FilterChip>
+              <FilterChip v2={v2} active={type === "groups"} onClick={() => setType(type === "groups" ? "all" : "groups")}>
+                <Users className="size-3.5" aria-hidden />
+                Groups
+                <ChipCount>{counts.groups.total}</ChipCount>
+              </FilterChip>
+              <FilterChip v2={v2} active={type === "personal"} onClick={() => setType(type === "personal" ? "all" : "personal")}>
+                <User className="size-3.5" aria-hidden />
+                Personal
+                <ChipCount>{counts.personal.total}</ChipCount>
+              </FilterChip>
+
+              <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" />
+
+              <FilterChip v2={v2} tone="warning" active={filter.kind === "waiting"} onClick={() => toggleFilter({ kind: "waiting" })}>
+                {v2 ? <Clock className="size-3.5" aria-hidden /> : <Inbox className="size-3.5" aria-hidden />}
+                Waiting
+                <ChipCount>{typeCounts.waiting}</ChipCount>
+              </FilterChip>
+              {/* Separate from "waiting" on purpose: conversations somebody has already opened and the
+                  customer still has no answer. They leave the waiting count by design — this is where
+                  they went, so they cannot quietly disappear. */}
+              {typeCounts.seenUnanswered > 0 || filter.kind === "seen-unanswered" ? (
+                <FilterChip v2={v2} active={filter.kind === "seen-unanswered"} onClick={() => toggleFilter({ kind: "seen-unanswered" })}>
+                  <EyeOff className="size-3.5" aria-hidden />
+                  Seen, unanswered
+                  <ChipCount>{typeCounts.seenUnanswered}</ChipCount>
+                </FilterChip>
+              ) : null}
+
+              {categories.length ? <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-[var(--color-border-strong)]" /> : null}
+
+              {categories.map((category) => (
+                <FilterChip
+                  v2={v2}
+                  key={category.id}
+                  active={filter.kind === "category" && filter.id === category.id}
+                  onClick={() => toggleFilter({ kind: "category", id: category.id })}
+                >
+                  <span className={`size-2 shrink-0 rounded-full ${categoryDotClass(category.color)}`} aria-hidden />
+                  {category.name}
+                  <ChipCount>{totalFor({ kind: "category", id: category.id })}</ChipCount>
+                </FilterChip>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setManagingCategories(true)}
+                title="Manage categories"
+                className="flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-dashed border-[var(--color-border-strong)] px-3 text-[12px] font-medium text-[color:var(--color-muted-foreground)] transition-[border-color,color,transform] duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:border-[var(--color-primary)] hover:text-[color:var(--color-foreground)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+              >
+                <Settings2 className="size-3.5" aria-hidden />
+                {categories.length ? "Categories" : "Add a category"}
+              </button>
+            </div>
+          </div>
+
           <div className="flex shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-1.5 text-[12px]">
             <ToolbarButton onClick={() => (selecting ? exitSelection() : setSelecting(true))} pressed={selecting}>
               <CheckSquare className="size-3.5" aria-hidden />
@@ -885,7 +887,7 @@ export function ChatWorkspace({
           </div>
         </aside>
 
-        <div className={`${onIndex ? "hidden md:flex" : "flex"} min-w-0 flex-1 flex-col`}>{children}</div>
+        <div className={`${onIndex ? "hidden lg:flex" : "flex"} min-w-0 flex-1 flex-col`}>{children}</div>
       </div>
 
       <CategoryManager open={managingCategories} onClose={() => setManagingCategories(false)} categories={categories} />

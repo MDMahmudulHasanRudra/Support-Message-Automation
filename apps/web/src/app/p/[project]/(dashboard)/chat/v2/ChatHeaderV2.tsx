@@ -40,7 +40,7 @@ export function ChatHeaderV2({
       <Link
         href={backHref}
         aria-label="Back to conversations"
-        className="flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] active:bg-[var(--color-neutral-bg)] md:hidden"
+        className="flex size-10 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] active:bg-[var(--color-neutral-bg)] lg:hidden"
       >
         <ArrowLeft className="size-5" aria-hidden />
       </Link>

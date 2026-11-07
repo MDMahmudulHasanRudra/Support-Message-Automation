@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { reportCached } from "@/server/softCache";
 import { Download } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import {
@@ -120,12 +121,15 @@ async function TeamReportBody({
   // A conversation links to WhatsApp Chat only where the viewer may open it (the feature on, `messages.view`).
   const linkToChat = canViewPersonal && !(await activeDisabledFeatures()).has("WHATSAPP_CHAT");
   if (pageScope === "personal") return PersonalPage({ requested, now, scopeNote, linkToChat, canViewPersonal });
-  const [report, filterOptions, dataHealth, quality, pendingReattributions, personal] = await Promise.all([
-    loadTeamReport(requested, now, undefined, {
-      ...(pageScope === "combined" ? { keepHumanWaits: true } : {}),
-      // The quote and mention evidence behind "Customer-specific replies"; off, the query is the old one.
-      ...(unified ? { withReplyEvidence: true } : {}),
-    }),
+  const [read, filterOptions, dataHealth, quality, pendingReattributions, personal] = await Promise.all([
+    (() => {
+      const options = {
+        ...(pageScope === "combined" ? { keepHumanWaits: true } : {}),
+        // The quote and mention evidence behind "Customer-specific replies"; off, the query is the old one.
+        ...(unified ? { withReplyEvidence: true } : {}),
+      };
+      return reportCached(`team-report:${JSON.stringify(requested)}:${JSON.stringify(options)}`, (moment) => loadTeamReport(requested, moment, undefined, options));
+    })(),
     loadReportFilterOptions(requested.groupKeys),
     loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
     unified
@@ -135,6 +139,7 @@ async function TeamReportBody({
     // Combined: the personal half beside the group one, never instead of it.
     pageScope === "combined" ? loadPersonalReport(requested, now) : Promise.resolve(null),
   ]);
+  const report = read.value;
   const { filters, range, result, memberNames, members, rules, teams, teamMemberIds, teamName, filterNote } = report;
   const { summary } = result;
   const reliability = computeReportingReliability(report.reliabilityCounts, dataHealth, {
@@ -191,7 +196,7 @@ async function TeamReportBody({
   // Their own figures, for anybody whose login is linked to a team member.
   const myMember = await prisma.internalTeamMember.findFirst({ where: { userId: session.userId }, select: { id: true } });
   // The page's own moment travels with every export, so the file says what the screen said.
-  const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
+  const query = `${teamReportQuery(filters)}&asof=${read.moment.getTime()}`;
 
   const activitySeries = result.buckets.map((b) => ({
     label: bucketLabel(b.key, filters.granularity),

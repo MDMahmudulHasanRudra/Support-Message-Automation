@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
+import { createContext, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { Loader2, Lock, MessageSquareText, Sparkles, StickyNote } from "lucide-react";
 import { useToast } from "@/components/ui";
 import { useProjectRouter } from "@/components/ProjectLink";
 import { fillComposer } from "@/lib/composerBridge";
 import { addConversationNote, markCopilotDraftUsed, readCopilotDrafts, requestCopilot } from "@/server/actions/inboxWorkspace";
 import { openPanel, useWorkspaceInfo } from "./panelStore";
+
+/** Lets a reply box put its "Sending from" line on the Reply / Note row instead of a row of its own. */
+export const InsideComposerShell = createContext(false);
 
 /**
  * Reply / Note / AI draft above any reply box. The reply box itself is passed in and stays mounted while a
@@ -96,7 +99,7 @@ export function ComposerShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           onClick={() => openPanel("notes")}
-          className="flex w-full min-w-0 items-center gap-2 border-b border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-1.5 text-left text-[12px] text-[color:var(--color-warning-fg)] transition-opacity hover:opacity-90 sm:px-5"
+          className="flex w-full min-w-0 items-center gap-2 border-b border-[var(--color-warning-border)] bg-[var(--color-warning-bg)] px-4 py-1 text-left text-[12px] text-[color:var(--color-warning-fg)] transition-opacity hover:opacity-90 sm:px-5"
         >
           <StickyNote className="size-3.5 shrink-0" aria-hidden />
           <span className="shrink-0 font-medium">{noteCount === 1 ? "1 team note" : `${noteCount} team notes`}</span>
@@ -179,7 +182,7 @@ export function ComposerShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       ) : null}
-      <div className={mode === "note" ? "hidden" : undefined}>{children}</div>
+      <div className={mode === "note" ? "hidden" : undefined}><InsideComposerShell.Provider value={true}>{children}</InsideComposerShell.Provider></div>
     </div>
   );
 }

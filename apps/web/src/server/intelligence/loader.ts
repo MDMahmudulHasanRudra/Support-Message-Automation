@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { reportCached } from "@/server/softCache";
 import {
   appreciationSignals,
   buildCases,
@@ -99,6 +100,12 @@ const LOOKAHEAD_MS = 24 * 3_600_000;
 
 
 export async function loadIntelligence(ctx: ReportContext): Promise<IntelligenceData> {
+  if (!ctx.shared) return readIntelligence(ctx);
+  const { value } = await reportCached(`intelligence:${JSON.stringify(ctx.filters)}:${ctx.rangeStart}:${ctx.rangeEnd}`, () => readIntelligence(ctx));
+  return value;
+}
+
+async function readIntelligence(ctx: ReportContext): Promise<IntelligenceData> {
   const projectId = await activeProjectId();
   const from = new Date(ctx.rangeStart - DEFAULT_CASE_GAP_MS);
   const to = new Date(ctx.rangeEnd + LOOKAHEAD_MS);

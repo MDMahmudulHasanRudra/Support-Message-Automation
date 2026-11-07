@@ -86,10 +86,11 @@ export async function buildReport(
   id: string,
   params: Record<string, string | undefined>,
   now: Date,
+  options: { shared?: boolean } = {},
 ): Promise<{ report: BuiltReport; ctx: ReportContext }> {
   const definition = reportDefinition(id);
   if (!definition || !reportCatalogueEntry(id)) throw new Error(`Unknown report: ${id}`);
-  const ctx = await loadReportContext(params, now);
+  const ctx = await loadReportContext(params, now, options);
   return { report: await definition.build(ctx), ctx };
 }
 

@@ -1,5 +1,6 @@
 import { prisma } from "@/server/db";
 import { loadDataHealth, type ReportDataHealth } from "@/server/dataHealth";
+import { reportCached } from "@/server/softCache";
 import {
   loadTeamReport,
   memberLabel,
@@ -26,6 +27,8 @@ export interface ReportFilterOptions {
 export interface ReportContext {
   params: Record<string, string | undefined>;
   now: Date;
+  /** A page reusing recent figures (never an export). */
+  shared: boolean;
   filters: TeamReportFilters;
   data: TeamReportData;
   rangeStart: number;
@@ -86,15 +89,20 @@ export async function loadReportFilterOptions(selectedGroupKeys: readonly string
   };
 }
 
-export async function loadReportContext(params: Record<string, string | undefined>, now: Date): Promise<ReportContext> {
+export async function loadReportContext(params: Record<string, string | undefined>, requestedAt: Date, options: { shared?: boolean } = {}): Promise<ReportContext> {
+  const shared = Boolean(options.shared) && !params.asof;
+  const now = requestedAt;
   const requested = parseTeamReportFilters(params, now);
   const requestedRange = resolveTeamReportRange(requested, now);
-  const [data, options, dataHealth] = await Promise.all([
-    // An export carries the page's moment: read only what was stored by then (exportStoredBy).
-    loadTeamReport(requested, now, undefined, params.asof ? { storedBy: now } : {}),
+  const [read, filterOptions, dataHealth] = await Promise.all([
+    shared
+      ? reportCached(`report:${JSON.stringify(requested)}`, (moment) => loadTeamReport(requested, moment))
+      : // An export carries the page's moment: read only what was stored by then (exportStoredBy).
+        loadTeamReport(requested, now, undefined, params.asof ? { storedBy: now } : {}).then((value) => ({ value, moment: now })),
     loadReportFilterOptions(requested.groupKeys),
     loadDataHealth({ periodStart: requestedRange.start.getTime(), periodEnd: requestedRange.end.getTime(), now, accountId: requested.accountId }),
   ]);
+  const data = read.value;
   const { filters, range, memberNames, teamName, teamMemberIds } = data;
   const memberName = (id: string | null) => memberLabel(id, memberNames);
   const scoped = Boolean(filters.teamId || filters.memberId);
@@ -115,10 +123,11 @@ export async function loadReportContext(params: Record<string, string | undefine
     (wait.status !== "RECALLED" && wait.status !== "MISSED") ||
     (wait.chargedTo !== null && data.scope !== null && data.scope(wait.chargedTo, wait.askedAt));
 
-  const optionName = new Map(options.groups.map((g) => [g.whatsappGroupId, g.name]));
+  const optionName = new Map(filterOptions.groups.map((g) => [g.whatsappGroupId, g.name]));
   return {
     params,
-    now,
+    now: read.moment,
+    shared,
     filters,
     data,
     rangeStart: range.start.getTime(),
@@ -130,7 +139,7 @@ export async function loadReportContext(params: Record<string, string | undefine
     missedInScope,
     groupName: (key) => data.groups.get(key)?.name ?? optionName.get(key) ?? key,
     memberName,
-    options,
+    options: filterOptions,
     dataHealth,
   };
 }

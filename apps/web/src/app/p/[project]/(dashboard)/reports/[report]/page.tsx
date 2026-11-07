@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Download } from "lucide-react";
 import Link from "@/components/ProjectLink";
@@ -44,9 +45,35 @@ export default async function ReportPage({
   const entry = reportCatalogueEntry(id);
   if (!definition || !entry) notFound();
   await requireAccess(definition.permission);
+  return (
+    <Suspense fallback={<ReportArriving title={entry.label} />}>
+      <ReportBody id={id} searchParams={searchParams} />
+    </Suspense>
+  );
+}
 
-  const now = new Date();
-  const { report, ctx } = await buildReport(id, await searchParams, now);
+function ReportArriving({ title }: { title: string }) {
+  return (
+    <div>
+      <Link href="/reports" className="link mb-3 inline-flex items-center gap-1 text-[13px]">
+        <ArrowLeft className="size-3.5" aria-hidden />
+        All reports
+      </Link>
+      <PageHeader title={title} description="Working out this period's figures from your messages…" />
+      <div className="space-y-3" aria-hidden>
+        <div className="h-20 animate-shimmer rounded-[var(--radius-lg)]" />
+        <div className="h-24 animate-shimmer rounded-[var(--radius-lg)]" />
+        <div className="h-72 animate-shimmer rounded-[var(--radius-lg)]" />
+      </div>
+    </div>
+  );
+}
+
+async function ReportBody({ id, searchParams }: { id: string; searchParams: Promise<Record<string, string | undefined>> }) {
+  const definition = reportDefinition(id)!;
+  const entry = reportCatalogueEntry(id)!;
+  const { report, ctx } = await buildReport(id, await searchParams, new Date(), { shared: true });
+  const now = ctx.now;
   const { filters, range, members, teams, teamMemberIds, filterNote } = ctx.data;
   // The page's own moment travels with every export, so the file says what the screen said.
   const query = `${reportQuery(ctx)}&asof=${now.getTime()}`;

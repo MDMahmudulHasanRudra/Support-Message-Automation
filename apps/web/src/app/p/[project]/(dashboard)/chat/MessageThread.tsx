@@ -229,20 +229,30 @@ export function AiActiveNotice({ suppressedUntil, compact = false }: { suppresse
       <Bot className="size-3.5 shrink-0" aria-hidden />
       {suppressed ? (
         <>
-          {/* `compact` (Chat v2): one short line on a phone, the full sentence everywhere else. */}
-          {compact ? <span className="min-w-0 truncate sm:hidden">AI paused until {formatTime(new Date(suppressedUntil))}</span> : null}
-          <span className={compact ? "max-sm:hidden" : undefined}>
-            AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
-            member replied recently.
-          </span>
+          {/* `compact` (Chat v2): one short line, so the messages keep the height. */}
+          {compact ? (
+            <span className="min-w-0 truncate" title="A team member replied recently, so AI stays quiet here for now.">
+              AI paused until {formatTime(new Date(suppressedUntil))}
+            </span>
+          ) : (
+            <span>
+              AI is paused for this group until {formatTime(new Date(suppressedUntil))} because a team
+              member replied recently.
+            </span>
+          )}
         </>
       ) : (
         <>
-          {compact ? <span className="min-w-0 truncate sm:hidden">AI is on · replying here pauses it</span> : null}
-          <span className={compact ? "max-sm:hidden" : undefined}>
-            AI automation is on for this group. Replying here pauses it while you handle the
-            conversation.
-          </span>
+          {compact ? (
+            <span className="min-w-0 truncate" title="AI automation is on for this group. Replying here pauses it while you handle the conversation.">
+              AI is on · replying here pauses it
+            </span>
+          ) : (
+            <span>
+              AI automation is on for this group. Replying here pauses it while you handle the
+              conversation.
+            </span>
+          )}
         </>
       )}
     </div>
