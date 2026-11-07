@@ -103,6 +103,12 @@ beforeEach(() => {
 afterAll(async () => {
   setPushSenderForTests(null);
   await rawPrisma.pushDevice.deleteMany({ where: { userId: { in: people } } });
+  // Everything this file put in the original project: the next suite on this database scans it project-wide.
+  await rawPrisma.conversationEvent.deleteMany({ where: { accountId: fx.account } });
+  await rawPrisma.whatsAppConversationState.deleteMany({ where: { accountId: fx.account } });
+  await rawPrisma.message.deleteMany({ where: { accountId: fx.account } });
+  await rawPrisma.whatsAppGroup.deleteMany({ where: { accountId: fx.account } });
+  await rawPrisma.whatsAppAccount.deleteMany({ where: { id: fx.account } });
 });
 
 describe("a customer writes in a conversation nobody holds", () => {
