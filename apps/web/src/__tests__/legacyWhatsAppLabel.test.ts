@@ -12,7 +12,7 @@ import { CHANNEL_PRESENTATION } from "@/app/p/[project]/(dashboard)/conversation
  * it meant before.
  */
 
-const WHATSAPP_GROUP_HREFS = ["/accounts", "/groups", "/team-members", "/teams", "/group-message-sender", "/group-member-adder", "/group-admin-maker"];
+const WHATSAPP_GROUP_HREFS = ["/accounts", "/groups", "/group-message-sender", "/group-member-adder", "/group-admin-maker"];
 
 describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   it("the label is the one shared constant", () => {
@@ -35,8 +35,15 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
     const whatsapp = ACCESS_MODULES.find((m) => m.id === "whatsapp");
     expect(whatsapp?.label).toBe(LEGACY_WHATSAPP_LABEL);
     const ids = whatsapp!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
-    expect(ids).toEqual(expect.arrayContaining(["/accounts", "/groups", "/team-members", "/teams", "/group-message-sender", "/group-member-adder", "/group-admin-maker"]));
+    expect(ids).toEqual(expect.arrayContaining(["/accounts", "/groups", "/group-message-sender", "/group-member-adder", "/group-admin-maker"]));
     expect(ACCESS_MODULES.some((m) => m.id === "whatsapp-legacy")).toBe(false);
+  });
+
+  it("Team Members and Teams moved to the Team module with their section ids, so a role's saved access still applies", () => {
+    expect(NAV_GROUPS.find((g) => g.label === "Team")!.links.map((l) => l.href)).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
+    const team = ACCESS_MODULES.find((m) => m.label === "Team");
+    const ids = team!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
+    expect(ids).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
   });
 
   it("All Conversations: the scope is still `whatsapp`, shown as Legacy", () => {
