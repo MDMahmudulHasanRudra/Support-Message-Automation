@@ -303,6 +303,7 @@ const VISITOR_SELECT = {
   language: true,
   timeZone: true,
   visitCount: true,
+  startedFrom: true,
   createdAt: true,
   lastSeenAt: true,
   connectionId: true,

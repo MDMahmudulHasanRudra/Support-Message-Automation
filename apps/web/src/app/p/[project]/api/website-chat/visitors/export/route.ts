@@ -19,10 +19,10 @@ export async function GET(request: NextRequest) {
   const contact = p.get("contact");
   const filters: VisitorFilters = { q: p.get("q") ?? "", widget: p.get("widget") ?? "", contact: contact === "yes" || contact === "no" ? contact : "" };
   const rows = await exportWebsiteVisitors(filters);
-  const header = ["Name", "Phone", "Email", "Signed in", "Widget", "Answers", "First page", "Last page", "Referrer", "UTM source", "UTM medium", "UTM campaign", "Device", "System", "Browser", "Language", "Time zone", "Visits", "First seen", "Last seen", "Consent"];
+  const header = ["Name", "Phone", "Email", "Signed in", "Widget", "Answers", "First page", "Last page", "Referrer", "UTM source", "UTM medium", "UTM campaign", "Invitation", "Device", "System", "Browser", "Language", "Time zone", "Visits", "First seen", "Last seen", "Consent"];
   const lines = rows.map((v) => {
     const answers = Array.isArray(v.customAnswers) ? (v.customAnswers as Array<{ label: string; value: string }>).map((a) => `${a.label}: ${a.value}`).join("; ") : "";
-    return [v.name, v.phone ?? v.typedPhone, v.email, v.verifiedExternalId ? "Yes" : "No", v.connection.name, answers, v.firstPageUrl, v.pageUrl, v.referrer, v.utmSource, v.utmMedium, v.utmCampaign, v.device, v.os, v.browser, v.language, v.timeZone, v.visitCount, v.createdAt, v.lastSeenAt, v.consentAt].map(cell).join(",");
+    return [v.name, v.phone ?? v.typedPhone, v.email, v.verifiedExternalId ? "Yes" : "No", v.connection.name, answers, v.firstPageUrl, v.pageUrl, v.referrer, v.utmSource, v.utmMedium, v.utmCampaign, v.startedFrom, v.device, v.os, v.browser, v.language, v.timeZone, v.visitCount, v.createdAt, v.lastSeenAt, v.consentAt].map(cell).join(",");
   });
   return new NextResponse(`\ufeff${[header.join(","), ...lines].join("\r\n")}`, {
     headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="website-visitors.csv"', "Cache-Control": "no-store" },

@@ -29,6 +29,7 @@ import { platformPrisma, prisma } from "@/server/db";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
 import { publicOrigin } from "@/server/google/oauth";
 import { secretsEqual } from "@/server/channels/connections";
+import { routeNewWebchatConversation } from "@/server/channels/webchatRouting";
 
 /**
  * Website live chat (WEBSITE_CHAT.md).
@@ -160,9 +161,10 @@ export async function recordWidgetRefused(widget: PublicWidget, origin: string |
  * to its public address. Never a storage key, an uploader, a consent record or the weekly hours.
  */
 export function publicWidgetSettings(widget: PublicWidget) {
-  const { hours, assets, team, allowAnyWebsite, ...rest } = widget.settings;
+  const { hours, assets, team, allowAnyWebsite, routing, ...rest } = widget.settings;
   void hours;
   void allowAnyWebsite;
+  void routing;
   // Relative to the widget's own API address: the script prefixes the address it was loaded from.
   const url = (id: string | null) => (id && assets.some((a) => a.id === id) ? `brand/${encodeURIComponent(id)}` : null);
   return {
@@ -190,7 +192,7 @@ export interface VisitorSession {
  */
 export async function startVisitor(
   widget: PublicWidget,
-  input: { token?: unknown; name?: unknown; email?: unknown; phone?: unknown; custom?: unknown; consent?: unknown; context?: unknown; visit?: unknown; userAgent?: string | null; identity?: unknown; ip: string | null; now?: Date },
+  input: { token?: unknown; name?: unknown; email?: unknown; phone?: unknown; custom?: unknown; consent?: unknown; context?: unknown; form?: unknown; visit?: unknown; userAgent?: string | null; identity?: unknown; ip: string | null; now?: Date },
 ): Promise<VisitorSession> {
   const now = input.now ?? new Date();
   if (typeof input.token === "string" && input.token.length >= 32) {
@@ -217,7 +219,8 @@ export async function startVisitor(
   }
   // The chat form is checked here too, so it cannot be skipped by calling this address directly. A widget script
   // from before the form (cached up to an hour) sends no context, and is let through rather than losing a message.
-  const form = !verifiedExternalId && widget.settings.prechat.enabled && input.context ? readPrechatAnswers(widget.settings.prechat, input) : null;
+  const prechat = input.form === "away" && widget.settings.prechatAway.enabled ? widget.settings.prechatAway : widget.settings.prechat;
+  const form = !verifiedExternalId && prechat.enabled && input.context ? readPrechatAnswers(prechat, input) : null;
   if (form?.error) throw new WebchatError(form.error, 400);
   const context = readVisitorContext(input.context);
   const seenOn = describeUserAgent(input.userAgent);
@@ -239,6 +242,7 @@ export async function startVisitor(
       typedPhone: form?.phone ?? null,
       customAnswers: form?.custom.length ? (form.custom as never) : undefined,
       consentAt: form?.consent ? now : null,
+      startedFrom: context.invitation,
       firstPageUrl: pageOn(widget, context.pageUrl),
       pageUrl: pageOn(widget, context.pageUrl),
       referrer: context.referrer,
@@ -302,6 +306,7 @@ export async function recordVisitorMessage(widget: PublicWidget, visitor: Visito
   const lastMinute = await platformPrisma.channelInboundEvent.count({ where: { connectionId: widget.connectionId, dedupKey: { startsWith: prefix }, receivedAt: { gte: new Date(now.getTime() - 60_000) } } });
   if (lastMinute >= 12) throw new WebchatError("You are sending messages very quickly. Wait a moment.", 429);
 
+  await routeNewWebchatConversation(widget, visitor, { pageUrl: pageOn(widget, input.pageUrl), now });
   const payload: WebchatInboundPayload = {
     provider: "WEBCHAT",
     visitorId: visitor.id,
@@ -381,6 +386,7 @@ export async function recordVisitorFile(
   const storageKey = `webchat/${widget.projectId}/${visitor.id}/${randomBytes(16).toString("hex")}.${ext}`;
   await storage.put(storageKey, input.bytes, { maxBytes: WEBCHAT_ATTACHMENT_MAX_BYTES });
   const attachment: WebchatAttachment = { type: plan.type, name: plan.fileName.slice(0, 120), mimeType: plan.mimeType, size: input.bytes.length, storageKey };
+  await routeNewWebchatConversation(widget, visitor, { pageUrl: pageOn(widget, input.pageUrl), now });
   const payload: WebchatInboundPayload = {
     provider: "WEBCHAT",
     visitorId: visitor.id,

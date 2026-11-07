@@ -61,6 +61,19 @@ export const DEFAULT_PRECHAT: PrechatSettings = {
   consentText: "",
 };
 
+/** While the team is away an email matters more than a phone: the reply will come later. */
+export const DEFAULT_PRECHAT_AWAY: PrechatSettings = {
+  enabled: false,
+  intro: "We're away right now. Leave your details and we'll reply as soon as we're back.",
+  buttonLabel: "Leave a message",
+  fields: [
+    { key: "name", label: "Your name", enabled: true, required: true },
+    { key: "phone", label: "Mobile number", enabled: true, required: false },
+    { key: "email", label: "Email address", enabled: true, required: true },
+  ],
+  consentText: "",
+};
+
 /** What a widget created today starts with. A widget saved before keeps exactly how it behaved. */
 export const NEW_WIDGET_SETTINGS = { prechat: { ...DEFAULT_PRECHAT, enabled: true }, visitorPresence: true };
 
@@ -112,7 +125,7 @@ export interface PrechatAnswers {
   name: string | null;
   email: string | null;
   phone: string | null;
-  custom: Array<{ label: string; value: string }>;
+  custom: Array<{ key: string; label: string; value: string }>;
   consent: boolean;
 }
 
@@ -138,7 +151,7 @@ export function readPrechatAnswers(prechat: PrechatSettings, input: { name?: unk
       out.phone = phone;
     } else {
       if (field.type === "select" && !field.options?.includes(text)) return { ...out, error: `Please choose: ${field.label}.` };
-      out.custom.push({ label: field.label, value: text });
+      out.custom.push({ key: field.key, label: field.label, value: text });
     }
   }
   if (prechat.consentText && !out.consent) return { ...out, error: "Please accept to continue." };
@@ -164,6 +177,8 @@ export function describeUserAgent(userAgent: string | null | undefined): { brows
 }
 
 export interface VisitorContext {
+  /** The invitation they answered, by its name. */
+  invitation: string | null;
   pageUrl: string | null;
   referrer: string | null;
   utmSource: string | null;
@@ -188,6 +203,7 @@ export function readVisitorContext(input: unknown): VisitorContext {
   }
   const short = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().slice(0, 80) : null);
   return {
+    invitation: short(v.invitation),
     pageUrl: typeof v.pageUrl === "string" ? v.pageUrl : null,
     referrer,
     utmSource: short(utm.utm_source),
@@ -196,6 +212,142 @@ export function readVisitorContext(input: unknown): VisitorContext {
     language: typeof v.language === "string" && /^[a-zA-Z-]{2,35}$/.test(v.language) ? v.language : null,
     timeZone: typeof v.timeZone === "string" && /^[A-Za-z_/+-]{1,64}$/.test(v.timeZone) ? v.timeZone : null,
   };
+}
+
+// ── Invitations and routing (WEBSITE_CHAT.md) ───────────────────────────────────
+
+export type WebchatWhen = "any" | "online" | "away";
+
+export interface InvitationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** Shown beside the chat button, then as the first message when the chat opens. */
+  message: string;
+  /** Page rules: "/pricing", "/billing/*". Empty = every page. */
+  pages: string[];
+  afterSeconds: number;
+  when: WebchatWhen;
+  audience: "any" | "new" | "returning";
+  mobile: boolean;
+}
+
+export interface WebchatRouteRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  pages: string[];
+  /** A chat form question, by its key, and the answer that selects this rule. */
+  fieldKey: string | null;
+  fieldValue: string;
+  when: WebchatWhen;
+  teamId: string | null;
+  userId: string | null;
+}
+
+export const MAX_INVITATIONS = 10;
+export const MAX_ROUTE_RULES = 20;
+
+const asWhen = (v: unknown): WebchatWhen => (v === "online" || v === "away" ? v : "any");
+const asId = (v: unknown) => (typeof v === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(v) ? v : null);
+function asPages(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((p): p is string => typeof p === "string").map(cleanPathRule).filter((p): p is string => p !== null))].slice(0, 20);
+}
+
+export function parseInvitations(input: unknown): InvitationRule[] {
+  if (!Array.isArray(input)) return [];
+  const out: InvitationRule[] = [];
+  for (const raw of input) {
+    const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const id = asId(v.id);
+    const message = shortText(v.message, 200, "");
+    if (!id || !message || out.length >= MAX_INVITATIONS || out.some((r) => r.id === id)) continue;
+    const seconds = typeof v.afterSeconds === "number" && Number.isFinite(v.afterSeconds) ? Math.round(v.afterSeconds) : 20;
+    out.push({
+      id,
+      name: shortText(v.name, 60, "") || "Invitation",
+      enabled: v.enabled !== false,
+      message,
+      pages: asPages(v.pages),
+      afterSeconds: Math.min(600, Math.max(0, seconds)),
+      when: asWhen(v.when),
+      audience: v.audience === "new" || v.audience === "returning" ? v.audience : "any",
+      mobile: v.mobile === true,
+    });
+  }
+  return out;
+}
+
+export function parseRouting(input: unknown): WebchatRouteRule[] {
+  if (!Array.isArray(input)) return [];
+  const out: WebchatRouteRule[] = [];
+  for (const raw of input) {
+    const v = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const id = asId(v.id);
+    const teamId = asId(v.teamId);
+    const userId = asId(v.userId);
+    if (!id || (!teamId && !userId) || out.length >= MAX_ROUTE_RULES || out.some((r) => r.id === id)) continue;
+    const fieldKey = typeof v.fieldKey === "string" && /^c\d{1,3}$/.test(v.fieldKey) ? v.fieldKey : null;
+    out.push({ id, name: shortText(v.name, 60, "") || "Rule", enabled: v.enabled !== false, pages: asPages(v.pages), fieldKey, fieldValue: fieldKey ? shortText(v.fieldValue, 200, "") : "", when: asWhen(v.when), teamId, userId });
+  }
+  return out;
+}
+
+/** One page rule: an exact path, or everything under "/billing/*". Plain code: the widget carries it as text. */
+export function webchatPathMatches(rule: string, path: string): boolean {
+  var clean = function (p: string) {
+    var s = (p || "/").split("?")[0]!.split("#")[0]!.toLowerCase();
+    return s.length > 1 && s.charAt(s.length - 1) === "/" ? s.slice(0, -1) : s;
+  };
+  var r = rule.toLowerCase();
+  var p = clean(path);
+  if (r.charAt(r.length - 1) === "*") {
+    var base = clean(r.slice(0, -1));
+    return base === "/" || p === base || p.indexOf(base + "/") === 0;
+  }
+  return clean(r) === p;
+}
+
+/** The invitation for this page right now, if any. Plain code: the widget carries it as text. */
+export function widgetInvitationFor(
+  rules: Array<{ id: string; enabled: boolean; pages: string[]; when: string; audience: string; mobile: boolean }>,
+  context: { path: string; online: boolean; mobile: boolean; returning: boolean; seen: string[] },
+  matches: (rule: string, path: string) => boolean,
+): number {
+  for (var i = 0; i < rules.length; i += 1) {
+    var r = rules[i]!;
+    if (!r.enabled || context.seen.indexOf(r.id) > -1) continue;
+    if (r.when === "online" && !context.online) continue;
+    if (r.when === "away" && context.online) continue;
+    if (r.audience === "new" && context.returning) continue;
+    if (r.audience === "returning" && !context.returning) continue;
+    if (context.mobile && !r.mobile) continue;
+    var onPage = r.pages.length === 0;
+    for (var j = 0; j < r.pages.length && !onPage; j += 1) onPage = matches(r.pages[j]!, context.path);
+    if (onPage) return i;
+  }
+  return -1;
+}
+
+/** Who a new chat goes to: the first enabled rule that matches. A rule with no condition matches everything. */
+export function pickWebchatRoute(
+  rules: WebchatRouteRule[],
+  context: { path: string | null; answers: Array<{ key?: string; value: string }>; online: boolean },
+): WebchatRouteRule | null {
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    if (rule.when === "online" && !context.online) continue;
+    if (rule.when === "away" && context.online) continue;
+    if (rule.pages.length && !(context.path && rule.pages.some((p) => webchatPathMatches(p, context.path!)))) continue;
+    if (rule.fieldKey) {
+      const wanted = rule.fieldValue.trim().toLowerCase();
+      const answer = context.answers.find((a) => a.key === rule.fieldKey)?.value.trim().toLowerCase();
+      if (!answer || (wanted && answer !== wanted)) continue;
+    }
+    return rule;
+  }
+  return null;
 }
 
 // ── Who a conversation is waiting on (the Live board) ──────────────────────────
@@ -237,6 +389,12 @@ export interface WidgetSettings {
   askEmail: boolean;
   /** The form a visitor fills in before the chat starts. Off: askName / askEmail as before. */
   prechat: PrechatSettings;
+  /** The form while the team is away (outside business hours). Off: the ordinary form then too. */
+  prechatAway: PrechatSettings;
+  /** Messages offered to a visitor on chosen pages, before they have written. */
+  invitations: InvitationRule[];
+  /** Who a new chat goes to, first matching rule wins. Server-side only: never sent to a browser. */
+  routing: WebchatRouteRule[];
   /** Counts who is on the website now, anonymously, for the Live board. */
   visitorPresence: boolean;
   /** Runs on any website instead of only the listed ones. Server-side only: never sent to a browser. */
@@ -358,6 +516,9 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = {
   askName: true,
   askEmail: false,
   prechat: DEFAULT_PRECHAT,
+  prechatAway: DEFAULT_PRECHAT_AWAY,
+  invitations: [],
+  routing: [],
   visitorPresence: false,
   allowAnyWebsite: false,
   directLink: true,
@@ -498,6 +659,9 @@ export function parseWidgetSettings(input: unknown): WidgetSettings {
     askName: typeof v.askName === "boolean" ? v.askName : DEFAULT_WIDGET_SETTINGS.askName,
     askEmail: typeof v.askEmail === "boolean" ? v.askEmail : DEFAULT_WIDGET_SETTINGS.askEmail,
     prechat: parsePrechat(v.prechat),
+    prechatAway: parsePrechat(v.prechatAway ?? DEFAULT_PRECHAT_AWAY),
+    invitations: parseInvitations(v.invitations),
+    routing: parseRouting(v.routing),
     visitorPresence: v.visitorPresence === true,
     allowAnyWebsite: v.allowAnyWebsite === true,
     directLink: v.directLink !== false,
@@ -542,7 +706,7 @@ export function cleanPathRule(raw: string): string | null {
   return p;
 }
 
-type V1Keys = "title" | "welcome" | "color" | "position" | "askName" | "askEmail" | "prechat" | "visitorPresence" | "allowAnyWebsite" | "directLink" | "replyNote" | "launcherLabel" | "bottomOffset" | "allowAttachments" | "hours" | "offlineMessage" | "offlineAskEmail";
+type V1Keys = "title" | "welcome" | "color" | "position" | "askName" | "askEmail" | "prechat" | "prechatAway" | "invitations" | "routing" | "visitorPresence" | "allowAnyWebsite" | "directLink" | "replyNote" | "launcherLabel" | "bottomOffset" | "allowAttachments" | "hours" | "offlineMessage" | "offlineAskEmail";
 
 function parseV3(v: Record<string, unknown>): Omit<WidgetSettings, V1Keys> {
   const assets = parseAssets(v.assets);

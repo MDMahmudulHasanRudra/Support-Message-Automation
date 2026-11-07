@@ -40,10 +40,12 @@ export interface StudioInstall {
   seenRecently: boolean;
 }
 
-type Section = "general" | "prechat" | "appearance" | "launcher" | "window" | "team" | "behaviour" | "messages" | "hours" | "ai" | "install" | "security" | "analytics";
+type Section = "general" | "prechat" | "invitations" | "routing" | "appearance" | "launcher" | "window" | "team" | "behaviour" | "messages" | "hours" | "ai" | "install" | "security" | "analytics";
 const SECTIONS: Array<[Section, string]> = [
   ["general", "General"],
   ["prechat", "Chat form"],
+  ["invitations", "Invitations"],
+  ["routing", "Routing"],
   ["appearance", "Appearance"],
   ["launcher", "Launcher"],
   ["window", "Chat window"],
@@ -99,6 +101,9 @@ export function WidgetStudio(props: {
   aiEnabled: boolean;
   hasIdentitySecret: boolean;
   stats: { visitors7d: number; conversations: number; messages7d: number };
+  routingOptions: { teams: Array<{ id: string; name: string }>; people: Array<{ id: string; name: string }> };
+  /** How many chats each invitation has started, by its name. */
+  invitationStarts: Record<string, number>;
   /** The connection's own switches (on/off, AI answers) and rename, rendered by the server page. */
   general: ReactNode;
 }) {
@@ -173,7 +178,20 @@ export function WidgetStudio(props: {
             </>
           ) : null}
 
-          {section === "prechat" ? <PrechatEditor value={s.prechat} onChange={(next) => set("prechat", next)} /> : null}
+          {section === "prechat" ? (
+            <>
+              <PrechatEditor value={s.prechat} onChange={(next) => set("prechat", next)} />
+              <div className="border-t border-[var(--color-border)] pt-4">
+                <p className="mb-2 text-[13px] font-semibold">While your team is away</p>
+                <p className={`${hint} mb-3`}>Outside your business hours this form shows instead. Off: the form above shows then too.</p>
+                <PrechatEditor idPrefix="away" value={s.prechatAway} onChange={(next) => set("prechatAway", next)} />
+              </div>
+            </>
+          ) : null}
+
+          {section === "invitations" ? <InvitationsEditor value={s.invitations} starts={props.invitationStarts} onChange={(next) => set("invitations", next)} /> : null}
+
+          {section === "routing" ? <RoutingEditor value={s.routing} options={props.routingOptions} questions={[...s.prechat.fields, ...s.prechatAway.fields].filter((f, i, all) => /^c\d/.test(f.key) && all.findIndex((x) => x.key === f.key) === i)} onChange={(next) => set("routing", next)} /> : null}
 
           {section === "appearance" ? (
             <>
@@ -464,7 +482,7 @@ export function WidgetStudio(props: {
         ) : null}
       </div>
 
-      <WidgetPreview settings={s} team={team} assetUrl={assetUrl} widgetName={props.widgetName} widgetKey={props.widgetKey} />
+      <WidgetPreview settings={s} team={team} assetUrl={assetUrl} widgetName={props.widgetName} widgetKey={props.widgetKey} invitation={section === "invitations" ? (s.invitations.find((r) => r.enabled)?.message ?? null) : null} />
     </div>
   );
 }
@@ -479,7 +497,7 @@ const SAMPLE = () => [
   { id: "s4", from: "ai", text: "Thanks! That item is in stock. Someone from the team will confirm the delivery date shortly.", at: minutesAgo(2), attachments: [] },
 ];
 
-function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { settings: Editable; team: Array<{ assetId: string; name: string }>; assetUrl: (id: string | null) => string | null; widgetName: string; widgetKey: string }) {
+function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey, invitation }: { invitation: string | null; settings: Editable; team: Array<{ assetId: string; name: string }>; assetUrl: (id: string | null) => string | null; widgetName: string; widgetKey: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [open, setOpen] = useState(true);
@@ -505,7 +523,7 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
     }),
     [settings, team, assetUrl, widgetName, offline],
   );
-  const post = () => frame.current?.contentWindow?.postMessage({ type: "getassist-preview", config, messages: sample ? SAMPLE() : [], view: { open, teaser, typing, prechat: showForm } }, "*");
+  const post = () => frame.current?.contentWindow?.postMessage({ type: "getassist-preview", config, messages: sample ? SAMPLE() : [], view: { open: open && !invitation, teaser, typing, prechat: showForm, invitation } }, "*");
   useEffect(() => {
     const t = setTimeout(post, 120);
     return () => clearTimeout(t);
@@ -559,7 +577,7 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
 // ── Small controls ───────────────────────────────────────────────────────────────────────────────
 
 /** The form a visitor fills in before the chat starts: what to ask, what is required, and the business's own questions. */
-function PrechatEditor({ value, onChange }: { value: WidgetSettings["prechat"]; onChange: (next: WidgetSettings["prechat"]) => void }) {
+function PrechatEditor({ value, onChange, idPrefix = "pc" }: { value: WidgetSettings["prechat"]; onChange: (next: WidgetSettings["prechat"]) => void; idPrefix?: string }) {
   const patchField = (key: string, patch: Partial<WidgetSettings["prechat"]["fields"][number]>) => onChange({ ...value, fields: value.fields.map((f) => (f.key === key ? { ...f, ...patch } : f)) });
   const custom = value.fields.filter((f) => /^c\d/.test(f.key));
   const addQuestion = () => {
@@ -573,8 +591,8 @@ function PrechatEditor({ value, onChange }: { value: WidgetSettings["prechat"]; 
       <Toggle checked={value.enabled} onChange={(enabled) => onChange({ ...value, enabled })} label="Ask visitors to fill in a form before the chat starts" description="They see this first, then they can chat. Visitors signed in on your website skip it." />
       {value.enabled ? (
         <div className="space-y-3">
-          <Field label="Line at the top" htmlFor="pc-intro">
-            <Input id="pc-intro" value={value.intro} maxLength={200} onChange={(e) => onChange({ ...value, intro: e.target.value })} />
+          <Field label="Line at the top" htmlFor={`${idPrefix}-intro`}>
+            <Input id={`${idPrefix}-intro`} value={value.intro} maxLength={200} onChange={(e) => onChange({ ...value, intro: e.target.value })} />
           </Field>
           <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-lg)] border border-[var(--color-border)]">
             {value.fields.map((f) => {
@@ -611,17 +629,186 @@ function PrechatEditor({ value, onChange }: { value: WidgetSettings["prechat"]; 
             </Button>
           ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Button" htmlFor="pc-button">
-              <Input id="pc-button" value={value.buttonLabel} maxLength={30} onChange={(e) => onChange({ ...value, buttonLabel: e.target.value })} />
+            <Field label="Button" htmlFor={`${idPrefix}-button`}>
+              <Input id={`${idPrefix}-button`} value={value.buttonLabel} maxLength={30} onChange={(e) => onChange({ ...value, buttonLabel: e.target.value })} />
             </Field>
-            <Field label="Tick box to accept (optional)" htmlFor="pc-consent">
-              <Input id="pc-consent" value={value.consentText} maxLength={240} placeholder="I agree to be contacted about my request." onChange={(e) => onChange({ ...value, consentText: e.target.value })} />
+            <Field label="Tick box to accept (optional)" htmlFor={`${idPrefix}-consent`}>
+              <Input id={`${idPrefix}-consent`} value={value.consentText} maxLength={240} placeholder="I agree to be contacted about my request." onChange={(e) => onChange({ ...value, consentText: e.target.value })} />
             </Field>
           </div>
           <p className={hint}>Everything a visitor types here is shown to your team as typed, never as proof of who they are. See it in the preview with the Chat form button.</p>
         </div>
       ) : null}
     </>
+  );
+}
+
+const newRuleId = () => Math.random().toString(36).slice(2, 12);
+const pagesToText = (pages: string[]) => pages.join("\n");
+/** Kept as typed while editing; the server cleans the list when it is saved. */
+const textToPages = (text: string) => text.split(/[\n,]/).map((p) => p.trim()).filter(Boolean);
+const WHEN_OPTIONS: Array<[string, string]> = [["any", "Any time"], ["online", "Only when your team is in"], ["away", "Only when your team is away"]];
+
+/** A list of editable rules, in order, with the add and remove every rule list needs. */
+function RuleCard({ title, enabled, onEnabled, onRemove, onUp, onDown, children }: { title: string; enabled: boolean; onEnabled: (v: boolean) => void; onRemove: () => void; onUp?: () => void; onDown?: () => void; children: ReactNode }) {
+  return (
+    <li className="space-y-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] p-3">
+      <div className="flex items-center gap-2">
+        <input type="checkbox" checked={enabled} aria-label={`Use ${title}`} onChange={(e) => onEnabled(e.target.checked)} />
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</span>
+        {onUp ? <button type="button" className="rounded px-1.5 text-[12px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]" aria-label={`Move ${title} up`} onClick={onUp}>Up</button> : null}
+        {onDown ? <button type="button" className="rounded px-1.5 text-[12px] text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]" aria-label={`Move ${title} down`} onClick={onDown}>Down</button> : null}
+        <button type="button" aria-label={`Remove ${title}`} className="rounded-[var(--radius-sm)] p-1 text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-danger-fg)]" onClick={onRemove}>
+          <Trash2 className="size-4" aria-hidden />
+        </button>
+      </div>
+      {children}
+    </li>
+  );
+}
+
+const move = <T,>(list: T[], from: number, to: number) => {
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item!);
+  return next;
+};
+
+/** Messages offered on chosen pages: "Need help choosing a package?" after 20 seconds on /pricing. */
+function InvitationsEditor({ value, starts, onChange }: { value: WidgetSettings["invitations"]; starts: Record<string, number>; onChange: (next: WidgetSettings["invitations"]) => void }) {
+  const patch = (id: string, change: Partial<WidgetSettings["invitations"][number]>) => onChange(value.map((r) => (r.id === id ? { ...r, ...change } : r)));
+  return (
+    <div className="space-y-3">
+      <p className={hint}>A short message beside the chat button, offered to a visitor who has not written yet. The first one that fits the page shows, each at most once a visit, and a dismissed one stays away for a day. It never opens the chat by itself.</p>
+      {value.length ? (
+        <ul className="space-y-3">
+          {value.map((r) => (
+            <RuleCard key={r.id} title={r.name} enabled={r.enabled} onEnabled={(enabled) => patch(r.id, { enabled })} onRemove={() => onChange(value.filter((x) => x.id !== r.id))}>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Name (only you see it)" htmlFor={`inv-name-${r.id}`}>
+                  <Input id={`inv-name-${r.id}`} value={r.name} maxLength={60} onChange={(e) => patch(r.id, { name: e.target.value })} />
+                </Field>
+                <Field label="Seconds on the page before it shows" htmlFor={`inv-after-${r.id}`}>
+                  <Input id={`inv-after-${r.id}`} type="number" min={0} max={600} value={r.afterSeconds} onChange={(e) => patch(r.id, { afterSeconds: Number(e.target.value) })} />
+                </Field>
+              </div>
+              <Field label="Message" htmlFor={`inv-msg-${r.id}`}>
+                <Input id={`inv-msg-${r.id}`} value={r.message} maxLength={200} onChange={(e) => patch(r.id, { message: e.target.value })} />
+              </Field>
+              <Field label="Pages (one per line, empty for every page)" htmlFor={`inv-pages-${r.id}`}>
+                <textarea id={`inv-pages-${r.id}`} className={`${inputClass} h-16 py-1.5`} placeholder={"/pricing\n/products/*"} value={pagesToText(r.pages)} onChange={(e) => patch(r.id, { pages: e.target.value.split("\n") })} onBlur={(e) => patch(r.id, { pages: textToPages(e.target.value) })} />
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="When" htmlFor={`inv-when-${r.id}`}>
+                  <select id={`inv-when-${r.id}`} className={inputClass} value={r.when} onChange={(e) => patch(r.id, { when: e.target.value as typeof r.when })}>
+                    {WHEN_OPTIONS.map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Who" htmlFor={`inv-who-${r.id}`}>
+                  <select id={`inv-who-${r.id}`} className={inputClass} value={r.audience} onChange={(e) => patch(r.id, { audience: e.target.value as typeof r.audience })}>
+                    <option value="any">Everyone</option>
+                    <option value="new">First-time visitors</option>
+                    <option value="returning">Returning visitors</option>
+                  </select>
+                </Field>
+              </div>
+              <Toggle checked={r.mobile} onChange={(mobile) => patch(r.id, { mobile })} label="Also on phones" description="It takes up more of a small screen, so it is off unless you choose it." />
+              <p className={hint}>{(starts[r.name] ?? 0).toLocaleString()} chat{starts[r.name] === 1 ? "" : "s"} started from this invitation so far.</p>
+            </RuleCard>
+          ))}
+        </ul>
+      ) : null}
+      {value.length < 10 ? (
+        <Button type="button" variant="secondary" size="sm" onClick={() => onChange([...value, { id: newRuleId(), name: `Invitation ${value.length + 1}`, enabled: true, message: "Need any help? We're here.", pages: [], afterSeconds: 20, when: "any", audience: "any", mobile: false }])}>
+          Add an invitation
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Who a new chat goes to, from the page it started on or an answer on the chat form. */
+function RoutingEditor({ value, options, questions, onChange }: { value: WidgetSettings["routing"]; options: { teams: Array<{ id: string; name: string }>; people: Array<{ id: string; name: string }> }; questions: WidgetSettings["prechat"]["fields"]; onChange: (next: WidgetSettings["routing"]) => void }) {
+  const patch = (id: string, change: Partial<WidgetSettings["routing"][number]>) => onChange(value.map((r) => (r.id === id ? { ...r, ...change } : r)));
+  return (
+    <div className="space-y-3">
+      <p className={hint}>Decides who gets a new chat, from the first message. Rules are checked from the top and the first match wins; a chat matching none is handled as usual. If you choose a Team and Automatic routing is on, it also picks a person from that Team. A person can always reassign a chat afterwards.</p>
+      {value.length ? (
+        <ul className="space-y-3">
+          {value.map((r, index) => {
+            const question = questions.find((q) => q.key === r.fieldKey);
+            return (
+              <RuleCard key={r.id} title={r.name} enabled={r.enabled} onEnabled={(enabled) => patch(r.id, { enabled })} onRemove={() => onChange(value.filter((x) => x.id !== r.id))} onUp={index > 0 ? () => onChange(move(value, index, index - 1)) : undefined} onDown={index < value.length - 1 ? () => onChange(move(value, index, index + 1)) : undefined}>
+                <Field label="Name" htmlFor={`rt-name-${r.id}`}>
+                  <Input id={`rt-name-${r.id}`} value={r.name} maxLength={60} onChange={(e) => patch(r.id, { name: e.target.value })} />
+                </Field>
+                <Field label="Started on these pages (one per line, empty for any page)" htmlFor={`rt-pages-${r.id}`}>
+                  <textarea id={`rt-pages-${r.id}`} className={`${inputClass} h-16 py-1.5`} placeholder={"/billing/*"} value={pagesToText(r.pages)} onChange={(e) => patch(r.id, { pages: e.target.value.split("\n") })} onBlur={(e) => patch(r.id, { pages: textToPages(e.target.value) })} />
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Chat form answer" htmlFor={`rt-q-${r.id}`}>
+                    <select id={`rt-q-${r.id}`} className={inputClass} value={r.fieldKey ?? ""} onChange={(e) => patch(r.id, { fieldKey: e.target.value || null, fieldValue: "" })}>
+                      <option value="">Any answer</option>
+                      {questions.map((q) => (
+                        <option key={q.key} value={q.key}>{q.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  {r.fieldKey ? (
+                    <Field label="Answer is" htmlFor={`rt-v-${r.id}`}>
+                      {question?.options?.length ? (
+                        <select id={`rt-v-${r.id}`} className={inputClass} value={r.fieldValue} onChange={(e) => patch(r.id, { fieldValue: e.target.value })}>
+                          <option value="">Any answer</option>
+                          {question.options.map((o) => (
+                            <option key={o} value={o}>{o}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Input id={`rt-v-${r.id}`} value={r.fieldValue} maxLength={200} onChange={(e) => patch(r.id, { fieldValue: e.target.value })} />
+                      )}
+                    </Field>
+                  ) : null}
+                </div>
+                <Field label="When" htmlFor={`rt-when-${r.id}`}>
+                  <select id={`rt-when-${r.id}`} className={inputClass} value={r.when} onChange={(e) => patch(r.id, { when: e.target.value as typeof r.when })}>
+                    {WHEN_OPTIONS.map(([v, l]) => (
+                      <option key={v} value={v}>{l}</option>
+                    ))}
+                  </select>
+                </Field>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Give it to this Team" htmlFor={`rt-team-${r.id}`}>
+                    <select id={`rt-team-${r.id}`} className={inputClass} value={r.teamId ?? ""} onChange={(e) => patch(r.id, { teamId: e.target.value || null })}>
+                      <option value="">No Team</option>
+                      {options.teams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Or this person" htmlFor={`rt-user-${r.id}`}>
+                    <select id={`rt-user-${r.id}`} className={inputClass} value={r.userId ?? ""} onChange={(e) => patch(r.id, { userId: e.target.value || null })}>
+                      <option value="">Nobody in particular</option>
+                      {options.people.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                {!r.teamId && !r.userId ? <p className="text-[12px] text-[color:var(--color-warning-fg)]">Choose a Team or a person, or this rule is not saved.</p> : null}
+              </RuleCard>
+            );
+          })}
+        </ul>
+      ) : null}
+      {value.length < 20 ? (
+        <Button type="button" variant="secondary" size="sm" onClick={() => onChange([...value, { id: newRuleId(), name: `Rule ${value.length + 1}`, enabled: true, pages: [], fieldKey: null, fieldValue: "", when: "any", teamId: null, userId: null }])}>
+          Add a rule
+        </Button>
+      ) : null}
+      {options.teams.length === 0 ? <p className={hint}>No Teams yet: you can create them under WhatsApp → Teams, or give chats to a person.</p> : null}
+    </div>
   );
 }
 

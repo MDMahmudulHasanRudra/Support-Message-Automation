@@ -1,4 +1,4 @@
-import { WIDGET_FONT_STACKS, widgetPathAllowed, widgetTeaserAllowed } from "@support-automation/shared";
+import { WIDGET_FONT_STACKS, widgetPathAllowed, webchatPathMatches, widgetInvitationFor, widgetTeaserAllowed } from "@support-automation/shared";
 
 /**
  * The embeddable website chat widget (WEBSITE_CHAT.md, Website Chat V3), served as plain JavaScript by
@@ -24,9 +24,9 @@ import { WIDGET_FONT_STACKS, widgetPathAllowed, widgetTeaserAllowed } from "@sup
  * Preview (`data-preview="1"`, the settings page only): no network at all. The configuration and sample messages come
  * from window.GetAssistChatPreview and from postMessage by the parent page; nothing is sent, no visitor is created.
  */
-const VERSION = "3.2.0";
+const VERSION = "3.3.0";
 
-export const WIDGET_SCRIPT = String.raw`(function () {
+const WIDGET_SOURCE = String.raw`(function () {
   "use strict";
   var script = document.currentScript;
   if (!script) return;
@@ -42,6 +42,8 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   var opts = window.GetAssistChat || (window.GetAssistChat = {});
   var pathAllowed = ` + widgetPathAllowed.toString() + String.raw`;
   var teaserAllowed = ` + widgetTeaserAllowed.toString() + String.raw`;
+  var pathMatches = ` + webchatPathMatches.toString() + String.raw`;
+  var invitationFor = ` + widgetInvitationFor.toString() + String.raw`;
   var FONTS = ` + JSON.stringify(WIDGET_FONT_STACKS) + String.raw`;
   var mqMobile = window.matchMedia ? window.matchMedia("(max-width:480px)") : { matches: false };
   var mqDark = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : { matches: false };
@@ -296,7 +298,9 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     pre = null;
     var signed = opts.user && opts.user.id && opts.user.hash;
     var askEmail = c.askEmail || (offline && c.offlineAskEmail);
-    var pc = c.prechat && c.prechat.enabled ? c.prechat : null;
+    var awayForm = offline && c.prechatAway && c.prechatAway.enabled ? c.prechatAway : null;
+    var pc = awayForm || (c.prechat && c.prechat.enabled ? c.prechat : null);
+    S.formKind = awayForm ? "away" : "main";
     if (pc && !signed && (preview ? S.previewPrechat : !S.token)) {
       pre = prechatForm(pc);
       S.formOpen = true;
@@ -381,7 +385,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     try { var q = new URLSearchParams(location.search); ["utm_source", "utm_medium", "utm_campaign"].forEach(function (k) { var v = q.get(k); if (v) utm[k] = v; }); } catch (e) { /* an old browser simply sends none */ }
     var zone = null;
     try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { zone = null; }
-    return { pageUrl: location.href, referrer: document.referrer || null, utm: utm, language: navigator.language || null, timeZone: zone };
+    return { pageUrl: location.href, referrer: document.referrer || null, utm: utm, language: navigator.language || null, timeZone: zone, invitation: S.invitationName || null };
   }
   function closeForm() {
     S.formOpen = false;
@@ -452,7 +456,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   function ensureSession() {
     if (S.token) return Promise.resolve();
     if (S.starting) return S.starting;
-    var body = { identity: opts.user || null, context: visitContext() };
+    var body = { identity: opts.user || null, context: visitContext(), form: S.formKind };
     if (pre) Array.prototype.forEach.call(pre.querySelectorAll("input,select"), function (i) {
       var f = i.dataset.f;
       if (!f) return;
@@ -635,8 +639,30 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   }
   function hideTeaser() { if (teaserEl) teaserEl.className = "tz hide"; }
   function dismissTeaser() { hideTeaser(); if (!preview) { var m = store("-teaser") || {}; m.dismissedAt = Date.now(); store("-teaser", m); } }
+  var inviteTimer = null;
+  function planInvitation() {
+    clearTimeout(inviteTimer);
+    var c = S.cfg && S.cfg.settings;
+    if (preview || !c || !c.invitations || !c.invitations.length || S.token || S.open || S.invitationText) return;
+    var dismissed = (store("-teaser") || {}).dismissedAt;
+    if (dismissed && Date.now() - dismissed < 86400000) return;
+    var seen = [];
+    try { seen = JSON.parse(session("-invited") || "[]"); } catch (e) { seen = []; }
+    var i = invitationFor(c.invitations, { path: location.pathname, online: !(S.cfg.availability && !S.cfg.availability.open), mobile: mqMobile.matches, returning: (store("-visits") || 0) > 1, seen: seen }, pathMatches);
+    if (i < 0) return;
+    var rule = c.invitations[i];
+    inviteTimer = setTimeout(function () {
+      if (S.destroyed || S.open || S.token || !teaserEl || !S.shown) return;
+      seen.push(rule.id); session("-invited", JSON.stringify(seen));
+      S.invitationName = rule.name; S.invitationText = rule.message;
+      if (teaserEl.firstChild) teaserEl.firstChild.textContent = rule.message;
+      teaserEl.className = "tz";
+    }, Math.max(0, Number(rule.afterSeconds) || 0) * 1000);
+  }
   function startTimers() {
     var c = S.cfg.settings;
+    if (!preview && !session("-counted")) { session("-counted", "1"); store("-visits", (store("-visits") || 0) + 1); }
+    later(planInvitation, Math.max(0, Number(c.showDelaySec) || 0) * 1000 + 50);
     later(function () { S.shown = true; applyVisibility(); }, Math.max(0, Number(c.showDelaySec) || 0) * 1000);
     if (c.teaser && c.teaser.enabled) later(function () { if (here()) showTeaser(false); }, (Math.max(0, Number(c.showDelaySec) || 0) + Math.max(0, Number(c.teaser.delaySec) || 0)) * 1000);
     // Opening by itself is opt-in, never on a phone (it would cover the page), and at most once a browser session.
@@ -744,7 +770,8 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     var c = S.cfg.settings;
     var lastDay = null;
     function day(at) { var d = new Date(at); var l = dayLabel(d); if (l !== lastDay) { lastDay = l; list.appendChild(el("div", "day", l)); } return d; }
-    if (c.welcome) { var w = el("div", "row t"); w.appendChild(el("div", "m", c.welcome)); list.appendChild(w); }
+    var first = S.invitationText || c.welcome;
+    if (first) { var w = el("div", "row t"); w.appendChild(el("div", "m", first)); list.appendChild(w); }
     var prevFrom = null;
     S.msgs.forEach(function (m) {
       var d = day(m.at);
@@ -785,7 +812,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   }
 
   // ── Starting, navigation, teardown ─────────────────────────────────────────────────────────────
-  function onNavigate() { if (!S.destroyed) { applyVisibility(); pingPresence(); } }
+  function onNavigate() { if (!S.destroyed) { applyVisibility(); pingPresence(); planInvitation(); } }
   function onVisibility() { if (S.destroyed) return; if (document.visibilityState === "visible") { poll(); schedule(); } else clearTimeout(S.timer); }
   function onKey(e) { if (e.key === "Escape" && S.open && root && e.composedPath && e.composedPath().indexOf(root) > -1) { S.userClosed = true; toggle(false); } }
   function patchHistory() {
@@ -819,7 +846,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   function rebuild() { var wasOpen = S.open; if (root) root.remove(); picker = null; build(); if (wasOpen) toggle(true, { auto: true, silent: true }); applyVisibility(); }
   function destroy() {
     S.destroyed = true;
-    clearTimeout(S.timer); timers.forEach(clearTimeout); clearInterval(S.presenceTimer);
+    clearTimeout(S.timer); timers.forEach(clearTimeout); clearInterval(S.presenceTimer); clearTimeout(inviteTimer);
     window.removeEventListener("popstate", onNavigate); window.removeEventListener("hashchange", onNavigate); window.removeEventListener("getassist:navigate", onNavigate);
     document.removeEventListener("visibilitychange", onVisibility); document.removeEventListener("keydown", onKey);
     if (savedOverflow !== null) document.documentElement.style.overflow = savedOverflow;
@@ -840,6 +867,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       if (root) root.remove(); picker = null; build();
       if (data.view && data.view.open) toggle(true, { auto: true, silent: true });
       if (data.view && data.view.teaser && !(data.view && data.view.open)) showTeaser(true);
+      if (data.view && data.view.invitation && teaserEl.firstChild) { teaserEl.firstChild.textContent = data.view.invitation; teaserEl.className = "tz"; }
     }
     if (pv.config) apply(pv);
     window.addEventListener("message", function (e) { if (e.source === window.parent && e.data && e.data.type === "getassist-preview" && e.data.config) apply(e.data); });
@@ -849,3 +877,10 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   load();
   api("?v=" + VERSION, { method: "GET" }).then(function (cfg) { if (S.destroyed) return; S.cfg = cfg; start(); }).catch(function () { /* not allowed here, or switched off: render nothing */ });
 })();`;
+
+/**
+ * What a website downloads: the source without its indentation and whole-line comments. The script holds no multi-line
+ * string, so this changes nothing it does, and it loads on every page of a customer's site.
+ */
+export const slimWidgetSource = (source: string) => source.replace(/^[ \t]+/gm, "").replace(/^\/\/ .*\n/gm, "");
+export const WIDGET_SCRIPT = slimWidgetSource(WIDGET_SOURCE);

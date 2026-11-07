@@ -8284,6 +8284,8 @@ model WebChatVisitor {
   language           String?
   timeZone           String?
   visitCount         Int               @default(1)
+  /// The invitation the visitor answered, when one brought them into the chat.
+  startedFrom        String?
   /// When the visitor last typed; the inbox shows "typing…" for a few seconds after it.
   typingAt           DateTime?
   createdAt          DateTime          @default(now())

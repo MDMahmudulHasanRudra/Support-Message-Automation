@@ -21,6 +21,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       custom: body.custom,
       consent: body.consent,
       context: body.context,
+      form: body.form,
       visit: body.visit,
       userAgent: request.headers.get("user-agent"),
       identity: body.identity,

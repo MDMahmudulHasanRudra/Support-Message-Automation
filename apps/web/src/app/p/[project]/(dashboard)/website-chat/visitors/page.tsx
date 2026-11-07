@@ -123,6 +123,7 @@ export default async function WebsiteVisitorsPage({ searchParams }: { searchPara
                       <p className="truncate" title={v.firstPageUrl ?? undefined}>{v.firstPageUrl ? `Landed on ${v.firstPageUrl.replace(/^https?:\/\//, "")}` : "Direct chat link"}</p>
                       <p className="truncate text-[color:var(--color-muted-foreground)]">{v.referrer ? `From ${hostOf(v.referrer)}` : "No referring site"}</p>
                       {campaign ? <p className="truncate text-[color:var(--color-muted-foreground)]" title={campaign}>Campaign: {campaign}</p> : null}
+                      {v.startedFrom ? <p className="truncate text-[color:var(--color-accent-fg)]" title={v.startedFrom}>Answered invitation: {v.startedFrom}</p> : null}
                     </Td>
                     <Td className="whitespace-nowrap text-xs">
                       <p>{[v.device, v.os].filter(Boolean).join(" · ") || "—"}</p>

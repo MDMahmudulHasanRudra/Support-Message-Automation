@@ -1,4 +1,7 @@
 import { notFound } from "next/navigation";
+import { prisma } from "@/server/db";
+import { requireSession } from "@/server/auth";
+import { mentionablePeople } from "@/server/inboxWorkspace";
 import { ArrowLeft } from "lucide-react";
 import { CHANNELS } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
@@ -35,6 +38,18 @@ export async function ChannelConnectionView({ id, query }: { id: string; query: 
   // Website chat: our own widget — no webhook, provider health or credentials (WEBSITE_CHAT.md).
   const webchat = c.type === "WEBCHAT";
   const wc = webchat ? await getWebchatDetails(c.id) : null;
+  const session = webchat ? await requireSession() : null;
+  const webchatOptions = session
+    ? {
+        teams: await prisma.team.findMany({ where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+        people: (await mentionablePeople(session)).map((p) => ({ id: p.id, name: p.name })),
+      }
+    : { teams: [], people: [] };
+  const invitationStarts = webchat
+    ? Object.fromEntries(
+        (await prisma.webChatVisitor.groupBy({ by: ["startedFrom"], where: { connectionId: c.id, startedFrom: { not: null } }, _count: { _all: true } })).map((g) => [g.startedFrom ?? "", g._count._all]),
+      )
+    : {};
   // Connected with "Connect with Facebook": the platform's app, no webhook or secret for anyone to paste.
   const oneClick = c.authMode === "PLATFORM";
   const canOneClick = meta && metaPlatformConfig().ok && metaAllowedForProject(await activeProjectId());
@@ -116,6 +131,8 @@ export async function ChannelConnectionView({ id, query }: { id: string; query: 
             aiEnabled={c.aiAutomationEnabled}
             hasIdentitySecret={wc.hasIdentitySecret}
             stats={wc.stats}
+            routingOptions={webchatOptions}
+            invitationStarts={invitationStarts}
             general={
               <div className="space-y-4 border-b border-[var(--color-border)] pb-4">
                 <ConnectionSwitches id={c.id} type={c.type} enabled={c.enabled} aiAutomationEnabled={c.aiAutomationEnabled} humanAgentEnabled={c.humanAgentEnabled} aiDisclosureEnabled={c.aiDisclosureEnabled} aiDisclosureText={c.aiDisclosureText} aiDisclosureIdleHours={c.aiDisclosureIdleHours} disconnected={disconnected} canManage={canManage} />
