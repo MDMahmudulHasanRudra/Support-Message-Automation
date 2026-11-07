@@ -2,6 +2,8 @@ import type { MessageMediaKind, PictureRef, RichContent } from "@support-automat
 
 /** Provider-agnostic shape of a message event, as delivered by any WhatsAppProvider. */
 export interface RawIncomingMessage {
+  /** The sender's phone number, when WhatsApp put it on a message sent under a private ID (TEAM_AUTOMATION.md). */
+  senderPhoneEvidence?: string | null;
   accountId: string;
   whatsappMessageId: string;
   chatId: string;

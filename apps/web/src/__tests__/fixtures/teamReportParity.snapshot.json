@@ -2326,15 +2326,15 @@
         ],
         [
           "Data health detail",
-          "Historical / unverified: reporting has not been verified for this project yet."
+          "Part of this period is historical / unverified."
         ],
         [
           "Verified from (Asia/Dhaka)",
-          "Not set"
+          "2026-10-07 06:00:00"
         ],
         [
           "Data caveat",
-          "Reporting has not been verified for this project yet, so every period is historical / unverified: collection health was not recorded before, and missing messages cannot be ruled out. An admin sets the verified-from date in Support Activity Setup."
+          "Before 7 Oct 2026, 06:00 this period is historical / unverified: collection health was not recorded, so missing messages cannot be ruled out."
         ],
         [
           "Groups supported",

@@ -18,8 +18,8 @@ export function RunInformation({ meta }: { meta: ReportRunMetadata }) {
         </span>
       </summary>
       <dl className="mt-3 divide-y divide-[var(--color-border)]">
-        {lines.map((line) => (
-          <div key={line.label} className="flex items-start justify-between gap-3 py-1.5 text-[13px]">
+        {lines.map((line, index) => (
+          <div key={`${line.label}-${index}`} className="flex items-start justify-between gap-3 py-1.5 text-[13px]">
             <dt className="min-w-0">
               <span className="text-[color:var(--color-foreground)]">{line.label}</span>
               {line.note ? <span className="block text-[12px] text-[color:var(--color-muted-foreground)]">{line.note}</span> : null}

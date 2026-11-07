@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { Download } from "lucide-react";
+import Link from "@/components/ProjectLink";
 import {
   Alert,
   ButtonLink,
@@ -187,6 +188,8 @@ async function TeamReportBody({
         })
       : null;
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
+  // Their own figures, for anybody whose login is linked to a team member.
+  const myMember = await prisma.internalTeamMember.findFirst({ where: { userId: session.userId }, select: { id: true } });
   // The page's own moment travels with every export, so the file says what the screen said.
   const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
 
@@ -215,6 +218,11 @@ async function TeamReportBody({
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {myMember && filters.memberId !== myMember.id ? (
+              <Link href={`/team-report?member=${myMember.id}`} className="inline-flex h-9 items-center rounded-[var(--radius-md)] border border-[var(--color-accent)] px-3 text-[13px] font-medium text-[color:var(--color-accent)]">
+                My work
+              </Link>
+            ) : null}
             <ButtonLink href={`/api/team-report/export?${query}&format=csv`}>
               <Download className="size-3.5" aria-hidden />
               CSV

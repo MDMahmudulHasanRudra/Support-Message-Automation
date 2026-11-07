@@ -208,7 +208,7 @@ export const PROJECT_FEATURES = [
     description:
       "Team Report additions: personal-chat and combined scopes, run information, data-quality detail, customer-specific replies, and the identity-change impact preview. Off = the Team Report exactly as before.",
     // A presentation switch like CHAT_UI_V2: it owns no page and no key, so it never blocks a page.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: [],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it; the reports read stored messages.",

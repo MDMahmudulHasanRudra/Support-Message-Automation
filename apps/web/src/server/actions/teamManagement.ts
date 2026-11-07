@@ -1,6 +1,7 @@
 "use server";
 
 import { activeProjectId } from "@/server/projectContext";
+import { refreshFutureRoster } from "@/server/teamRoster";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -223,6 +224,7 @@ export async function setWeeklyScheduleEntry(
 
   if (value === "CLEAR") {
     const deleted = await prisma.weeklyScheduleEntry.deleteMany({ where: { teamMemberId, weekday } });
+    await refreshFutureRoster([teamMemberId]);
     await revalidateModule();
     return deleted.count > 0 ? { updated: 1 } : { unchanged: 1 };
   }
@@ -239,6 +241,7 @@ export async function setWeeklyScheduleEntry(
     update: { shiftTemplateId },
   });
 
+  await refreshFutureRoster([teamMemberId]);
   await revalidateModule();
   return { updated: 1 };
 }

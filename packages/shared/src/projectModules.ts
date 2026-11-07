@@ -268,7 +268,7 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
   UNIFIED_REPORTING: {
     category: "Presentation",
     benefits: ["Personal-chat and combined scopes in the Team Report", "Rankings and comparisons"],
-    defaultForTypes: [],
+    defaultForTypes: ["DEFAULT", "ECOMMERCE"],
     dependencies: [{ kind: "HARD", anyOf: ["TEAM_REPORTS"], why: "It adds to the Team Report." }],
     conflicts: [],
     aiCapabilities: [],

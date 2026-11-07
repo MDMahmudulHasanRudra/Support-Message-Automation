@@ -4,6 +4,8 @@ import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processWithRetry } from "../pipeline/retryFailedMessage.js";
 import { processIncomingMessage, storeMissedMessage } from "../pipeline/processIncomingMessage.js";
 import { trackMessageWork } from "../messagesFirst.js";
+import { recordSenderEvidence } from "../teamManagement/teamAutomation.js";
+import { withAccountProject } from "../project/context.js";
 import { shouldAutomateRecoveredMessage } from "../pipeline/catchUpMissedMessages.js";
 import { recordCollection } from "../health/collectionByKind.js";
 import type { RawIncomingMessage } from "../pipeline/types.js";
@@ -114,6 +116,7 @@ export class ProviderRegistry {
       });
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
+      if (message.senderPhoneEvidence) void withAccountProject(message.accountId, () => recordSenderEvidence(message)).catch(() => undefined);
       void trackMessageWork(() => processWithRetry(message, message.deliveredLate ? processLateMessage : undefined));
     });
 

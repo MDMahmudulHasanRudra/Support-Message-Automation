@@ -7,15 +7,16 @@ import { AddTeamMemberForm } from "./AddTeamMemberForm";
 import { TeamMembersTable, type TeamMemberRow } from "./TeamMembersTable";
 import { AddFromGroupDialog } from "./AddFromGroupDialog";
 import { loadMemberFormOptions } from "./memberFormOptions";
-import { createSenderResolver } from "@support-automation/shared";
+import { createSenderResolver, normalizePersonName } from "@support-automation/shared";
 import { getMemberHistorySync, getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
 import { IdentityHealthCard } from "./IdentityHealthCard";
+import { TeamAutomationCard } from "./TeamAutomationCard";
 import { softCached } from "@/server/softCache";
 import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 
 export default async function TeamMembersPage() {
   const { canManage } = await pageAccess("whatsapp.view", "whatsapp.manage");
-  const [members, groups, options, identityHealth, historySync, unifiedOn] = await Promise.all([
+  const [members, groups, options, identityHealth, historySync, unifiedOn, accounts, operators, teamSettings] = await Promise.all([
     prisma.internalTeamMember.findMany({
       orderBy: { createdAt: "desc" },
       include: { team: { select: { id: true, name: true, status: true } } },
@@ -30,8 +31,29 @@ export default async function TeamMembersPage() {
     softCached("team-members:identity-health", () => getRosterIdentityHealth()),
     getMemberHistorySync(),
     isUnifiedReportingEnabled(),
+    prisma.whatsAppAccount.findMany({ select: { id: true, label: true, phoneNumber: true }, orderBy: { createdAt: "asc" } }),
+    prisma.whatsAppNumberOperator.findMany({ where: { endedAt: null }, select: { accountId: true, teamMemberId: true } }),
+    prisma.teamManagementSettings.findFirst({ select: { autoLinkMembers: true } }),
   ]);
   const previewEnabled = canManage && unifiedOn;
+  // The same name twice among active members: usually one row by number and one from a group's history.
+  const byName = new Map<string, typeof members>();
+  for (const m of members.filter((x) => x.status === "ACTIVE")) {
+    const key = normalizePersonName(m.name);
+    if (key) byName.set(key, [...(byName.get(key) ?? []), m]);
+  }
+  const duplicates = [...byName.values()]
+    .filter((rows) => rows.length === 2)
+    .map((rows) => {
+      // The row with the typed number stays: it is the one that can receive an alert.
+      const [keep, other] = rows[0]!.phoneNumber.trim().startsWith("+") ? [rows[0]!, rows[1]!] : [rows[1]!, rows[0]!];
+      return { name: keep.name, keepId: keep.id, otherId: other.id };
+    });
+  // Matched: they have a WhatsApp ID of their own, not their typed number copied into the field.
+  const activeMembers = members.filter((m) => m.status === "ACTIVE");
+  const unmatched = activeMembers
+    .filter((m) => !m.whatsappId || (m.phoneNumber.trim().startsWith("+") && m.whatsappId.replace(/\D/g, "") === m.phoneNumber.replace(/\D/g, "")))
+    .map((m) => m.name);
 
   // Members sharing an identifier, through the same rule that attributes their messages
   // (WHATSAPP_IDENTITY.md §3): each such identifier is credited to nobody, so the clash is shown here.
@@ -54,12 +76,12 @@ export default async function TeamMembersPage() {
   return (
     <div>
       <PageHeader
-        title="Internal Team Members"
-        description="Messages from active team members are ignored by client automation by default."
+        title="Team Members"
+        description="Your staff. Their messages count as their work in every report, and automation never answers them as if they were customers."
         actions={
           <>
             <AddFromGroupDialog groups={groups.map((g) => ({ id: g.id, name: g.name, accountLabel: g.account.label }))} options={options} />
-            <HelpButton moduleTitle="Internal Team Members">
+            <HelpButton moduleTitle="Team Members">
             <HelpSection title="What this page is for">
               <p>
                 The roster of your own staff's WhatsApp numbers — the people who work inside your
@@ -134,6 +156,21 @@ export default async function TeamMembersPage() {
 
       {canManage ? null : <ViewOnlyNotice />}
 
+      <TeamAutomationCard
+        matched={activeMembers.length - unmatched.length}
+        total={activeMembers.length}
+        unmatched={unmatched}
+        duplicates={duplicates}
+        autoLink={teamSettings?.autoLinkMembers ?? true}
+        canManage={canManage}
+        members={activeMembers.map((m) => ({ id: m.id, name: m.name }))}
+        numbers={accounts.map((a) => ({
+          accountId: a.id,
+          label: a.label,
+          phoneNumber: a.phoneNumber,
+          operatorIds: operators.filter((o) => o.accountId === a.id).map((o) => o.teamMemberId),
+        }))}
+      />
       <IdentityHealthCard health={identityHealth} canManage={canManage} unified={previewEnabled} />
 
       {canManage ? (

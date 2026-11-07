@@ -59,7 +59,7 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin}
     working_dir: /app/packages/db
-    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts"]
+    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts && npx tsx prisma/seedReleaseNotes.ts"]
     networks:
       - automation_net
 

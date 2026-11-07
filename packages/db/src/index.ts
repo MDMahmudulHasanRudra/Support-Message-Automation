@@ -17,6 +17,7 @@ import {
   validateCodeWidth,
   hasReachablePhoneNumber,
   knowledgeContentHash,
+  normalizePersonName,
   normalizePhoneNumber,
   PERMISSIONS,
   PROJECT_FEATURES,
@@ -205,6 +206,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "WhatsAppConversationState", "InboxLifecycleSettings", "ConversationPresence",
   // Failed Replies history (FAILED_REPLIES.md): written with its project, read by its reply; listed for the same reason.
   "FailedReplyAction",
+  "WhatsAppIdentityEvidence",
+  "WhatsAppNumberOperator",
   // Satisfaction surveys (CSAT.md).
   "CsatSurvey", "CsatSettings",
   // Follow-ups (FOLLOW_UPS.md).
@@ -2513,4 +2516,186 @@ export async function routeConversation(
 /** Records, by counts only, that a conversation could not be routed. Best effort. */
 export async function noteUnrouted(db: PrismaClient, reasons: Partial<Record<RoutingIneligibleReason, number>>, now: Date): Promise<void> {
   await db.routingSettings.updateMany({ data: { lastUnroutedAt: now, lastUnroutedReasons: reasons as Prisma.InputJsonValue } }).catch(() => undefined);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Team automation (TEAM_AUTOMATION.md)
+// ---------------------------------------------------------------------------------------------
+
+/** How far back a sender's messages are read when matching by name. */
+const MATCH_WINDOW_DAYS = 120;
+/** Writing in this many groups is what separates a colleague from a customer who shares their name. */
+const MATCH_MIN_GROUPS = 3;
+
+export interface TeamMemberMatch {
+  memberId: string;
+  memberName: string;
+  whatsappId: string;
+  how: "AUTO_PHONE" | "AUTO_NAME";
+}
+
+/**
+ * Connects team members to the private WhatsApp ID their messages arrive under, so a person added today has
+ * their earlier work in every report straight away. Reports decide identity at read time, so setting the ID
+ * is all it takes; the re-attribution queued here brings the stored stamps and Duty History along.
+ *
+ * Two kinds of evidence, strongest first, and anything less certain stays a suggestion for a person:
+ *  - WhatsApp itself paired that ID with this member's phone number.
+ *  - The sender's WhatsApp name equals exactly one member's, exactly one sender has it, and they write in at
+ *    least MATCH_MIN_GROUPS groups, which a customer does not.
+ *
+ * Never touches a member somebody set by hand (`autoLinkOff`), an ID another member holds, or our own numbers.
+ * `db` is the caller's project-scoped client.
+ */
+export async function matchTeamMembersToWhatsApp(db: any, projectId: string, now = new Date()): Promise<TeamMemberMatch[]> {
+  const roster: Array<{ id: string; name: string; phoneNumber: string; whatsappId: string | null; status: string; autoLinkOff: boolean }> =
+    await db.internalTeamMember.findMany({ select: { id: true, name: true, phoneNumber: true, whatsappId: true, status: true, autoLinkOff: true } });
+  // A typed number copied into the ID field is a placeholder, not an ID; an ID added from history is real.
+  const needsId = (m: { phoneNumber: string; whatsappId: string | null }) =>
+    !m.whatsappId || (m.phoneNumber.trim().startsWith("+") && m.whatsappId.replace(/\D/g, "") === m.phoneNumber.replace(/\D/g, ""));
+  const open = roster.filter((m) => m.status === "ACTIVE" && !m.autoLinkOff && needsId(m));
+  if (open.length === 0) return [];
+  const held = new Set(roster.filter((m) => !needsId(m)).map((m) => m.whatsappId!.replace(/@.*$/, "")));
+  const matches: TeamMemberMatch[] = [];
+  const claim = (member: (typeof open)[number], whatsappId: string, how: TeamMemberMatch["how"]) => {
+    held.add(whatsappId);
+    matches.push({ memberId: member.id, memberName: member.name, whatsappId, how });
+  };
+
+  const phones = open.map((m) => normalizePhoneNumber(m.phoneNumber)).filter((p): p is string => Boolean(p));
+  const evidence: Array<{ lid: string; phone: string }> = phones.length
+    ? await db.whatsAppIdentityEvidence.findMany({ where: { phone: { in: phones } }, select: { lid: true, phone: true } })
+    : [];
+  for (const member of open) {
+    const phone = normalizePhoneNumber(member.phoneNumber);
+    const lids = [...new Set(evidence.filter((e) => e.phone === phone).map((e) => e.lid))].filter((lid) => !held.has(lid));
+    if (lids.length === 1) claim(member, lids[0]!, "AUTO_PHONE");
+  }
+
+  const byName = new Map<string, Array<(typeof open)[number]>>();
+  for (const member of roster.filter((m) => m.status === "ACTIVE")) {
+    const key = normalizePersonName(member.name);
+    if (key) byName.set(key, [...(byName.get(key) ?? []), member as (typeof open)[number]]);
+  }
+  const stillOpen = open.filter((m) => !matches.some((x) => x.memberId === m.id) && (byName.get(normalizePersonName(m.name))?.length ?? 0) === 1);
+  if (stillOpen.length > 0) {
+    const since = new Date(now.getTime() - MATCH_WINDOW_DAYS * 86_400_000);
+    const senders: Array<{ sender: string; name: string | null }> = await db.$queryRaw`
+      SELECT m."senderPhone" AS sender, max(m."senderName") AS name
+      FROM "Message" m
+      WHERE m."projectId" = ${projectId} AND m."direction" = 'INCOMING' AND m."groupId" IS NOT NULL
+        AND m."senderJid" LIKE '%@lid' AND m."timestampWa" >= ${since}
+      GROUP BY m."senderPhone"
+      HAVING COUNT(DISTINCT m."chatId") >= ${MATCH_MIN_GROUPS}`;
+    const sendersByName = new Map<string, string[]>();
+    for (const s of senders) {
+      const key = normalizePersonName(s.name);
+      if (key) sendersByName.set(key, [...(sendersByName.get(key) ?? []), s.sender]);
+    }
+    const candidates = [...sendersByName.values()].filter((ids) => ids.length === 1).flat();
+    // One of our own numbers can look like a busy sender; anything that has ever sent as us is not a colleague.
+    const ours: Array<{ sender: string }> = candidates.length
+      ? await db.$queryRaw`SELECT DISTINCT m."senderPhone" AS sender FROM "Message" m
+          WHERE m."projectId" = ${projectId} AND m."direction" = 'OUTGOING' AND m."senderPhone" = ANY(${candidates})`
+      : [];
+    const ourIds = new Set(ours.map((o) => o.sender));
+    for (const member of stillOpen) {
+      const ids = sendersByName.get(normalizePersonName(member.name));
+      if (ids?.length === 1 && !held.has(ids[0]!) && !ourIds.has(ids[0]!)) claim(member, ids[0]!, "AUTO_NAME");
+    }
+  }
+
+  const applied: TeamMemberMatch[] = [];
+  for (const match of matches) {
+    const member = open.find((m) => m.id === match.memberId)!;
+    try {
+      // Conditional: somebody saving this member a moment ago wins.
+      const done = await db.internalTeamMember.updateMany({
+        where: { id: match.memberId, whatsappId: member.whatsappId, autoLinkOff: false },
+        data: { whatsappId: match.whatsappId, identityLinkSource: match.how },
+      });
+      if (done.count !== 1) continue;
+    } catch {
+      continue; // another member took this ID: the unique constraint is the guard
+    }
+    await db.identityReattribution.create({
+      data: {
+        reason: `Matched automatically: ${member.name}`.slice(0, 200),
+        identifiers: [match.whatsappId, member.phoneNumber, normalizePhoneNumber(member.phoneNumber)].filter(Boolean),
+        memberIds: [member.id],
+      },
+    });
+    applied.push(match);
+  }
+  return applied;
+}
+
+/** The Dhaka calendar date of an instant, as the date-only value duty rows store. */
+function dhakaDateOnly(at: Date): Date {
+  const local = new Date(at.getTime() + 6 * 3_600_000);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
+}
+
+export const ROSTER_DAYS_AHEAD = 14;
+
+/**
+ * Writes the roster for today and the next two weeks from everybody's weekly pattern, so nobody has to fill it
+ * in day by day. Only ever fills blanks: a date with a row (moved by a manager, on leave) is never touched, and a
+ * member with no pattern for that weekday is left undecided. A declared holiday outranks the pattern.
+ * `db` is the caller's project-scoped client.
+ */
+export async function fillRosterFromPattern(db: any, now = new Date(), days = ROSTER_DAYS_AHEAD): Promise<number> {
+  const first = dhakaDateOnly(now);
+  const last = new Date(first.getTime() + days * 86_400_000);
+  const [members, entries, existing, holidays, templates] = await Promise.all([
+    db.internalTeamMember.findMany({ where: { status: "ACTIVE" }, select: { id: true } }),
+    db.weeklyScheduleEntry.findMany({ select: { teamMemberId: true, weekday: true, shiftTemplateId: true } }),
+    db.dutyAssignment.findMany({ where: { dutyDate: { gte: first, lte: last } }, select: { teamMemberId: true, dutyDate: true } }),
+    db.holiday.findMany({ where: { date: { gte: first, lte: last } }, select: { name: true, date: true } }),
+    db.shiftTemplate.findMany({ where: { isActive: true } }),
+  ]);
+  if (entries.length === 0) return 0;
+  const active = new Set(members.map((m: { id: string }) => m.id));
+  const taken = new Set(existing.map((row: { teamMemberId: string; dutyDate: Date }) => `${row.teamMemberId}|${row.dutyDate.toISOString().slice(0, 10)}`));
+  const holidayOn = new Map<string, string>(holidays.map((h: { name: string; date: Date }) => [h.date.toISOString().slice(0, 10), h.name]));
+  const templateById = new Map<string, any>(templates.map((t: { id: string }) => [t.id, t]));
+  let created = 0;
+  for (let i = 0; i <= days; i += 1) {
+    const dutyDate = new Date(first.getTime() + i * 86_400_000);
+    const key = dutyDate.toISOString().slice(0, 10);
+    const holidayName = holidayOn.get(key) ?? null;
+    for (const entry of entries as Array<{ teamMemberId: string; weekday: number; shiftTemplateId: string | null }>) {
+      if (entry.weekday !== dutyDate.getUTCDay() || !active.has(entry.teamMemberId) || taken.has(`${entry.teamMemberId}|${key}`)) continue;
+      const template = entry.shiftTemplateId ? templateById.get(entry.shiftTemplateId) : undefined;
+      // A pattern naming a shift since withdrawn stays visibly undecided rather than rostering onto it.
+      if (entry.shiftTemplateId && !template && !holidayName) continue;
+      const status = holidayName ? "HOLIDAY" : template ? "DUTY" : "OFF";
+      const snapshot = holidayName || !template ? null : template;
+      try {
+        await db.$transaction(async (tx: any) => {
+          await tx.dutyAssignment.create({
+            data: {
+              teamMemberId: entry.teamMemberId,
+              dutyDate,
+              status,
+              shiftTemplateId: snapshot?.id ?? null,
+              shiftName: snapshot?.name ?? null,
+              shiftStartMinute: snapshot?.startMinute ?? null,
+              shiftEndMinute: snapshot?.endMinute ?? null,
+              source: "WEEKLY_SCHEDULE",
+              reason: holidayName,
+            },
+          });
+          await tx.dutyAssignmentChange.create({
+            data: { teamMemberId: entry.teamMemberId, dutyDate, newStatus: status, newShiftName: snapshot?.name ?? null, reason: holidayName ?? "From the weekly schedule" },
+          });
+        });
+        created += 1;
+      } catch (err) {
+        // Somebody assigned this person a moment ago: their row wins.
+        if ((err as { code?: string }).code !== "P2002") throw err;
+      }
+    }
+  }
+  return created;
 }

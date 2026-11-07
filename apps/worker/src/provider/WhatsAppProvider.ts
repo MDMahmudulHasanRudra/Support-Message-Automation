@@ -201,6 +201,12 @@ export interface BrowserUsage {
   processes: number;
 }
 
+export interface ContactIdentityPair {
+  lid: string;
+  phone: string;
+  name: string | null;
+}
+
 export interface WhatsAppProvider {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
@@ -434,6 +440,8 @@ export interface WhatsAppProvider {
    * message through its chat's activity time — and a chat that never shows as active (a first
    * message from an unknown number) hides its message from all of them. Never throws.
    */
+  /** Private WhatsApp IDs paired with phone numbers, from what the provider already holds locally. */
+  readContactIdentities?(): Promise<ContactIdentityPair[] | null>;
   listStoreMessageRefs?(since: Date, limit: number): Promise<StoreMessageRef[] | null>;
   /**
    * The full messages for these ids. One still encrypted or not answered is counted in `unreadable`

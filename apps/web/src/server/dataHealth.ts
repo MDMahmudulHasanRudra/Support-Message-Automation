@@ -20,6 +20,9 @@ export interface ReportDataHealth extends DataHealth {
 /** At most this many gaps are read; the NEWEST are kept, since those are the ones still being felt. */
 const MAX_GAPS = 1000;
 
+/** The release that began recording every pause in collection (migration 20261007090000_reporting_data_health). */
+const GAP_RECORDING_SINCE = Date.UTC(2026, 9, 7);
+
 export async function loadDataHealth(input: { periodStart: number; periodEnd: number; now: Date; accountId?: string | null }): Promise<ReportDataHealth> {
   const { periodStart, periodEnd, now, accountId } = input;
   const accountWhere = accountId ? { accountId } : {};
@@ -54,7 +57,9 @@ export async function loadDataHealth(input: { periodStart: number; periodEnd: nu
     periodStart,
     periodEnd,
     now: now.getTime(),
-    verifiedFrom: settings?.reportingVerifiedFrom?.getTime() ?? null,
+    // An admin's date wins. Otherwise: pauses have been recorded automatically since this day, so that is how far back
+    // a report can say so by itself, with nobody having to set anything.
+    verifiedFrom: settings?.reportingVerifiedFrom?.getTime() ?? GAP_RECORDING_SINCE,
     gaps: [...gaps].reverse().map((g) => ({
       accountId: g.accountId,
       accountLabel: g.account.label,

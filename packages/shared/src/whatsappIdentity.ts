@@ -488,10 +488,49 @@ export interface ReportIdentity {
  *     link), because it is that person's work; unlinked, it stays the business number's.
  *  2. Otherwise every stored copy is a witness (`attributeAcrossCopies`).
  */
+/** One person's time on one of our numbers. Null = open at that end (see WhatsAppNumberOperator). */
+export interface NumberOperatorPeriod {
+  memberId: string;
+  startedAt: number | null;
+  endedAt: number | null;
+}
+
+/**
+ * Who typed a reply sent from our own number's phone. WhatsApp shows only the number, so this is what the
+ * admin told us: one person on the number at that moment is them; several are told apart by who was on duty
+ * then, and if that does not settle it nobody is credited, never a guess.
+ */
+export function pickNumberOperator(
+  periods: readonly NumberOperatorPeriod[],
+  at: number,
+  onDuty?: (memberId: string, at: number) => boolean,
+): string | null {
+  const here = periods.filter((p) => (p.startedAt === null || at >= p.startedAt) && (p.endedAt === null || at < p.endedAt));
+  if (here.length === 1) return here[0]!.memberId;
+  if (here.length > 1 && onDuty) {
+    const duty = here.filter((p) => onDuty(p.memberId, at));
+    if (duty.length === 1) return duty[0]!.memberId;
+  }
+  return null;
+}
+
+/** A person's name reduced to what two spellings of it share: no brackets, emoji or punctuation, any case. */
+export function normalizePersonName(name: string | null | undefined): string {
+  return String(name ?? "")
+    .normalize("NFKC")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function createReportClassifier(
   resolver: SenderResolver,
   ownIds: ReadonlySet<string>,
   memberByUserId: ReadonlyMap<string, string | { id: string; attributeFrom?: Date | number | null }>,
+  /** Who typed a reply sent from our own number's phone, when the admin has said who uses it. Absent = nobody. */
+  numberOperator?: (ownSenderId: string, at: number) => string | null,
 ): ReportIdentity {
   const linked = (userId: string, at: number): string | null => {
     const entry = memberByUserId.get(userId);
@@ -517,6 +556,10 @@ export function createReportClassifier(
       if (ours) {
         const actor: IntelActor = row.obMatched || row.direction === "OUTGOING" ? outgoingActorFor(row.actionType, row.ruleId) : "BUSINESS_PHONE";
         const operatorMember = actor === "OPERATOR" && row.createdById ? linked(row.createdById, at) : null;
+        if (!operatorMember && actor === "BUSINESS_PHONE" && numberOperator) {
+          const fromPhone = numberOperator(whatsappIdKey(row.senderJid) || row.sender || "", at);
+          if (fromPhone) return { kind: "MEMBER", memberId: fromPhone, actor: "MEMBER", status: null };
+        }
         return operatorMember
           ? { kind: "MEMBER", memberId: operatorMember, actor, status: null }
           : { kind: "BUSINESS", memberId: null, actor, status: null };

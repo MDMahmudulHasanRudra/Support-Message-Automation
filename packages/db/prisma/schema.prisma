@@ -558,6 +558,8 @@ enum ProjectStatus {
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
   id                  String           @id @default(cuid())
+  whatsAppIdentityEvidence WhatsAppIdentityEvidence[]
+  whatsAppNumberOperators  WhatsAppNumberOperator[]
   /// Platform approvals naming this project (MODULE_APPROVALS.md). Not project-owned data: see ModuleApproval.
   moduleApprovals     ModuleApproval[]
   name                String
@@ -1115,6 +1117,7 @@ model SecuritySettings {
 
 model WhatsAppAccount {
   id              String                @id @default(cuid())
+  numberOperators WhatsAppNumberOperator[]
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
   projectId       String                @default(dbgenerated("project_id_required()"))
@@ -1585,6 +1588,14 @@ model InternalTeamMember {
   /// When the default shift was last set or cleared. Support Overtime applies it only to days after this
   /// moment; `updatedAt` moved on every unrelated edit and silently changed past overtime.
   defaultShiftChangedAt  DateTime?
+
+  /// How the WhatsApp ID was found when nobody typed it: AUTO_PHONE (WhatsApp itself paired it with this
+  /// phone number) or AUTO_NAME (their WhatsApp name equals this member's, writing in several groups). Null
+  /// = a person entered it. Shown on Team Members with an Undo.
+  identityLinkSource     String?
+  /// A person cleared or changed this member's WhatsApp ID: automatic matching leaves them alone from now on.
+  autoLinkOff            Boolean @default(false)
+  numberOperatorFor      WhatsAppNumberOperator[]
 
   weeklySchedule        WeeklyScheduleEntry[]
   dutyAssignments       DutyAssignment[]
@@ -4971,6 +4982,13 @@ model TeamManagementSettings {
   projectId String  @unique @default(dbgenerated("project_id_required()"))
   project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
+  /// Team members are matched to their WhatsApp IDs by themselves (TEAM_AUTOMATION.md). On by default.
+  autoLinkMembers Boolean @default(true)
+  /// The roster fills itself from the weekly pattern, two weeks ahead. On by default.
+  autoRoster      Boolean @default(true)
+  /// "Match now" was pressed: the worker's next tick reads the contact list and matches at once.
+  matchRequestedAt DateTime?
+
   /// Minutes past the scheduled start before a first message counts as a late start. A smaller
   /// overrun is still SHOWN — "+8m" is visible on the row — it is simply not called late, which is
   /// the whole distinction a grace period exists to draw.
@@ -7600,6 +7618,47 @@ model GroupResponsibilityChange {
 /// change: the team-member stamp on their messages, the member on Support Activity rows, and their
 /// Duty History days. Written by the Team Members actions, worked by the worker
 /// (teamManagement/reattribution.ts). Status: PENDING, RUNNING, DONE or FAILED.
+/// What WhatsApp itself said about who a private WhatsApp ID (LID) is: read from a message's own sender
+/// details and from WhatsApp Web's local contact list, never asked of WhatsApp's servers. Evidence for
+/// matching Team Members; nothing else reads it. Project-owned because contacts are one number's view.
+model WhatsAppIdentityEvidence {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The LID's digits, as Message.senderPhone stores them.
+  lid         String
+  /// Normalized phone digits.
+  phone       String
+  name        String?
+  /// MESSAGE or CONTACTS.
+  source      String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([projectId, lid])
+  @@index([projectId, phone])
+}
+
+/// Who answers from one of OUR numbers on their own phone. WhatsApp shows those replies as the number
+/// itself, so nothing in a message can say who typed it: the admin says who uses the number. One person on
+/// the number at that moment gets the reply; several are told apart by who was on duty, and otherwise nobody
+/// is credited. History, like TeamMembership: a null startedAt means "since before this was recorded".
+model WhatsAppNumberOperator {
+  id           String             @id @default(cuid())
+  projectId    String             @default(dbgenerated("project_id_required()"))
+  project      Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  accountId    String
+  account      WhatsAppAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  teamMemberId String
+  teamMember   InternalTeamMember @relation(fields: [teamMemberId], references: [id], onDelete: Cascade)
+  startedAt    DateTime?
+  endedAt      DateTime?
+  createdAt    DateTime           @default(now())
+
+  @@index([projectId, accountId])
+  @@index([teamMemberId])
+}
+
 model IdentityReattribution {
   id                String    @id @default(cuid())
   projectId         String    @default(dbgenerated("project_id_required()"))

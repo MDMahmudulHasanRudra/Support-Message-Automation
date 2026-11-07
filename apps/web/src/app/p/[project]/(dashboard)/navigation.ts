@@ -515,6 +515,8 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Users,
     links: [
       { href: "/team-management", label: "Today", icon: Users },
+      { href: "/team-members", label: "Team Members", icon: UserCog },
+      { href: "/teams", label: "Teams", icon: Network },
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
       { href: "/support-activity/team", label: "Team Performance", icon: Gauge },
@@ -536,8 +538,6 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/accounts", label: "Accounts", icon: Smartphone },
       { href: "/groups", label: "Groups", icon: Users },
-      { href: "/team-members", label: "Team Members", icon: UserCog },
-      { href: "/teams", label: "Teams", icon: Network },
       {
         href: "/group-message-sender",
         label: "Broadcast",

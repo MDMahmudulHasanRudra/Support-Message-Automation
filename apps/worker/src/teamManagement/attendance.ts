@@ -86,6 +86,37 @@ export async function recordOperatorAttendance(input: { providerMessageId: strin
 }
 
 /**
+ * The numbers this member answers from on the phone that day: the only one on it, or the one on duty among several
+ * (the Team Report's rule, pickNumberOperator, at day level).
+ */
+async function numbersOperatedBy(memberId: string, dutyDate: Date, dayStart: Date, dayEnd: Date): Promise<string[]> {
+  const periods = await prisma.whatsAppNumberOperator.findMany({
+    where: { OR: [{ endedAt: null }, { endedAt: { gt: dayStart } }], AND: [{ OR: [{ startedAt: null }, { startedAt: { lt: dayEnd } }] }] },
+    select: { accountId: true, teamMemberId: true },
+  });
+  const mine = periods.filter((p) => p.teamMemberId === memberId).map((p) => p.accountId);
+  if (mine.length === 0) return [];
+  const others = new Set(periods.filter((p) => p.teamMemberId !== memberId).map((p) => p.accountId));
+  const onDuty = others.size > 0 && mine.some((a) => others.has(a))
+    ? await prisma.dutyAssignment.findFirst({ where: { teamMemberId: memberId, dutyDate, status: "DUTY" }, select: { id: true } })
+    : null;
+  return mine.filter((a) => !others.has(a) || onDuty);
+}
+
+/**
+ * A reply typed on our own number's phone is the work of whoever uses that number: recompute their day. Never throws.
+ */
+export async function recordNumberOperatorAttendance(input: { accountId: string; timestampWa: Date }): Promise<void> {
+  try {
+    if (!(await projectHasFeature("TEAM_MANAGEMENT"))) return;
+    const operators = await prisma.whatsAppNumberOperator.findMany({ where: { accountId: input.accountId, endedAt: null }, select: { teamMemberId: true } });
+    for (const operator of operators) await recomputeAttendanceDay(operator.teamMemberId, input.timestampWa);
+  } catch (err) {
+    console.error("[attendance] could not record a phone reply's attendance; the message itself is stored", err);
+  }
+}
+
+/**
  * Recomputes one member-day of attendance from the messages themselves (see `recordTeamAttendance`).
  * Exported for the re-attribution job, which recomputes the days an identity change touched.
  */
@@ -110,6 +141,7 @@ export async function recomputeAttendanceDay(memberId: string, when: Date): Prom
 
   const activityDate = toDhakaDateOnly(when);
   const { start: dayStart, end } = getDhakaDayRange(when);
+  const numbersOperated = await numbersOperatedBy(member.id, activityDate, dayStart, end);
   // Before the member's "count their messages from" date their number was a customer's: those
   // messages are not their work (the Team Report's rule).
   // (A date after the whole day leaves nothing to count, which withdraws any row written before it.)
@@ -149,6 +181,18 @@ export async function recomputeAttendanceDay(memberId: string, when: Date): Prom
           AND m."groupId" IS NOT NULL
           AND m."timestampWa" >= ${start}
           AND m."timestampWa" < ${end}
+        UNION ALL
+        -- Replies typed on our own number's phone, when this member is who uses that number at that time:
+        -- never the AI, a rule or a broadcast, which each echo an OutboundMessage.
+        SELECT m."groupId", m."accountId", m."chatId", m."whatsappMessageId", m."timestampWa"
+        FROM "Message" m
+        WHERE m."projectId" = ${projectId}
+          AND m."accountId" = ANY(${numbersOperated})
+          AND m."direction" = 'OUTGOING'
+          AND m."groupId" IS NOT NULL
+          AND m."timestampWa" >= ${start}
+          AND m."timestampWa" < ${end}
+          AND NOT EXISTS (SELECT 1 FROM "OutboundMessage" ob WHERE ob."projectId" = ${projectId} AND ob."providerMessageId" = m."whatsappMessageId")
         UNION ALL
         -- Replies they sent from the dashboard inbox, through the login linked to them: the echo of a
         -- MANUAL_REPLY that login queued.

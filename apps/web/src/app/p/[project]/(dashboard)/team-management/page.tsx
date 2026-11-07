@@ -11,6 +11,7 @@ import {
   getTeamOverview,
 } from "@/server/teamManagementReports";
 import {
+  Alert,
   Badge,
   ButtonLink,
   Card,
@@ -54,8 +55,8 @@ export default async function TeamManagementPage() {
   return (
     <div>
       <PageHeader
-        title="Team Management"
-        description="Who is scheduled today, what the messages show, and where the roster is short. Attendance is evidence from real group activity — never a presence claim."
+        title="Today"
+        description="Who is scheduled, who has been working in groups, and where the day is short."
         actions={
           <>
             <ButtonLink href={`/team-management/schedule?date=${today}`}>Roster</ButtonLink>
@@ -63,6 +64,18 @@ export default async function TeamManagementPage() {
           </>
         }
       />
+
+      {roster.length > 0 && overview.unassigned === roster.length ? (
+        <div className="mb-6">
+          <Alert tone="info" title="Set your team's week once, and every day fills itself">
+            Nobody has a schedule yet.{" "}
+            <Link href="/team-management/schedule" className="underline">
+              Set it up on the Roster
+            </Link>
+            : a shift and the weekly days off is all it takes.
+          </Alert>
+        </div>
+      ) : null}
 
       <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Active in messages" value={overview.working} tone="success" hint="Sent at least one group message today" />
@@ -199,7 +212,7 @@ export default async function TeamManagementPage() {
           <EmptyState icon={<Users className="size-5" aria-hidden />}>
             No active team members.{" "}
             <Link href="/team-members" className="underline">
-              Add them under WhatsApp → Internal Team Members
+              Add your team
             </Link>
             .
           </EmptyState>

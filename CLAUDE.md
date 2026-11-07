@@ -1371,6 +1371,8 @@ figures, never changing one:
 - **Reliability is counts only.** Stored copies, logical messages, attribution strength,
   conflicts, gaps, incomplete and unverified days. Never an accuracy percentage; a test refuses one.
 
+**Team automation (`TEAM_AUTOMATION.md`, 7 Nov 2026).** Rules worth not undoing: a member added late must have their earlier work (the owner's explicit, serious rule), so `matchTeamMembersToWhatsApp` connects phone-only members to their LID from WhatsApp's own pairing or an exact unique name in 3+ groups, and anything weaker stays a suggestion; a wrong match makes a customer staff, so never loosen that rule. A reply typed on our own number's phone is credited through `WhatsAppNumberOperator` / `pickNumberOperator`, and with no operators the classifier is unchanged. The roster fills itself (`fillRosterFromPattern`) and only ever fills blanks.
+
 **Team filter (28 Sep 2026): a Team is "who was in it AT THAT MOMENT", not "who is in it now".**
 `Team` rows are created on `/teams` (WhatsApp module); `InternalTeamMember.teamId` is the person's
 current Team, and `TeamMembership` (member, team, `startedAt`, `endedAt`) is the history the report
@@ -1431,7 +1433,7 @@ one.**
   period can be trusted. Every `/reports/<id>` page and the Team Report show the strip, and every
   Excel Summary carries it.
   - "No stored message" is never "no communication".
-  - An unset verified-from means nothing is verified. Never default it.
+  - An unset verified-from now defaults to the day pause recording began (7 Oct 2026, the owner's decision, 7 Nov 2026). The strip is one quiet line, and a box only while a number is not collecting right now.
 - **Five Support Intelligence reports.** Executive, Employee Effectiveness, Support Cases, Human
   Response SLA and Customer Appreciation & Preference.
   - They read `Message` through ONE loader (`server/intelligence/loader.ts`) and ONE pure model
@@ -2554,8 +2556,8 @@ a narrower window: the "wait" definition must stay identical to Team Performance
 
 Nav lives in one place — `(dashboard)/navigation.ts`. A pinned "Overview" link, then ten
 **collapsible modules** (27 Sep 2026): Support (WhatsApp Chat, Messages, Escalations), Team (Today,
-Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups, Team Members,
-Teams, Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning, Conversation Learning, System, Users &
+Team Members, Teams, Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups,
+Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning, Conversation Learning, System, Users &
 Permissions, Release Notes. It used to be thirteen always-expanded groups under four department
 headings — about fifty rows. **Navigation only: no route, page or permission changed**, and the
 check that proved it compared the old and new `navGroupsFor()` across 323 role sets (every single
