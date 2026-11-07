@@ -18,7 +18,7 @@ export default async function WebsiteChatWidgetsPage() {
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true, enabled: true, webhookKey: true, allowedOrigins: true, widgetSettings: true, widgetSeenAt: true, widgetSeenOrigin: true, widgetRefusedOrigin: true, aiAutomationEnabled: true },
   });
-  const script = widgetScriptUrl();
+  const script = await widgetScriptUrl();
   const origin = script ? new URL(script).origin : "";
 
   return (

@@ -1128,7 +1128,7 @@ const PLATFORMS: Array<[Platform, string]> = [
 function InstallSection({ connectionId, scriptUrl, widgetKey, wordpressHref, install, enabled, origins, onRecheck }: { connectionId: string; scriptUrl: string | null; widgetKey: string; wordpressHref: string | null; install: StudioInstall; enabled: boolean; origins: string[]; onRecheck: () => void }) {
   const [platform, setPlatform] = useState<Platform>("html");
   const [copied, setCopied] = useState(false);
-  if (!scriptUrl) return <Alert tone="warning" title="This server's public address (NEXTAUTH_URL) is not set, so the install code cannot be built." />;
+  if (!scriptUrl) return <Alert tone="warning" title="This workspace has no web address yet, so the install code cannot be built. Ask your provider to add one." />;
   const snippet = `<script src="${scriptUrl}" data-key="${widgetKey}" async></script>`;
   const copy = async () => {
     try {

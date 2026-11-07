@@ -3,7 +3,7 @@ import { isReadOnlyProjectStatus } from "@support-automation/shared";
 import { getSession } from "@/server/auth";
 import { checkPermission } from "@/server/authorize";
 import { requireActiveProject } from "@/server/projectContext";
-import { publicOrigin } from "@/server/google/oauth";
+import { requestOrigin } from "@/server/customerAddress";
 import { sheetEditorAccess } from "@/server/google/editorAccess";
 import { isClientKey, isSignalKind, recordSignal } from "@/server/google/sessions";
 
@@ -26,7 +26,7 @@ function sameOrigin(request: NextRequest): boolean {
   if (site) return site === "same-origin";
   const origin = request.headers.get("origin");
   if (!origin) return false;
-  const expected = publicOrigin() ?? new URL(request.url).origin;
+  const expected = requestOrigin(request);
   return origin === expected;
 }
 

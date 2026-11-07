@@ -47,6 +47,12 @@ async function inputs() {
   return cache;
 }
 
+/** Whether hostnames decide anything: the platform setting, unless the emergency switch forces it off. */
+export async function hostRoutingIsOn(): Promise<boolean> {
+  if (hostRoutingForcedOff()) return false;
+  return Boolean((await inputs()).settings?.hostRoutingEnabled);
+}
+
 /** The request's hostname, normalized; null outside a request or when the proxy did not run. */
 export async function requestHostname(): Promise<string | null> {
   try {

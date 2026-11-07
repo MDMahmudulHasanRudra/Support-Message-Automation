@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { requestOrigin } from "@/server/customerAddress";
 import { getSession } from "@/server/auth";
 import { checkPermission } from "@/server/authorize";
 import { activeProjectSlug } from "@/server/projectContext";
 import {
   authorizationUrl,
   newOAuthState,
-  publicOrigin,
   sealOAuthState,
   STATE_COOKIE,
   STATE_TTL_MS,
@@ -24,7 +24,7 @@ import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const origin = publicOrigin() ?? new URL(request.url).origin;
+  const origin = requestOrigin(request);
   const slug = await activeProjectSlug();
   const back = (query: string) => NextResponse.redirect(`${origin}/p/${slug}/google-sheets/identity?${query}`, 303);
 

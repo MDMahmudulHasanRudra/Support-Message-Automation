@@ -3,7 +3,7 @@ import { sniffSocialMedia, socialMediaLimit, type SocialMediaKind } from "@suppo
 import { prisma } from "@/server/db";
 import { activeProjectId } from "@/server/projectContext";
 import { getMediaStorage } from "@/server/mediaStorage";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 
 /**
  * The Social Studio media library (SOCIAL_STUDIO.md §Media). Files live on the media volume through the
@@ -193,8 +193,8 @@ function signature(key: Buffer, assetId: string, exp: number): string {
  * An https address a platform can fetch the file from for two hours, or a sentence saying why there is
  * none. Meta fetches publishing media from a public URL; this one names the file and its expiry only.
  */
-export function signedAssetUrl(assetId: string, now = new Date()): { ok: true; url: string } | { ok: false; reason: string } {
-  const origin = publicOrigin();
+export async function signedAssetUrl(assetId: string, now = new Date()): Promise<{ ok: true; url: string } | { ok: false; reason: string }> {
+  const origin = await activeProjectOrigin();
   if (!origin || !origin.startsWith("https://")) return { ok: false, reason: "This server's public address (NEXTAUTH_URL) must be https and reachable from the internet for platforms to fetch media." };
   const key = signingKey();
   if (!key) return { ok: false, reason: "No signing secret is configured (SOCIAL_MEDIA_URL_SECRET or NEXTAUTH_SECRET)." };

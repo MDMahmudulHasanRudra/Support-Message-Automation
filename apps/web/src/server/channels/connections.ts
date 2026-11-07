@@ -3,7 +3,7 @@ import { CHANNEL_PROVIDERS, CHANNELS, isAiDisclosureChannel, providerForChannelT
 import { decryptSecret, encryptSecret } from "@support-automation/db";
 import type { ChannelAuthMode, ChannelConnectionStatus } from "@prisma/client";
 import { platformPrisma, prisma } from "@/server/db";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 import {
   checkMetaApp,
   readLinkedInstagram,
@@ -42,13 +42,17 @@ export class ChannelConnectionError extends Error {
 const newKey = (bytes = 24) => randomBytes(bytes).toString("base64url");
 
 /** Where a provider must send this connection's webhooks. Null when the server's address is unknown. */
-export function webhookUrlFor(type: ChannelType, webhookKey: string): string | null {
-  const origin = publicOrigin();
+function webhookUrlAt(origin: string | null, type: ChannelType, webhookKey: string): string | null {
   if (!origin) return null;
   const kind = CHANNELS[type].webhookKind;
   // Website chat has no webhook: its "address" is the widget's own API base.
   if (kind === "WEBCHAT") return `${origin}/api/webchat/${webhookKey}`;
   return `${origin}/api/channels/${kind === "META" ? "meta" : "telegram"}/${webhookKey}`;
+}
+
+/** On this project's own customer's address: another customer's address refuses its keys. */
+export async function webhookUrlFor(type: ChannelType, webhookKey: string): Promise<string | null> {
+  return webhookUrlAt(await activeProjectOrigin(), type, webhookKey);
 }
 
 export interface ChannelConnectionView {
@@ -125,7 +129,7 @@ const VIEW_SELECT = {
 type ViewRow = NonNullable<Awaited<ReturnType<typeof readViewRow>>>;
 const readViewRow = (id: string) => prisma.channelConnection.findUnique({ where: { id }, select: VIEW_SELECT });
 
-function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView {
+function toView(row: ViewRow, revealVerifyToken: boolean, origin: string | null): ChannelConnectionView {
   let verifyToken: string | null | undefined;
   if (revealVerifyToken && CHANNELS[row.type].webhookKind === "META" && row.authMode === "MANUAL") {
     try {
@@ -154,7 +158,7 @@ function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView
     aiDisclosureText: row.aiDisclosureText,
     aiDisclosureIdleHours: row.aiDisclosureIdleHours,
     // A one-click connection uses the platform app's single webhook, which the customer never configures.
-    webhookUrl: row.status === "DISCONNECTED" || row.authMode === "PLATFORM" ? null : webhookUrlFor(row.type, row.webhookKey),
+    webhookUrl: row.status === "DISCONNECTED" || row.authMode === "PLATFORM" ? null : webhookUrlAt(origin, row.type, row.webhookKey),
     webhookVerifiedAt: row.webhookVerifiedAt,
     lastEventAt: row.lastEventAt,
     lastCheckedAt: row.lastCheckedAt,
@@ -172,12 +176,13 @@ function toView(row: ViewRow, revealVerifyToken: boolean): ChannelConnectionView
 
 export async function listChannelConnections(): Promise<ChannelConnectionView[]> {
   const rows = await prisma.channelConnection.findMany({ select: VIEW_SELECT, orderBy: [{ type: "asc" }, { createdAt: "asc" }] });
-  return rows.map((row) => toView(row, false));
+  const origin = await activeProjectOrigin();
+  return rows.map((row) => toView(row, false, origin));
 }
 
 export async function getChannelConnection(id: string, opts: { revealVerifyToken?: boolean } = {}): Promise<ChannelConnectionView | null> {
   const row = await readViewRow(id);
-  return row ? toView(row, opts.revealVerifyToken ?? false) : null;
+  return row ? toView(row, opts.revealVerifyToken ?? false, await activeProjectOrigin()) : null;
 }
 
 // ─── Connecting ────────────────────────────────────────────────────────────────────────────────
@@ -370,7 +375,7 @@ export async function connectTelegram(input: { botToken: string; username: strin
 
   const webhookKey = newKey();
   const secret = newKey(32);
-  const url = webhookUrlFor("TELEGRAM", webhookKey);
+  const url = await webhookUrlFor("TELEGRAM", webhookKey);
   let warning: string | null = null;
   if (!url) {
     warning = "Saved, but the server's public address (NEXTAUTH_URL) is not set, so Telegram cannot be told where to send messages.";
@@ -431,7 +436,7 @@ export async function updateTelegramToken(id: string, input: { botToken: string 
     token = readSecret(row.accessTokenCiphertext);
   }
   const secret = newKey(32);
-  const url = webhookUrlFor("TELEGRAM", webhookKey);
+  const url = await webhookUrlFor("TELEGRAM", webhookKey);
   let warning: string | null = null;
   if (!url || !url.startsWith("https://")) {
     warning = "Telegram only delivers to an https:// address, and this server's public address (NEXTAUTH_URL) is not one.";
@@ -625,7 +630,7 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
     const me = await telegramGetMe(token, fetchImpl);
     checks.push({ label: "Bot token accepted", ok: me.ok, detail: me.ok ? `@${me.data.username ?? me.data.first_name}` : me.error.message });
     if (!me.ok) fail(me.error.needsReauth ? "NEEDS_RECONNECT" : "ERROR", me.error.message);
-    const expected = webhookUrlFor("TELEGRAM", row.webhookKey);
+    const expected = await webhookUrlFor("TELEGRAM", row.webhookKey);
     const info = me.ok ? await telegramGetWebhookInfo(token, fetchImpl) : null;
     if (info?.ok) {
       const pointsHere = info.data.url === expected;

@@ -353,6 +353,8 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   certificates only for what `/api/platform/tls-allowed` approves. Recovery (§8): localhost/IP always open,
   `SAAS_HOST_ROUTING_DISABLED=true`. `saasTwoLayers.integration.test.ts` pins every rule above.
 
+**A public address is the customer's, never `NEXTAUTH_URL`** (`server/customerAddress.ts`, `pickCustomerOrigin`, 7 Nov 2026). That setting names one address, and on the live server it is a customer's, so every other customer was handed it in its widget code, chat link and webhook addresses. Anything shown to or registered for one project uses `activeProjectOrigin()` / `publicOriginForProject()`; a redirect back to the person uses `requestOrigin(request)`. A customer with no address gets none, never another's. `publicOrigin()` stays only for installation-wide things: the platform's one Meta app and the env Google client. `customerAddress.integration.test.ts` pins it.
+
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking
 lock inside Prisma's per-migration transaction; `VALIDATE CONSTRAINT` does not block inserts.
