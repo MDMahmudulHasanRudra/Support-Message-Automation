@@ -69,7 +69,7 @@ it("validates Support Intelligence against real conversations (read-only)", asyn
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new Error("Set VALIDATE_FROM and VALIDATE_TO as YYYY-MM-DD (Asia/Dhaka).");
   if ((Date.parse(to) - Date.parse(from)) / 86_400_000 + 1 > MAX_DAYS) throw new Error(`At most ${MAX_DAYS} days — this is for reading conversations line by line.`);
 
-  const project = await platform.project.findUnique({ where: { slug }, select: { id: true, slug: true, name: true, status: true } });
+  const project = await platform.project.findFirst({ where: { slug }, select: { id: true, slug: true, name: true, status: true } });
   if (!project) throw new Error(`No project "${slug}".`);
 
   let groupKeys = env("VALIDATE_GROUPS").split(",").map((s) => s.trim()).filter(Boolean);

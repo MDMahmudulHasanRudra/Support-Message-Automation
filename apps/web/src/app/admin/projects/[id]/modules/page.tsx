@@ -55,6 +55,7 @@ export default async function ProjectModulesPage({ params, searchParams }: { par
         canManage={canManage}
         history={state.history}
         templates={state.templates}
+        hidden={state.hidden}
         dataCounts={dataCounts}
       />
     </div>

@@ -73,8 +73,9 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
     if (sameName) fieldErrors.name = `A project called "${name}" already exists.`;
   }
   if (!fieldErrors.slug) {
-    const sameSlug = await platformPrisma.project.findUnique({ where: { slug }, select: { id: true } });
-    if (sameSlug) fieldErrors.slug = `The slug "${slug}" is already used by another project.`;
+    // Only this customer's projects: another customer's address is theirs and says nothing here.
+    const sameSlug = await platformPrisma.project.findFirst({ where: { slug }, select: { id: true } });
+    if (sameSlug) fieldErrors.slug = `You already have a project at "${slug}". Choose another address.`;
   }
   if (fieldErrors.name || fieldErrors.slug) return { fieldErrors };
 
@@ -97,7 +98,7 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
       const key = err.field === "minWidth" ? "codeWidth" : err.field === "nextSerial" ? "codeStart" : "codePrefix";
       return { fieldErrors: { [key]: err.message } };
     }
-    // Slugs are unique across every customer; "not available" does not confirm whose it is.
+    // Two people creating the same address in this customer at once.
     if (isUniqueViolation(err)) return { fieldErrors: { slug: `The address "${slug}" is not available. Choose another.` } };
     throw err;
   }

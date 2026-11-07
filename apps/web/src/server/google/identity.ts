@@ -1,15 +1,17 @@
 import { isUniqueViolation } from "@/lib/prismaErrors";
-import { platformPrisma } from "@/server/db";
+import { globalPrisma, platformPrisma } from "@/server/db";
 import { exchangeCode, fetchIdentity, type FetchImpl } from "@/server/google/api";
 import type { GoogleOAuthConfig } from "@/server/google/oauth";
+import { tenantOfCustomer } from "@/server/tenant";
 
 /**
  * A person's own Google identity (GOOGLE_SHEETS.md §5, Phase 4). Linked only by that person signing
  * in with Google themselves — the one bridge from an edit Google reports (`people/<id>`) to a person
  * in the app. Never inferred from a matching email or name, and never set by anybody else.
  *
- * Platform data (no project): a person's Google account is the same in every project, so this reads
- * and writes through the platform client, always for the signed-in person only.
+ * Platform data (no project): a person's Google account is the same in every project of their customer, so this
+ * reads and writes through the platform client, always for the signed-in person only. Unique per customer: linking
+ * it in one customer says nothing to, and blocks nothing in, another.
  *
  * No token is kept. The access token from the sign-in is used once to read the account id and then
  * simply dropped — deliberately NOT revoked: Google revokes a whole grant, and the same Google account
@@ -51,15 +53,18 @@ export async function completeIdentityLink(input: { config: GoogleOAuthConfig; c
     throw new GoogleIdentityError("GOOGLE_REFUSED", (err as Error).message);
   }
   const now = input.now ?? new Date();
-  const existing = await platformPrisma.userGoogleIdentity.findUnique({ where: { googleSubject: identity.subject }, select: { id: true, userId: true } });
+  const owner = await globalPrisma.user.findUnique({ where: { id: input.userId }, select: { customerId: true } });
+  const customerKey = (await tenantOfCustomer(owner?.customerId ?? null)) ?? "";
+  const key = { customerKey_googleSubject: { customerKey, googleSubject: identity.subject } };
+  const existing = await globalPrisma.userGoogleIdentity.findUnique({ where: key, select: { id: true, userId: true } });
   if (existing && existing.userId !== input.userId) {
     throw new GoogleIdentityError("LINKED_ELSEWHERE", `${identity.email} is already linked to another login. Ask that person to unlink it first.`);
   }
   const fields = { email: identity.email, displayName: identity.name, verifiedAt: now };
   try {
-    return await platformPrisma.userGoogleIdentity.upsert({
-      where: { googleSubject: identity.subject },
-      create: { userId: input.userId, googleSubject: identity.subject, ...fields },
+    return await globalPrisma.userGoogleIdentity.upsert({
+      where: key,
+      create: { userId: input.userId, customerKey, googleSubject: identity.subject, ...fields },
       update: fields,
       select: { id: true, email: true, displayName: true, verifiedAt: true },
     });

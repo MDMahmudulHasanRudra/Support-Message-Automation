@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { isUniqueViolation } from "@/lib/prismaErrors";
+import { currentTenant } from "@/server/tenant";
 
 /**
  * Main Admin → Configuration (MAIN_ADMIN_WORKSPACE.md §5): the organisation's departments, job
@@ -123,12 +124,16 @@ export async function deleteJobTitle(db: Db, id: string): Promise<ConfigResult> 
 // ── Employees ────────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The next employee code, "EMP-000001" onward, from the database sequence. Unique and never reused
- * even when two people are created at once — the sequence hands each transaction its own number —
- * and never derived from a name or a count, which would repeat after a deletion or a race.
+ * The next employee code in THIS customer, "EMP-000001" onward. One atomic counter per customer: unique and never
+ * reused even when two people are created at once, never derived from a name or a count (which would repeat after a
+ * deletion or a race), and a number says nothing about how many employees any other customer has.
  */
 export async function nextEmployeeCode(db: Db): Promise<string> {
-  const [row] = await db.$queryRaw<Array<{ n: bigint }>>`SELECT nextval('employee_code_seq') AS n`;
+  const tenantKey = (await currentTenant()) ?? "";
+  const [row] = await db.$queryRaw<Array<{ n: bigint }>>`
+    INSERT INTO "EmployeeCodeCounter" ("tenantKey", "last") VALUES (${tenantKey}, 1)
+    ON CONFLICT ("tenantKey") DO UPDATE SET "last" = "EmployeeCodeCounter"."last" + 1
+    RETURNING "last" AS n`;
   return `EMP-${String(row!.n).padStart(6, "0")}`;
 }
 

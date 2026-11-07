@@ -565,7 +565,8 @@ model Project {
   /// Platform approvals naming this project (MODULE_APPROVALS.md). Not project-owned data: see ModuleApproval.
   moduleApprovals     ModuleApproval[]
   name                String
-  slug                String           @unique
+  /// Unique inside one customer (index "Project_customer_slug_key", on COALESCE(customerId, '')): one customer's address never blocks another's.
+  slug                String
   description         String?
   status              ProjectStatus    @default(SETUP)
   createdAt           DateTime         @default(now())
@@ -5721,18 +5722,28 @@ model GoogleSpreadsheetMember {
 /// Platform-wide, no projectId: a person's Google account is the same in every project. A Google
 /// account can be linked to one login only. Unlinking deletes the row; activity already credited
 /// keeps the user it was credited to (it is stored on each activity row).
+/// The last employee number given in one customer. '' = the original installation. Never a count, so a number is
+/// never reused after a deletion.
+model EmployeeCodeCounter {
+  tenantKey String @id
+  last      BigInt
+}
+
 model UserGoogleIdentity {
   id            String   @id @default(cuid())
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Google's stable account id (OpenID `sub`).
-  googleSubject String   @unique
+  googleSubject String
+  /// The person's customer, '' for the original installation: one Google account may be linked once in each customer.
+  customerKey   String   @default("")
   email         String
   displayName   String?
   /// When the person last proved it by signing in.
   verifiedAt    DateTime @default(now())
   createdAt     DateTime @default(now())
 
+  @@unique([customerKey, googleSubject])
   @@index([userId])
 }
 
@@ -6052,7 +6063,8 @@ enum EmployeeStatus {
 model Employee {
   id           String         @id @default(cuid())
   /// "EMP-000123": assigned once, from the `employee_code_seq` sequence, never reused or edited.
-  employeeCode String         @unique
+  /// Unique inside one customer (index "Employee_customer_code_key"); numbered per customer by EmployeeCodeCounter.
+  employeeCode String
   fullName     String
   /// Unique per customer (partial indexes in 20261101100000_account_self_service), not across customers.
   email        String?
@@ -6076,6 +6088,7 @@ model Employee {
   @@index([departmentId])
   @@index([jobTitleId])
   @@index([customerId])
+  @@index([employeeCode])
 }
 
 /// One person clearing one WhatsApp operation (Add Number to Groups, Groups Admin Maker) from THEIR

@@ -5,6 +5,7 @@ import {
   isProjectType,
   moduleEntitled,
   moduleSelectionDiff,
+  ORIGINAL_INSTALLATION_FEATURES,
   PROJECT_MODULES,
   resolveModuleSelection,
   resolveProjectFeatures,
@@ -70,6 +71,8 @@ export interface ProjectModuleState {
   planName: string | null;
   history: ProjectModuleChangeView[];
   templates: ModuleTemplateOption[];
+  /** Modules this customer never sees: they use something of the software owner's. */
+  hidden: string[];
 }
 
 const asBase = (value: ProjectType | null): ProjectBaseType | null => (value === "DEFAULT" || value === "ECOMMERCE" ? value : null);
@@ -149,6 +152,7 @@ export async function getProjectModuleState(projectId: string, db: Db = platform
     planName,
     history: history.map((h) => ({ ...h, createdAt: h.createdAt.toISOString() })),
     templates,
+    hidden: (await tenantOfCustomer(project.customerId)) === null ? [] : [...ORIGINAL_INSTALLATION_FEATURES],
   };
 }
 

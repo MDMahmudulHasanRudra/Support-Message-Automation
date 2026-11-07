@@ -426,6 +426,13 @@ export function resolveProjectFeatures(
 }
 
 /** The keys switched off, from a project's stored rows — what the web and the worker read. */
+/**
+ * Features that use something belonging to the software owner rather than the customer, available only in the
+ * original installation whatever any switch says. Forge reads the owner's private repositories with the
+ * installation's own key, so a customer's project must never reach it.
+ */
+export const ORIGINAL_INSTALLATION_FEATURES: ReadonlySet<ProjectFeatureKey> = new Set<ProjectFeatureKey>(["PRODUCT_KNOWLEDGE_FORGE"]);
+
 export function disabledProjectFeatures(rows: ReadonlyArray<{ key: string; enabled: boolean }>): Set<ProjectFeatureKey> {
   return new Set(resolveProjectFeatures(rows).filter((f) => !f.enabled).map((f) => f.key as ProjectFeatureKey));
 }
