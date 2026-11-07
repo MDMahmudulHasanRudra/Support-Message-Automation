@@ -1,10 +1,11 @@
-import { AlarmClock, CalendarClock, CheckCircle2, Hourglass, Search, Send } from "lucide-react";
+import { AlarmClock, BellRing, CalendarClock, CheckCircle2, Hourglass, Search, Send } from "lucide-react";
 import { RENEWAL_VIEWS, RENEWAL_VIEW_LABELS, type RenewalView } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
 import { clientViewerCaps } from "@/server/clientModule";
 import { listBillingCurrencies } from "@/server/clientBilling";
-import { listRenewals, parseRenewalView, renewalCounts, RENEWAL_PAGE_SIZE } from "@/server/clientRenewals";
+import { listRenewals, parseRenewalView, reminderRecipients, renewalCounts, RENEWAL_PAGE_SIZE } from "@/server/clientRenewals";
+import { hasPermission } from "@/server/permissions";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, EmptyState, HelpButton, HelpSection, Input, Pagination, ViewOnlyNotice } from "@/components/ui";
 import { formatDay } from "@/lib/clientDisplay";
@@ -12,6 +13,7 @@ import { AutoSubmitForm } from "../../AutoSubmitForm";
 import { ChipTabs, KpiCard, mutedText, surface, type Chip } from "../../ModuleKit";
 import { PrepareMessageButton } from "../../messages/PrepareMessage";
 import { OfferActions, PrepareOfferButton } from "./RenewalParts";
+import { ReminderBatchButton } from "./ReminderBatchButton";
 
 export const metadata = { title: "Renewals" };
 
@@ -41,6 +43,18 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
     q ? renewalCounts(windowDays) : null,
   ]);
   const c = countsAll ?? counts;
+  // The reminder batch needs the right to prepare messages; it is approved by somebody else on Client Messages.
+  const canBatch = view === "remind" && total > 0 && (await hasPermission(session, "clients.send_messages"));
+  const [batchRecipients, batchTemplates] = canBatch
+    ? await Promise.all([
+        reminderRecipients(windowDays),
+        prisma.clientMessageTemplate.findMany({
+          where: { status: "ACTIVE", category: "RENEWAL_REMINDER", channel: { in: ["EMAIL", "ANY"] }, subject: { not: null } },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        }),
+      ])
+    : [[], []];
   const href = (patch: Record<string, string | number | undefined>) => {
     const p = new URLSearchParams();
     const next = { view, q, page: undefined as number | undefined, ...patch };
@@ -54,7 +68,7 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
     count: counts[v],
     href: href({ view: v }),
     active: view === v,
-    tone: v === "expired" || v === "follow-up" ? "danger" : v === "renewing" ? "warning" : undefined,
+    tone: v === "expired" || v === "follow-up" ? "danger" : v === "renewing" || v === "remind" ? "warning" : undefined,
   }));
   const enabled = currencies.filter((x) => x.enabled).map((x) => x.code);
   const canAct = canManage && caps.canManageSubscriptions;
@@ -80,13 +94,24 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
       </div>
       {canManage ? null : <ViewOnlyNotice />}
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        <KpiCard icon={BellRing} accent={c.remind ? "amber" : "slate"} toneValue={c.remind > 0} label="To remind today" value={String(c.remind)} hint="Not contacted since the last reminder point" href={href({ view: "remind" })} />
         <KpiCard icon={CalendarClock} accent="amber" label="Renewing soon" value={String(c.renewing)} hint={`Within ${windowDays} days`} href={href({ view: "renewing", q: undefined })} />
         <KpiCard icon={AlarmClock} accent={c.expired ? "red" : "slate"} toneValue={c.expired > 0} label="Expired" value={String(c.expired)} hint="Current term has ended" href={href({ view: "expired", q: undefined })} />
         <KpiCard icon={Hourglass} accent="blue" label="Awaiting response" value={String(c.awaiting + c.sent)} hint="Offer sent or awaiting" href={href({ view: "awaiting", q: undefined })} />
         <KpiCard icon={CheckCircle2} accent="green" label="Accepted, to renew" value={String(c.accepted)} hint={c["follow-up"] ? `${c["follow-up"]} follow-up(s) due` : "No follow-up due"} href={href({ view: "accepted", q: undefined })} />
       </div>
       <ChipTabs label="Renewal views" chips={chips} />
+
+      {view === "remind" && total > 0 ? (
+        <div className={`${surface} flex flex-wrap items-center justify-between gap-3 p-4`}>
+          <p className={`min-w-0 flex-1 basis-64 text-sm ${mutedText}`}>
+            Reminders are owed when the renewal window opens, 3 days and 1 day before the end, on the day, and once 3 days after.
+            Message someone and they leave this list until the next point. Nothing here sends by itself.
+          </p>
+          {canBatch ? <ReminderBatchButton recipients={batchRecipients} templates={batchTemplates} /> : null}
+        </div>
+      ) : null}
 
       <AutoSubmitForm className={`${surface} p-3`}>
         <input type="hidden" name="view" value={view} />
@@ -141,6 +166,9 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
                 ) : (
                   <span className={`text-xs ${mutedText}`}>No open offer</span>
                 )}
+                {view === "remind" ? (
+                  <div className={`mt-1 text-xs ${mutedText}`}>{r.lastContact ? `Last contacted ${formatDay(r.lastContact)}` : "Not contacted yet"}</div>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 {!r.client.archived && r.term ? (
@@ -167,6 +195,8 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
 
 function emptyText(view: RenewalView): string {
   switch (view) {
+    case "remind":
+      return "Nobody needs a reminder today. Everyone due has been contacted.";
     case "renewing":
       return "No current term ends within the renewal window.";
     case "expired":

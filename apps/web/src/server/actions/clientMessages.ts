@@ -262,6 +262,22 @@ async function refreshTemplates() {
   revalidatePath(await projectPath("/clients/templates"));
 }
 
+/** A plain reminder a person can use at once and edit later. It only states what the client's own records say. */
+export async function addStandardRenewalReminder(): Promise<TemplateFormState> {
+  const form = new FormData();
+  form.set("name", "Renewal reminder");
+  form.set("category", "RENEWAL_REMINDER");
+  form.set("channel", "EMAIL");
+  form.set("language", "English");
+  form.set("status", "ACTIVE");
+  form.set("subject", "Your {{service_name}} ends on {{subscription_end_date}}");
+  form.set(
+    "body",
+    "Dear {{client_name}},\n\nYour {{service_name}} ends on {{subscription_end_date}}. To keep it running without a break, please reply to this email or contact us.\n\nThank you,\n{{business_name}}\n{{support_phone}}",
+  );
+  return saveMessageTemplate(null, {}, form);
+}
+
 /** Create (templateId null) or edit a template. Each save is a new version, kept; an edit is refused if someone else saved first. */
 export async function saveMessageTemplate(templateId: string | null, _prev: TemplateFormState, form: FormData): Promise<TemplateFormState> {
   const granted = await checkPermission("clients.manage_settings");

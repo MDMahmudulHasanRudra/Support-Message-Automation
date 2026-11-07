@@ -828,6 +828,28 @@ const RELEASES: HistoricalRelease[] = [
       "A customer no longer sees another customer's web address in its install code and links"
     ]
   },
+  {
+    version: "0.34.0",
+    title: "Renewal reminders, faster reports and a roomier chat",
+    summary: "See who to remind today, open reports at once and read more of each conversation.",
+    releaseDate: "2026-11-07",
+    releaseType: "FEATURE",
+    affectedModules: ["Clients", "Reports", "WhatsApp Chat", "Team", "WhatsApp", "Security"],
+    whatsNew: [
+      "Renewals now lists who to remind today, worked out from each end date and the last contact, with one email for everybody that another person approves first",
+      "Leave adds Annual, Sick and Casual in one press and shows who is away today",
+      "A running group sync now shows in the job indicator on every page",
+    ],
+    improvements: [
+      "Reports open at once and reuse recent figures, so moving between reports for the same period does not read every message again",
+      "WhatsApp Chat keeps its search and filters in the list, so the open conversation uses the full height, and tablets show one pane at a time",
+      "Today and Team Performance fit a phone, and the Activity Feed shows one clear message until counting is on",
+    ],
+    bugFixes: [
+      "A project address, an employee number or a linked Google account at one customer no longer blocks or reveals anything to another",
+      "Product knowledge from the software owner's repository is available only in the original installation",
+    ],
+  },
 ];
 
 async function main() {

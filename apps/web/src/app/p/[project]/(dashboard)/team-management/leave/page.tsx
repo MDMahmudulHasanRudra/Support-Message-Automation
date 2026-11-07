@@ -1,4 +1,4 @@
-import { formatDhakaDateKey } from "@support-automation/shared";
+import { addCalendarDays, formatDhakaDateKey } from "@support-automation/shared";
 import { prisma } from "@/server/db";
 
 import { requireSession } from "@/server/auth";
@@ -37,7 +37,7 @@ export default async function LeavePage() {
   // Leave dates are whole Dhaka days, stored as dates.
   const today = formatDhakaDateKey(new Date());
   const day = (when: Date) => when.toISOString().slice(0, 10);
-  const inSevenDays = formatDhakaDateKey(new Date(Date.now() + 7 * 86_400_000));
+  const inSevenDays = addCalendarDays(today, 7);
   const approved = requests.filter((r) => r.status === "APPROVED");
   const awayToday = approved.filter((r) => day(r.startDate) <= today && day(r.endDate) >= today);
   const startingSoon = approved.filter((r) => day(r.startDate) > today && day(r.startDate) <= inSevenDays);
