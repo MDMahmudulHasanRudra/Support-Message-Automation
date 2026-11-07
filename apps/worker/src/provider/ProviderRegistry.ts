@@ -3,6 +3,7 @@ import { OpenWAProvider } from "./openwa/OpenWAProvider.js";
 import type { WhatsAppProvider } from "./WhatsAppProvider.js";
 import { processWithRetry } from "../pipeline/retryFailedMessage.js";
 import { processIncomingMessage, storeMissedMessage } from "../pipeline/processIncomingMessage.js";
+import { trackMessageWork } from "../messagesFirst.js";
 import { shouldAutomateRecoveredMessage } from "../pipeline/catchUpMissedMessages.js";
 import { recordCollection } from "../health/collectionByKind.js";
 import type { RawIncomingMessage } from "../pipeline/types.js";
@@ -113,7 +114,7 @@ export class ProviderRegistry {
       });
       // A failure is retried a few times before it is counted as a drop (retryFailedMessage.ts); the
       // count and the System Logs entry it always produced are written when every chance is used.
-      void processWithRetry(message, message.deliveredLate ? processLateMessage : undefined);
+      void trackMessageWork(() => processWithRetry(message, message.deliveredLate ? processLateMessage : undefined));
     });
 
     // Receipts and deletions on messages already seen (CHAT_RICH_MESSAGING.md). Facts only: each sets

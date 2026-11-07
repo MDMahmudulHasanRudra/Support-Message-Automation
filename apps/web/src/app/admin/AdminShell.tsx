@@ -1,9 +1,11 @@
 "use client";
 
-import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, Menu, Palette, ShieldCheck, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { PageEpoch } from "@/components/NavigationProgress";
+import { IntentLink } from "@/components/ProjectLink";
+import { usePendingNavigation } from "@/lib/navigationPending";
 import { ProjectSwitcher, type SwitcherProject } from "@/components/ProjectSwitcher";
 import { SupportSessionBanner, type SupportSessionBannerInfo } from "@/components/SupportSessionBanner";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
@@ -97,6 +99,7 @@ export function AdminShell({
   supportSession?: SupportSessionBannerInfo | null;
 }) {
   const pathname = usePathname();
+  const pendingNav = usePendingNavigation();
   const sections = useMemo(() => buildSections(new Set(grantedKeys)), [grantedKeys]);
   const nav = sections.flatMap((section) => section.items);
   const currentLabel =
@@ -203,13 +206,13 @@ export function AdminShell({
               <div key={section.title} className="flex flex-col gap-0.5 pb-3">
                 <p className="px-3 pb-1.5 pt-2 text-[11px] font-medium text-[color:var(--color-subtle-foreground)]">{section.title}</p>
                 {section.items.map((item) => {
-                  const active = isActive(pathname, item.href, item.exact);
+                  const active = pendingNav?.navItem ? pendingNav.target === item.href : isActive(pathname, item.href, item.exact);
                   const Icon = item.icon;
                   return (
-                    <NextLink key={item.href} href={item.href} onClick={() => setNavOpen(false)} aria-current={active ? "page" : undefined} className={navItemClass(active, item.sub ? "ml-[1.1rem] !pl-2.5" : "")}>
+                    <IntentLink key={item.href} href={item.href} data-nav-item="" onClick={() => setNavOpen(false)} aria-current={active ? "page" : undefined} className={navItemClass(active, item.sub ? "ml-[1.1rem] !pl-2.5" : "")}>
                       <Icon className={navIconClass(active)} aria-hidden />
                       <span className="truncate">{item.label}</span>
-                    </NextLink>
+                    </IntentLink>
                   );
                 })}
               </div>
@@ -221,7 +224,7 @@ export function AdminShell({
         </aside>
 
         <main id="main-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--color-background)] lg:rounded-tl-[22px]">
-          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7">{children}</div>
+          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7"><PageEpoch>{children}</PageEpoch></div>
         </main>
       </div>
       {paletteOpen ? <CommandPalette onClose={closePalette} links={sections.flatMap((section) => section.items.map(({ href, label, icon }) => ({ href, label, icon, group: section.title })))} /> : null}

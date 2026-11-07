@@ -1,5 +1,6 @@
 import { countMetric } from "../health/metrics.js";
 import { trackTick } from "../lifecycle.js";
+import { noteOutboundSend } from "../messagesFirst.js";
 import { platformPrisma, prisma } from "../db.js";
 import { currentProjectId, OPERATING_PROJECT_STATUSES, projectIdForAccount, withProject } from "../project/context.js";
 import type { OutboundMessage } from "@prisma/client";
@@ -127,6 +128,7 @@ export async function claimNextOutboundMessage() {
     });
     return claim.count === 1 ? candidate.id : null;
   });
+  if (id) noteOutboundSend();
   return id ? platformPrisma.outboundMessage.findUniqueOrThrow({ where: { id } }) : null;
 }
 

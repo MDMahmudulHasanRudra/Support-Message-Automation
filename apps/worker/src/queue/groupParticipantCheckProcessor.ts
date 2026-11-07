@@ -1,4 +1,5 @@
 import { trackTick } from "../lifecycle.js";
+import { slowJobMayRun } from "../messagesFirst.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { normalizePhoneNumber } from "@support-automation/shared";
@@ -248,7 +249,7 @@ export function startGroupParticipantCheckProcessor(
     running = true;
     void trackTick(async () => {
       try {
-        await checkTick(registry);
+        if (slowJobMayRun(LOOP_NAME)) await checkTick(registry);
       } catch (err) {
         console.error("[participant-check] tick failed", err);
       } finally {

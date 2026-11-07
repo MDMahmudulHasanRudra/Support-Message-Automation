@@ -2,8 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { connection } from "next/server";
+import { Suspense } from "react";
 import { ToastProvider } from "@/components/ui";
 import { BrandingProvider } from "@/components/BrandingProvider";
+import { NavigationProgress } from "@/components/NavigationProgress";
 import { accentStyleSheet } from "@/lib/branding";
 import { getBranding } from "@/server/branding";
 import "./globals.css";
@@ -80,6 +82,9 @@ export default async function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <BrandingProvider value={brand}>
+          <Suspense fallback={null}>
+            <NavigationProgress />
+          </Suspense>
           <ToastProvider>{children}</ToastProvider>
           <ServiceWorkerRegistrar />
         </BrandingProvider>

@@ -1,5 +1,6 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help prose reads better with real apostrophes */
 import { prisma } from "@/server/db";
+import { softCached } from "@/server/softCache";
 import Link from "@/components/ProjectLink";
 import { Download } from "lucide-react";
 
@@ -77,7 +78,7 @@ export default async function SupportActivityTeamPage({
   // All three periods from one read of the widest (a week can start in the previous month).
   const [workloads, availability, activeMembers, awaiting, response, dataHealth] =
     await Promise.all([
-      getExecutiveWorkloads(ranges, now),
+      softCached("team-performance:workloads", () => getExecutiveWorkloads(ranges, now)),
       getTeamAvailability(now),
       prisma.internalTeamMember.count({ where: { status: "ACTIVE" } }),
       // Not scoped to the selected period, deliberately: somebody waiting since Friday is still

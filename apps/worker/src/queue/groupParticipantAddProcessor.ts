@@ -1,4 +1,5 @@
 import { trackTick } from "../lifecycle.js";
+import { slowJobMayRun } from "../messagesFirst.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -373,7 +374,9 @@ export function startGroupParticipantAddProcessor(
     // Wrapped so shutdown can wait for a claim already in flight and refuse to start a new one.
     // Without it, SIGTERM during this tick killed the process mid-work and left the claimed row
     // PROCESSING until the next boot requeued and re-ran it — see lifecycle.ts.
-    void trackTick(() => processOneViaRegistry(registry))
+    void trackTick(async () => {
+      if (slowJobMayRun(LOOP_NAME)) await processOneViaRegistry(registry);
+    })
       .catch((err) => {
         console.error("[queue] unexpected error processing group-participant-add item", err);
       })

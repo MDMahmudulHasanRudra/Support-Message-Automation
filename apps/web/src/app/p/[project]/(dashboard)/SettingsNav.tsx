@@ -43,6 +43,7 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
             <Link
               key={link.href}
               href={link.href}
+              intent
               aria-current={link.href === activeHref ? "page" : undefined}
               className={`shrink-0 rounded-full px-3 py-1 text-xs transition-colors ${
                 link.href === activeHref
@@ -71,6 +72,7 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
                   <li key={link.href}>
                     <Link
                       href={link.href}
+                      intent
                       aria-current={active ? "page" : undefined}
                       className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
                         active

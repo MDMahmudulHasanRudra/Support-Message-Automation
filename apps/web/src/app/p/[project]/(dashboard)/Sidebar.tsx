@@ -4,7 +4,8 @@ import { enumLabel } from "@/lib/displayLabels";
 import { Badge } from "@/components/ui";
 import { navIconClass, navItemClass } from "@/components/shell/ShellParts";
 import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard,  ShieldCheck, X } from "lucide-react";
-import Link from "@/components/ProjectLink";
+import Link, { useProjectHref } from "@/components/ProjectLink";
+import { useNavHighlight } from "@/lib/navigationPending";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useMemo, useState, useSyncExternalStore } from "react";
@@ -106,14 +107,18 @@ function writeCollapse(collapsed: boolean): void {
 
 function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; collapsed: boolean }) {
   const Icon = link.icon;
+  const toProject = useProjectHref();
+  const lit = useNavHighlight(toProject(link.href), active);
   return (
     <Link
       href={link.href}
+      intent
+      data-nav-item=""
       aria-current={active ? "page" : undefined}
       title={collapsed ? link.label : undefined}
-      className={navItemClass(active, collapsed ? "justify-center !px-0" : "")}
+      className={navItemClass(lit, collapsed ? "justify-center !px-0" : "")}
     >
-      <Icon className={navIconClass(active)} aria-hidden />
+      <Icon className={navIconClass(lit)} aria-hidden />
       {collapsed ? null : <span className="truncate">{link.label}</span>}
     </Link>
   );

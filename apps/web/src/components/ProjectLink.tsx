@@ -2,7 +2,8 @@
 
 import NextLink from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { createContext, useContext, useMemo, type ComponentProps } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { startPushNavigation } from "@/lib/navigationPending";
 import { projectHref } from "@/lib/projectPaths";
 import { parseWorkspacePath, readProjectSegment } from "@/lib/workspace";
 
@@ -44,7 +45,7 @@ export function useProjectHref(): (href: string) => string {
  * link in the app goes through this, including hrefs that arrive as data (navigation, dashboard
  * tiles, report rows), so none of them can point into a project other than the one rendered.
  */
-export default function Link({ href, ...props }: ComponentProps<typeof NextLink>) {
+export default function Link({ href, intent, prefetch, ...props }: ComponentProps<typeof NextLink> & { intent?: boolean }) {
   const toProject = useProjectHref();
   const resolved =
     typeof href === "string"
@@ -52,7 +53,51 @@ export default function Link({ href, ...props }: ComponentProps<typeof NextLink>
       : href && typeof href === "object" && typeof href.pathname === "string"
         ? { ...href, pathname: toProject(href.pathname) }
         : href;
-  return <NextLink href={resolved} {...props} />;
+  if (intent && typeof resolved === "string") return <IntentLink href={resolved} {...props} />;
+  // A row in a list never loads its page ahead: a table of links must not become a table of requests, and
+  // opening a conversation is what marks it read.
+  return <NextLink href={resolved} prefetch={prefetch ?? false} {...props} />;
+}
+
+/** Long enough that moving the pointer down the sidebar does not load every page it passes over. */
+const INTENT_DELAY_MS = 90;
+
+/** Reports read every message of their period, so they are worked out when opened and not on a passing hover. */
+const WORKED_OUT_ON_OPEN = /\/(team-report|reports)(\/|$)/;
+
+/**
+ * A sidebar, tab or settings link: its page is loaded when the pointer rests on it or a finger lands on it,
+ * so the click itself shows the page at once.
+ */
+export function IntentLink({ href, onMouseEnter, onMouseLeave, onTouchStart, ...props }: ComponentProps<typeof NextLink> & { href: string }) {
+  const [wanted, setWanted] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const eligible = !WORKED_OUT_ON_OPEN.test(href);
+  const stop = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  useEffect(() => stop, []);
+  return (
+    <NextLink
+      href={href}
+      prefetch={wanted && eligible}
+      onMouseEnter={(event) => {
+        stop();
+        timer.current = setTimeout(() => setWanted(true), INTENT_DELAY_MS);
+        onMouseEnter?.(event);
+      }}
+      onMouseLeave={(event) => {
+        stop();
+        onMouseLeave?.(event);
+      }}
+      onTouchStart={(event) => {
+        setWanted(true);
+        onTouchStart?.(event);
+      }}
+      {...props}
+    />
+  );
 }
 
 /** `useRouter`, with `push`/`replace`/`prefetch` resolving project-relative paths the same way. */
@@ -65,7 +110,11 @@ export function useProjectRouter(): ReturnType<typeof useRouter> {
   return useMemo(
     () => ({
       ...router,
-      push: (href, options) => router.push(projectHref(href, slug, workspace), options),
+      push: (href, options) => {
+        const target = projectHref(href, slug, workspace);
+        startPushNavigation(target);
+        router.push(target, options);
+      },
       replace: (href, options) => router.replace(projectHref(href, slug, workspace), options),
       prefetch: (href, options) => router.prefetch(projectHref(href, slug, workspace), options),
     }),

@@ -532,6 +532,28 @@ body::before {
   }
 }
 
+/* Page changes: nothing shows for a fast one; a slow one gets a thin bar and the page stays where it is. */
+@keyframes nav-progress {
+  from { transform: scaleX(0.05); }
+  to { transform: scaleX(0.92); }
+}
+@keyframes nav-progress-show {
+  to { opacity: 1; }
+}
+.nav-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 9999;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: left;
+  background: var(--color-accent);
+  animation:
+    nav-progress 10s cubic-bezier(0.08, 0.82, 0.17, 1) both,
+    nav-progress-show 1ms linear 150ms forwards;
+}
+
 @keyframes fade-in-rise {
   from {
     opacity: 0;

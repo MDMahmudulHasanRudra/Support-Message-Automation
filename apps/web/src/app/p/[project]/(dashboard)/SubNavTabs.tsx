@@ -23,6 +23,7 @@ export function SubNavTabs({ tabs, activeHref }: { tabs: NavLink[]; activeHref: 
             <li key={tab.href}>
               <Link
                 href={tab.href}
+                intent
                 aria-current={active ? "page" : undefined}
                 className={`relative -mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] transition-colors duration-[var(--duration-fast)] ${
                   active

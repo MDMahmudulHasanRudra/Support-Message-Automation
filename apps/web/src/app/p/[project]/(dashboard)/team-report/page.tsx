@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Download } from "lucide-react";
 import {
   Alert,
@@ -71,7 +72,36 @@ const when = (ms: number | null) =>
 const count = (n: number) => n.toLocaleString("en-US");
 const duration = (seconds: number) => formatDurationShort(seconds);
 
-export default async function TeamReportPage({
+/**
+ * The report reads every message of its period, which takes seconds on a busy project. The page opens at
+ * once with its title and the figures follow; changing a filter keeps the current report on screen until
+ * the new one is ready.
+ */
+export default function TeamReportPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  return (
+    <Suspense fallback={<TeamReportArriving />}>
+      <TeamReportBody searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+function TeamReportArriving() {
+  return (
+    <div>
+      <PageHeader title="Team Report" description="Working out this period's figures from your messages…" />
+      <div className="space-y-3" aria-hidden>
+        <div className="h-20 animate-shimmer rounded-[var(--radius-lg)]" />
+        <div className="h-72 animate-shimmer rounded-[var(--radius-lg)]" />
+      </div>
+    </div>
+  );
+}
+
+async function TeamReportBody({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;

@@ -10,6 +10,7 @@ import { loadMemberFormOptions } from "./memberFormOptions";
 import { createSenderResolver } from "@support-automation/shared";
 import { getMemberHistorySync, getRosterIdentityHealth } from "@/server/rosterIdentityHealth";
 import { IdentityHealthCard } from "./IdentityHealthCard";
+import { softCached } from "@/server/softCache";
 import { isUnifiedReportingEnabled } from "@/server/unifiedReporting";
 
 export default async function TeamMembersPage() {
@@ -26,7 +27,7 @@ export default async function TeamMembersPage() {
     }),
     loadMemberFormOptions(),
     // Roster problems that make reports credit messages to the wrong person, or to nobody.
-    getRosterIdentityHealth(),
+    softCached("team-members:identity-health", () => getRosterIdentityHealth()),
     getMemberHistorySync(),
     isUnifiedReportingEnabled(),
   ]);

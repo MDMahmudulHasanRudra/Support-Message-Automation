@@ -1,6 +1,7 @@
 "use client";
 
-import NextLink from "next/link";
+import { IntentLink } from "@/components/ProjectLink";
+import { PageEpoch } from "@/components/NavigationProgress";
 import { usePathname } from "next/navigation";
 import { Activity, Briefcase, ChevronRight, CreditCard, Globe, LayoutDashboard, LifeBuoy, LogOut, Settings, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
@@ -64,10 +65,10 @@ export function PlatformShell({ children, operator, productName, onLogout }: { c
               const active = isActive(pathname, item.href, item.exact);
               const Icon = item.icon;
               return (
-                <NextLink key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={navItemClass(active, "shrink-0")}>
+                <IntentLink key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={navItemClass(active, "shrink-0")}>
                   <Icon className={navIconClass(active)} aria-hidden />
                   <span className="truncate">{item.label}</span>
-                </NextLink>
+                </IntentLink>
               );
             })}
           </nav>
@@ -76,7 +77,7 @@ export function PlatformShell({ children, operator, productName, onLogout }: { c
           </div>
         </aside>
         <main id="main-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--color-background)] lg:rounded-tl-[22px]">
-          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-5 py-7 sm:px-8 sm:py-9">{children}</div>
+          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-5 py-7 sm:px-8 sm:py-9"><PageEpoch>{children}</PageEpoch></div>
         </main>
       </div>
     </div>

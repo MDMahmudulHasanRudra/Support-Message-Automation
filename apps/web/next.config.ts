@@ -70,6 +70,9 @@ const nextConfig: NextConfig = {
   // Do not announce the framework.
   poweredByHeader: false,
   experimental: {
+    // A page opened in the last 30 seconds comes back at once. Anything a person changes clears this
+    // straight away (revalidatePath), and live screens keep refreshing themselves. 30 is the shortest Next allows for `static`.
+    staleTimes: { dynamic: 30, static: 30 },
     // Default (1MB) is too small for a real Group Message Sender Excel upload.
     serverActions: {
       bodySizeLimit: "8mb",

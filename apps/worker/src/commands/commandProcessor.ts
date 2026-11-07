@@ -1,4 +1,5 @@
 import { isShuttingDown, trackTick } from "../lifecycle.js";
+import { waitForMessagesToClear } from "../messagesFirst.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, effectiveProjectStatus, OPERATING_PROJECT_STATUSES, withAccountProject, withProject } from "../project/context.js";
 import { SessionNotReadyError, type WhatsAppProvider, GroupListNotReadyError } from "../provider/WhatsAppProvider.js";
@@ -278,6 +279,7 @@ async function syncGroupsInProject(
   let failed = 0;
   const failedIds = new Set<string>();
   for (const batch of inBatches(fresh)) {
+    await waitForMessagesToClear();
     checkpoint();
     try {
       // skipDuplicates because a partially-applied earlier attempt (or a group registered by an
