@@ -1,4 +1,5 @@
 /* eslint-disable react/no-unescaped-entities -- long-form Help dialog prose reads better with real apostrophes/quotes than HTML entities */
+import { enumLabel } from "@/lib/displayLabels";
 import { prisma } from "@/server/db";
 import Link from "@/components/ProjectLink";
 
@@ -116,7 +117,7 @@ export default async function GroupBroadcastHistoryPage({
                 SENT and FAILED are self-explanatory. SKIPPED means a live membership re-check failed
                 right before sending (the account wasn't actually still in that group). CANCELLED means
                 the job was stopped (manually, or by the kill switch) before this row's turn came up.
-                RATE_LIMITED means an account-wide limit was hit at send time, independent of the job's
+                Rate limited means an account-wide limit was hit at send time, independent of the job's
                 own pacing.
               </p>
             </HelpSection>
@@ -151,7 +152,7 @@ export default async function GroupBroadcastHistoryPage({
             <option value="">All statuses</option>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {enumLabel(s)}
               </option>
             ))}
           </Select>
@@ -199,7 +200,7 @@ export default async function GroupBroadcastHistoryPage({
                 <Td className="max-w-xs truncate">{m.body}</Td>
                 <Td>
                   <Badge color={statusColor(m.status)} dot>
-                    {m.status}
+                    {enumLabel(m.status)}
                   </Badge>
                 </Td>
                 <Td className="tabular-nums">{m.attemptCount}</Td>

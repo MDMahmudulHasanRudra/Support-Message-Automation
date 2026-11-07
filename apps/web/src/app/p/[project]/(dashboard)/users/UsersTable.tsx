@@ -1,10 +1,11 @@
 "use client";
 
+import { KeyRound, MonitorSmartphone, Pencil, Power, Trash2 } from "lucide-react";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { useState, useTransition } from "react";
 
 import Link from "@/components/ProjectLink";
-import { Alert, Badge, Button, ConfirmDialog, Dialog, EmptyState, Field, Input, Table, Td, Th } from "@/components/ui";
+import { Alert, Badge, Button, ButtonLink, ConfirmDialog, Dialog, EmptyState, Field, Input, RowMenu, Table, Td, Th } from "@/components/ui";
 import { deleteUser, setUserActive, resetUserPassword } from "@/server/actions/users";
 
 export interface UserRow {
@@ -118,9 +119,9 @@ export function UsersTable({ users }: { users: UserRow[] }) {
                 {u.isCurrentUser ? <span className="ml-1.5 text-xs text-[color:var(--color-muted-foreground)]">(you)</span> : null}
               </Td>
               <Td>
-                {u.permissionModuleName ?? <span className="text-[color:var(--color-muted-foreground)]">None assigned</span>}
+                {u.isAdministrator && u.permissionModuleName === "Administrator" ? null : (u.permissionModuleName ?? <span className="text-[color:var(--color-muted-foreground)]">None assigned</span>)}
                 {u.isAdministrator ? (
-                  <span className="ml-2">
+                  <span className={u.permissionModuleName === "Administrator" ? "" : "ml-2"}>
                     <Badge color="blue">Administrator</Badge>
                   </span>
                 ) : null}
@@ -132,33 +133,20 @@ export function UsersTable({ users }: { users: UserRow[] }) {
               </Td>
               <Td>{u.lastLoginAtLabel ?? <span className="text-[color:var(--color-muted-foreground)]">Never</span>}</Td>
               <Td>
-                <div className="flex flex-wrap gap-2">
-                  <Link href={`/users/${u.id}/edit`}>
-                    <Button variant="secondary" size="sm">
-                      Edit
-                    </Button>
-                  </Link>
-                  <Link href={`/users/${u.id}/sessions`}>
-                    <Button variant="secondary" size="sm">
-                      Sessions
-                    </Button>
-                  </Link>
-                  <Button variant="secondary" size="sm" onClick={() => setResetTarget(u)}>
-                    Reset Password
-                  </Button>
-                  <Button
-                    variant={u.isActive ? "danger" : "secondary"}
-                    size="sm"
-                    disabled={u.isCurrentUser && u.isActive}
-                    onClick={() => setToggleTarget(u)}
-                  >
-                    {u.isActive ? "Deactivate" : "Activate"}
-                  </Button>
-                  {u.canDelete ? (
-                    <Button variant="danger" size="sm" onClick={() => setDeleteTarget(u)}>
-                      Delete
-                    </Button>
-                  ) : null}
+                <div className="flex items-center gap-1.5">
+                  <ButtonLink href={`/users/${u.id}/edit`} variant="secondary" size="sm">
+                    <Pencil className="size-3.5" aria-hidden />
+                    Edit
+                  </ButtonLink>
+                  <RowMenu
+                    label={`More actions for ${u.username}`}
+                    items={[
+                      { label: "Sessions", icon: <MonitorSmartphone className="size-4" aria-hidden />, href: `/users/${u.id}/sessions` },
+                      { label: "Reset password", icon: <KeyRound className="size-4" aria-hidden />, onSelect: () => setResetTarget(u) },
+                      { label: u.isActive ? "Deactivate" : "Activate", icon: <Power className="size-4" aria-hidden />, danger: u.isActive, hidden: u.isCurrentUser && u.isActive, onSelect: () => setToggleTarget(u) },
+                      { label: "Delete", icon: <Trash2 className="size-4" aria-hidden />, danger: true, hidden: !u.canDelete, onSelect: () => setDeleteTarget(u) },
+                    ]}
+                  />
                 </div>
               </Td>
             </tr>

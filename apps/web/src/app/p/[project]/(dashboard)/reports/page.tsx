@@ -1,7 +1,7 @@
 import Link from "@/components/ProjectLink";
 import { ArrowUpRight } from "lucide-react";
 import { REPORT_CATEGORIES } from "@support-automation/shared";
-import { EmptyState, PageHeader } from "@/components/ui";
+import { EmptyState, PageHeader, SearchField } from "@/components/ui";
 import { requireSession } from "@/server/auth";
 import { getGrantedPermissionKeys, getPageAccess } from "@/server/permissions";
 import { reportPagesFor } from "../navigation";
@@ -22,21 +22,29 @@ export const metadata = { title: "All Reports" };
  * it answers and what it exports — so somebody looking for "who answers late" finds Response SLA
  * without knowing its name. A category with no report this role can open is not shown.
  */
-export default async function AllReportsPage() {
+export default async function AllReportsPage({ searchParams }: { searchParams: Promise<{ search?: string }> }) {
   const session = await requireSession();
   const granted = new Set(await getGrantedPermissionKeys(session));
   // A project role that selects pages lists only the reports it opens (PROJECT_ROLES.md).
   const pageAccess = await getPageAccess(session);
-  const reports = reportPagesFor(granted, await activeDisabledFeatures(), pageAccess ? (href) => canOpenPath(href, pageAccess) : undefined);
+  const allowed = reportPagesFor(granted, await activeDisabledFeatures(), pageAccess ? (href) => canOpenPath(href, pageAccess) : undefined);
+  const search = ((await searchParams).search ?? "").trim();
+  const words = search.toLowerCase().split(/\s+/).filter(Boolean);
+  const reports = allowed.filter((report) => {
+    const text = `${report.label} ${report.question} ${report.description} ${report.category} ${report.module}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
 
   return (
     <div>
-      <PageHeader title="All reports" description="Pick a report to open it. Each one keeps its own filters and export." />
+      <PageHeader title="All reports" description="Pick a report to open it. Each one keeps its own filters and export." actions={allowed.length ? <SearchField placeholder="Find a report…" defaultValue={search} /> : undefined} />
 
-      {reports.length === 0 ? (
+      {allowed.length === 0 ? (
         <EmptyState>Your role cannot open any report. Ask an administrator for Support Activity or Team Management access.</EmptyState>
+      ) : reports.length === 0 ? (
+        <EmptyState>No report matches “{search}”. Try a word like late, missed or workload.</EmptyState>
       ) : (
-        <div className="flex flex-col gap-8">
+        <div className="flex flex-col gap-6">
           {REPORT_CATEGORIES.map((category) => {
             const inCategory = reports.filter((report) => report.category === category);
             if (inCategory.length === 0) return null;
@@ -44,7 +52,7 @@ export default async function AllReportsPage() {
               <section key={category} aria-labelledby={`reports-${category}`}>
                 <h2
                   id={`reports-${category}`}
-                  className="mb-3 text-[12px] font-semibold tracking-[0.06em] text-[color:var(--color-muted-foreground)] uppercase"
+                  className="mb-2.5 text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]"
                 >
                   {category}
                 </h2>
@@ -55,29 +63,20 @@ export default async function AllReportsPage() {
                       <Link
                         key={report.href}
                         href={report.href}
-                        className="group flex flex-col rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-xs),var(--highlight-top)] transition-[box-shadow,border-color] duration-[var(--duration-base)] ease-[var(--ease-out)] hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
+                        title={report.description}
+                        className="group flex min-w-0 items-start gap-3 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-xs),var(--highlight-top)] transition-[box-shadow,border-color] hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-neutral-bg)] text-[color:var(--color-accent)]">
-                            <Icon className="size-4.5" aria-hidden />
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent-bg)] text-[color:var(--color-accent-fg)]">
+                          <Icon className="size-4.5" aria-hidden />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-start justify-between gap-2">
+                            <span className="text-sm font-semibold text-[color:var(--color-foreground)]">{report.label}</span>
+                            <ArrowUpRight className="mt-0.5 size-3.5 shrink-0 text-[color:var(--color-subtle-foreground)] transition-colors group-hover:text-[color:var(--color-foreground)]" aria-hidden />
                           </span>
-                          <ArrowUpRight
-                            className="size-4 text-[color:var(--color-subtle-foreground)] transition-colors group-hover:text-[color:var(--color-foreground)]"
-                            aria-hidden
-                          />
-                        </div>
-                        <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
-                          {report.module}
-                        </p>
-                        <h3 className="mt-1 text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">
-                          {report.label}
-                        </h3>
-                        <p className="mt-1.5 text-[13px] font-medium leading-relaxed text-[color:var(--color-foreground)]">{report.question}</p>
-                        <p className="mt-1 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">{report.description}</p>
-                        <div className="mt-auto flex items-center justify-between gap-2 pt-4 text-[12px]">
-                          <span className="text-[color:var(--color-subtle-foreground)]">Export: {report.exports.join(", ")}</span>
-                          <span className="font-medium text-[color:var(--color-accent)] group-hover:underline">Open report</span>
-                        </div>
+                          <span className="mt-1 block text-[13px] leading-snug text-[color:var(--color-muted-foreground)]">{report.question}</span>
+                          <span className="mt-1.5 block text-[11.5px] text-[color:var(--color-subtle-foreground)]">Export: {report.exports.join(", ")}</span>
+                        </span>
                       </Link>
                     );
                   })}

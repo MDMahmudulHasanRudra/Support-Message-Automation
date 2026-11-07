@@ -216,7 +216,7 @@ describe("column catalogues", () => {
   it("drops unknown, forbidden and repeated keys and keeps the identity column first", () => {
     const can = { subscriptions: true, groups: true };
     expect(sanitizeColumns("clients", ["email", "outstanding", "nope", "email", "client", "__proto__"], can)).toEqual(["client", "email"]);
-    expect(sanitizeColumns("clients", [], can)).toEqual(["client", "country", "phone", "service", "expiry", "subscription", "soldBy", "whatsappGroup"]);
+    expect(sanitizeColumns("clients", [], can)).toEqual(["client", "phone", "service", "expiry", "subscription", "soldBy", "whatsappGroup"]);
     expect(sanitizeColumns("billing", ["due", "invoice", "billed"], { billing: true })).toEqual(["invoice", "due", "billed"]);
   });
 });

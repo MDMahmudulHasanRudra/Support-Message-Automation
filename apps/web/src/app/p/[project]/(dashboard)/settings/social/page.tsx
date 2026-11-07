@@ -24,7 +24,7 @@ export default async function SocialSettingsPage() {
   const signing = Boolean(process.env.SOCIAL_MEDIA_URL_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim() || process.env.AUTH_SECRET?.trim());
   const processorOn = process.env.SOCIAL_PROCESSOR_DISABLED !== "true";
   const checks: Array<{ ok: boolean; label: string; fix: string }> = [
-    { ok: ready.ok, label: "Meta app and this workspace", fix: ready.ok ? "" : ready.problems.join(" ") },
+    { ok: ready.ok, label: "Meta app and this workspace", fix: ready.ok ? "" : "One-click Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Get Assist platform to enable it." },
     { ok: Boolean(origin?.startsWith("https://")), label: "A public https address (NEXTAUTH_URL)", fix: "Meta fetches photos and videos from this address, so it must be https and reachable from the internet." },
     { ok: storage, label: "Media storage (MEDIA_STORAGE_DIR)", fix: "The media library keeps files on the media volume." },
     { ok: signing, label: "A secret for signed media addresses", fix: "Set SOCIAL_MEDIA_URL_SECRET (32+ characters) or NEXTAUTH_SECRET." },

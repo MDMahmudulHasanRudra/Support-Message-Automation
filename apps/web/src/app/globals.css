@@ -722,3 +722,11 @@ body::before {
   --wa-wallpaper: #0b141a;
   --wa-doodle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' fill='none' stroke='%23ffffff' stroke-opacity='.05' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 18h16a4 4 0 0 1 4 4v9a4 4 0 0 1-4 4h-9l-6 5v-5h-1a4 4 0 0 1-4-4v-9a4 4 0 0 1 4-4z'/%3E%3Ccircle cx='86' cy='22' r='7'/%3E%3Cpath d='M78 74l8-8 8 8-8 8z'/%3E%3Cpath d='M24 84c4-6 12-6 16 0'/%3E%3Cpath d='M98 100l4-10 4 10m-6.5-3.5h5'/%3E%3Cpath d='M56 50h10M61 45v10'/%3E%3Cpath d='M106 48a6 6 0 1 1-12 0 6 6 0 1 1 12 0zM100 54v6'/%3E%3C/svg%3E");
 }
+
+/* A form field fills its box unless the caller names a width. In the components layer on purpose: a plain
+   `w-full` sorted after `w-56` and silently won, so every filter bar asking for narrow fields stacked them. */
+@layer components {
+  .field-fill {
+    width: 100%;
+  }
+}

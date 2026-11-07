@@ -1,5 +1,6 @@
 "use client";
 
+import { enumLabel } from "@/lib/displayLabels";
 import { useActionState, useState } from "react";
 import { Alert, Button, Card, Checkbox, Field, Input, Label, Select, SectionHeader, Switch, Textarea } from "@/components/ui";
 import type { RuleFormState } from "@/server/actions/rules";
@@ -96,7 +97,7 @@ export function RuleForm({
             <Select name="type" defaultValue={defaults.type ?? "GENERIC"}>
               {RULE_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {enumLabel(t)}
                 </option>
               ))}
             </Select>
@@ -108,7 +109,7 @@ export function RuleForm({
             <Select name="status" defaultValue={defaults.status ?? "DRAFT"}>
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {enumLabel(s)}
                 </option>
               ))}
             </Select>
@@ -128,7 +129,7 @@ export function RuleForm({
             <Select name="matchType" value={matchType} onChange={(e) => setMatchType(e.target.value)}>
               {MATCH_TYPES.map((m) => (
                 <option key={m} value={m}>
-                  {m}
+                  {enumLabel(m)}
                 </option>
               ))}
             </Select>
@@ -245,7 +246,7 @@ export function RuleForm({
                 defaultChecked={selectedActions.has(a)}
                 onChange={(e) => toggleAction(a, e.target.checked)}
               />
-              {a}
+              {enumLabel(a)}
             </label>
           ))}
         </div>

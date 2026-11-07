@@ -38,7 +38,7 @@ export function PaymentsTable({ payments, canReverse, canDelete }: { payments: P
   const deletingLive = deleting ? payments.filter((p) => deleting.includes(p.id) && !p.reversed).length : 0;
 
   const th = "sticky top-0 z-[2] whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
-  const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px]";
+  const td = "border-b border-[var(--color-border)] px-3 py-3 align-middle text-[13px]";
   return (
     <>
       {canDelete && selected.size > 0 ? (
@@ -68,7 +68,7 @@ export function PaymentsTable({ payments, canReverse, canDelete }: { payments: P
               <th className={`${th} hidden md:table-cell`}>Reference</th>
               <th className={th}>Invoices settled</th>
               <th className={`${th} hidden lg:table-cell`}>Recorded by</th>
-              <th className={`${th} text-right`}>Actions</th>
+              <th className={`${th} right-0 z-[3] border-l text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -126,7 +126,7 @@ export function PaymentsTable({ payments, canReverse, canDelete }: { payments: P
                   <div>{p.recordedBy ?? "—"}</div>
                   <div className={`text-xs ${muted}`}>{new Date(p.recordedAt).toLocaleString("en-GB", { timeZone: "Asia/Dhaka", dateStyle: "medium", timeStyle: "short" })}</div>
                 </td>
-                <td className={`${td} text-right`}>
+                <td className={`${td} sticky right-0 z-[1] border-l bg-[var(--color-surface)] text-right`}>
                   <div className="flex items-center justify-end gap-1.5">
                     <Link href={`/clients/${p.client.id}?tab=payments`} className="inline-flex size-8 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]" title="Open the client" aria-label="Open the client">
                       <Eye className="size-4" />

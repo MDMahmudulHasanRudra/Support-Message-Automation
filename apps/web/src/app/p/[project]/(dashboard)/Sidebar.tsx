@@ -1,5 +1,6 @@
 "use client";
 
+import { enumLabel } from "@/lib/displayLabels";
 import { Badge } from "@/components/ui";
 import { navIconClass, navItemClass } from "@/components/shell/ShellParts";
 import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard,  ShieldCheck, X } from "lucide-react";
@@ -312,14 +313,14 @@ export function Sidebar({
             className={`flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 ${
               collapsed ? "justify-center" : "justify-between"
             }`}
-            title={collapsed ? `Automation ${automationEnabled ? "enabled" : "paused"} — ${automationMode}` : undefined}
+            title={collapsed ? `Automation ${automationEnabled ? "enabled" : "paused"} — ${enumLabel(automationMode)}` : undefined}
           >
             <Badge color={automationEnabled ? "green" : "red"} dot pulse={automationEnabled}>
               {collapsed ? "" : automationEnabled ? "Enabled" : "Paused"}
             </Badge>
             {collapsed ? null : (
               <span className="truncate text-[10px] font-medium tracking-[0.02em] text-[color:var(--color-muted-foreground)]">
-                {automationMode}
+                {enumLabel(automationMode)}
               </span>
             )}
           </div>

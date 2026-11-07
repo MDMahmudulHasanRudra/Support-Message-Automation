@@ -1,6 +1,7 @@
 import { PLATFORM_LOG_CUSTOMER, prisma as globalPrisma } from "@support-automation/db";
 import { Badge, EmptyState, PageHeader, Table, Td, Th } from "@/components/ui";
 import { requireOperatorPage } from "@/server/platform/auth";
+import { enumLabel } from "@/lib/displayLabels";
 
 export const metadata = { title: "Activity" };
 
@@ -29,7 +30,7 @@ export default async function PlatformActivityPage() {
                 <Td>
                   <span className="flex items-center gap-2">
                     {r.level !== "INFO" ? <Badge color={r.level === "ERROR" ? "red" : "yellow"}>{r.level}</Badge> : null}
-                    {r.message}
+                    {/^[A-Z0-9_]+$/.test(r.message) ? enumLabel(r.message) : r.message}
                   </span>
                 </Td>
                 <Td className="max-w-md truncate font-mono text-[11px] text-[color:var(--color-muted-foreground)]">{r.metadata ? JSON.stringify(r.metadata) : ""}</Td>

@@ -338,7 +338,7 @@ export function PostComposer({
           <Button type="submit" name="intent" value="save" loading={pending}>
             Save draft
           </Button>
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2">
             <Field label="Reviewer (optional)" htmlFor="reviewer">
               <Input id="reviewer" name="reviewer" placeholder="username" className="w-40" />
             </Field>

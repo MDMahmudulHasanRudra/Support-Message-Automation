@@ -1,7 +1,8 @@
 import Link from "@/components/ProjectLink";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { Badge, type BadgeColor, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
 import { formatDateTime } from "@/lib/date";
+import { enumLabel } from "@/lib/displayLabels";
 
 export interface MessageRow {
   id: string;
@@ -30,69 +31,59 @@ export function MessagesTable({ messages, hasActiveFilters }: { messages: Messag
       <thead>
         <tr>
           <Th>Time</Th>
-          <Th>Account</Th>
-          <Th>Group</Th>
+          <Th>Conversation</Th>
           <Th>Sender</Th>
-          <Th>Direction</Th>
           <Th>Message</Th>
-          <Th>Status</Th>
-          <Th>Rule Matched</Th>
-          <Th>Decision</Th>
-          <Th>Auto-Reply</Th>
-          <Th>Notification</Th>
+          <Th>Result</Th>
           <Th>{null}</Th>
         </tr>
       </thead>
       <tbody>
         {messages.map((m) => (
           <tr key={m.id}>
-            <Td className="whitespace-nowrap font-[family-name:var(--font-mono)] text-xs">
-              {formatDateTime(m.timestampWa)}
+            <Td className="w-28 text-xs tabular-nums text-[color:var(--color-muted-foreground)]">{formatDateTime(m.timestampWa)}</Td>
+            <Td className="max-w-52">
+              <p className="truncate font-medium" title={m.groupName ?? undefined}>{m.groupName ?? "Personal chat"}</p>
+              <p className="truncate text-xs text-[color:var(--color-muted-foreground)]">{m.accountLabel}</p>
             </Td>
-            <Td>{m.accountLabel}</Td>
-            <Td>{m.groupName ?? "—"}</Td>
-            <Td>
-              {m.senderName ?? m.senderPhone}
+            <Td className="max-w-40">
+              <span className="break-words">{m.senderName ?? m.senderPhone}</span>
               {m.isFromTeamMember ? (
                 <span className="ml-1.5">
                   <Badge color="blue">Team</Badge>
                 </span>
               ) : null}
             </Td>
-            <Td>{m.direction}</Td>
             <Td className="max-w-xs">
               <Tooltip content={<span className="whitespace-pre-wrap">{m.body}</span>}>
-                <span className="block max-w-xs truncate">{m.body}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {m.direction === "OUTGOING" ? (
+                    <ArrowUpRight className="size-3.5 shrink-0 text-[color:var(--color-accent-fg)]" aria-label="Sent by us" />
+                  ) : (
+                    <ArrowDownLeft className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-label="Received" />
+                  )}
+                  <span className="truncate">{m.body}</span>
+                </span>
               </Tooltip>
             </Td>
-            <Td>
-              <Badge color={processingStatusColor(m.processingStatus)} dot>
-                {m.processingStatus}
-              </Badge>
-            </Td>
-            <Td>{m.ruleName ?? "—"}</Td>
-            <Td>{m.decision ? <Badge color={decisionColor(m.decision)}>{m.decision}</Badge> : "—"}</Td>
-            <Td>
-              {m.autoReplyStatus ? (
-                <Badge color={autoReplyStatusColor(m.autoReplyStatus)} dot>
-                  {m.autoReplyStatus}
+            <Td className="max-w-72">
+              <div className="flex flex-wrap gap-1">
+                <Badge color={processingStatusColor(m.processingStatus)} dot>
+                  {enumLabel(m.processingStatus)}
                 </Badge>
-              ) : (
-                "—"
-              )}
-            </Td>
-            <Td>
-              {m.notifications.length === 0 ? (
-                "—"
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {m.notifications.map((n, i) => (
-                    <Badge key={i} color={notificationStatusColor(n.status)}>
-                      {n.type}: {n.status}
-                    </Badge>
-                  ))}
-                </div>
-              )}
+                {m.decision ? <Badge color={decisionColor(m.decision)}>{enumLabel(m.decision)}</Badge> : null}
+                {m.autoReplyStatus ? (
+                  <Badge color={autoReplyStatusColor(m.autoReplyStatus)} dot>
+                    Auto reply: {enumLabel(m.autoReplyStatus).toLowerCase()}
+                  </Badge>
+                ) : null}
+                {m.notifications.map((n, i) => (
+                  <Badge key={i} color={notificationStatusColor(n.status)}>
+                    {enumLabel(n.type)}: {enumLabel(n.status).toLowerCase()}
+                  </Badge>
+                ))}
+              </div>
+              {m.ruleName ? <p className="mt-1 truncate text-xs text-[color:var(--color-muted-foreground)]" title={m.ruleName}>Rule: {m.ruleName}</p> : null}
             </Td>
             <Td>
               <Link

@@ -161,11 +161,11 @@ export default async function NotificationTemplatesPage() {
               this page goes to your internal alerts group.
             </Alert>
           </div>
-          <div className="space-y-4">{customerFacing.map(render)}</div>
+          <div className="space-y-3">{customerFacing.map(render)}</div>
         </section>
       ) : null}
 
-      <section className="space-y-4">{internal.map(render)}</section>
+      <section className="space-y-3">{internal.map(render)}</section>
     </div>
   );
 }

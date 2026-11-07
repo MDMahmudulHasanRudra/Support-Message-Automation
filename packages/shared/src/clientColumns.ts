@@ -24,7 +24,7 @@ export interface ListColumn {
 
 export const CLIENT_LIST_COLUMNS: readonly ListColumn[] = [
   { key: "client", label: "Client", defaultVisible: true, locked: true, sort: "name" },
-  { key: "country", label: "Country", defaultVisible: true, sort: "country" },
+  { key: "country", label: "Country", defaultVisible: false, sort: "country" },
   { key: "phone", label: "Phone & WhatsApp", defaultVisible: true },
   { key: "service", label: "Service / plan", defaultVisible: true, needs: "subscriptions" },
   { key: "expiry", label: "Expires", defaultVisible: true, needs: "subscriptions", sort: "expiry" },

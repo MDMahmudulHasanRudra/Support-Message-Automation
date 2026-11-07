@@ -28,7 +28,7 @@ export default async function CsatSettingsPage() {
             <HelpSection title="Never">
               <p>
                 In a WhatsApp group or a Telegram group, to a team member or one of our own numbers, while automation is paused or in
-                MANUAL_ONLY, outside Messenger&apos;s and Instagram&apos;s 24-hour window, or twice to one customer inside the cooldown.
+                manual-only mode, outside Messenger&apos;s and Instagram&apos;s 24-hour window, or twice to one customer inside the cooldown.
                 Every survey that was not asked is listed with its reason in the report.
               </p>
             </HelpSection>

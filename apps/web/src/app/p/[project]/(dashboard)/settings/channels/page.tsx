@@ -24,7 +24,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
   const config = metaPlatformConfig();
   // One-click needs the server configured AND this workspace on META_ALLOWED_PROJECT_IDS (fails closed).
   const allowed = metaAllowedForProject(await activeProjectId());
-  const oneClick = { ok: config.ok && allowed, problems: config.ok ? (allowed ? [] : ["This workspace is not on META_ALLOWED_PROJECT_IDS."]) : config.problems };
+  const oneClick = { ok: config.ok && allowed, problems: config.ok && allowed ? [] : ["One-click Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Get Assist platform to enable it."] };
   // What is missing on the server is the platform administrator's business; only a Main Admin sees it.
   const problems = !oneClick.ok && (await hasPermission(session, "projects.manage")) ? oneClick.problems : null;
   const metaError = query.meta_error && query.meta_error in META_ERROR_TEXT ? META_ERROR_TEXT[query.meta_error as MetaOAuthErrorCode] : null;

@@ -7,6 +7,7 @@ import type { Prisma, RuleStatus, RuleType } from "@prisma/client";
 import { pageAccess } from "@/server/authorize";
 import { Button, FilterBar, HelpButton, HelpSection, Input, PageHeader, Select, ViewOnlyNotice } from "@/components/ui";
 import { formatDate } from "@/lib/date";
+import { enumLabel } from "@/lib/displayLabels";
 import { RULE_STATUS, RULE_TYPE, isRuleActionArray, isRuleConditions } from "@support-automation/shared";
 import { RulesTable, type RuleRow } from "./RulesTable";
 
@@ -39,15 +40,13 @@ export default async function RulesPage({ searchParams }: { searchParams: Promis
   const rows: RuleRow[] = rules.map((rule) => {
     const actions = isRuleActionArray(rule.actions) ? rule.actions : [];
     const conditions = isRuleConditions(rule.conditions) ? rule.conditions : {};
-    const trigger =
-      rule.matchType +
-      (rule.matchValue ? `: ${rule.matchValue}` : rule.keywords.length ? `: ${rule.keywords.join(", ")}` : "");
     return {
       id: rule.id,
       name: rule.name,
-      type: rule.type,
-      trigger,
-      actionsSummary: actions.map((a) => a.type).join(", ") || "—",
+      type: enumLabel(rule.type),
+      triggerKind: enumLabel(rule.matchType),
+      triggerValue: rule.matchValue || rule.keywords.join(", "),
+      actions: actions.map((a) => enumLabel(a.type)),
       priority: rule.priority,
       status: rule.status,
       executionCount: rule.executionCount,
@@ -146,25 +145,25 @@ export default async function RulesPage({ searchParams }: { searchParams: Promis
       {canManage ? null : <ViewOnlyNotice />}
 
       <FilterBar>
-        <form className="flex flex-wrap items-end gap-2" method="GET">
-          <Input name="search" placeholder="Search rule name…" defaultValue={search} className="w-56" />
-          <Select name="status" defaultValue={status ?? ""} className="w-40">
+        <form className="flex w-full flex-wrap items-center gap-2" method="GET">
+          <Input name="search" placeholder="Search rule name…" defaultValue={search} aria-label="Search rules" className="min-w-0 flex-1 basis-full sm:basis-64" />
+          <Select name="status" defaultValue={status ?? ""} aria-label="Status" className="sm:w-40">
             <option value="">All statuses</option>
             {RULE_STATUS.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {enumLabel(s)}
               </option>
             ))}
           </Select>
-          <Select name="type" defaultValue={type ?? ""} className="w-48">
+          <Select name="type" defaultValue={type ?? ""} aria-label="Type" className="sm:w-48">
             <option value="">All types</option>
             {RULE_TYPE.map((t) => (
               <option key={t} value={t}>
-                {t}
+                {enumLabel(t)}
               </option>
             ))}
           </Select>
-          <Button type="submit" size="sm">
+          <Button type="submit" variant="secondary">
             <Search className="size-3.5" aria-hidden />
             Filter
           </Button>
