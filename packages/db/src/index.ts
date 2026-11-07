@@ -541,6 +541,7 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
 const TENANT_PARENT: Readonly<Record<string, "user" | "project">> = {
   UserSession: "user",
   UserGoogleIdentity: "user",
+  PushDevice: "user",
   ProjectAccess: "project",
   ProjectFeature: "project",
 };

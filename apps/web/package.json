@@ -29,6 +29,7 @@
     "pdf-parse": "^2.4.5",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "web-push": "3.6.7",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "3.6.4",
     "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",

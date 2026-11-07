@@ -984,6 +984,7 @@ model User {
   googleSheetMembersEnded       GoogleSpreadsheetMember[]   @relation("GoogleSheetMemberEndedBy")
   /// Google identities this person proved are theirs by signing in with Google (Phase 4).
   googleIdentities              UserGoogleIdentity[]
+  pushDevices                   PushDevice[]
   googleSheetActivities         GoogleSheetActivity[]       @relation("GoogleSheetActivityUser")
   googleSheetWorkSessions       GoogleSheetWorkSession[]    @relation("GoogleSheetWorkSessionUser")
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
@@ -1086,6 +1087,7 @@ model UserSession {
   /// any other hostname. Null for sessions created before this column existed (accepted anywhere).
   hostname               String?
   /// Set when this is a RELQIVO operator's support session: it ends with that support session.
+  pushDevices            PushDevice[]
   supportAccessSessionId String?
   supportAccessSession   SupportAccessSession? @relation(fields: [supportAccessSessionId], references: [id], onDelete: Cascade)
 
@@ -8241,6 +8243,8 @@ model ConversationEvent {
 
   @@index([projectId, accountId, chatId, createdAt])
   @@index([channelConversationId, createdAt])
+  /// The inbox's live change check reads the newest event of one project.
+  @@index([projectId, createdAt])
 }
 
 /// One website visitor of one website chat widget (WEBSITE_CHAT.md). The id is the conversation's
@@ -9823,4 +9827,29 @@ model FollowUpEvent {
 
   @@index([followUpId, createdAt])
   @@index([projectId, createdAt])
+}
+
+/// One browser or phone that said yes to notifications (AGENT_APP.md). Belongs to a sign-in: ended sessions get nothing.
+model PushDevice {
+  id                     String      @id @default(cuid())
+  userId                 String
+  user                   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId              String
+  session                UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  endpoint               String      @unique
+  p256dh                 String
+  auth                   String
+  label                  String?
+  notifyAssigned         Boolean     @default(true)
+  notifyCustomerMessages Boolean     @default(true)
+  notifyMentions         Boolean     @default(true)
+  notifyWaiting          Boolean     @default(true)
+  showPreview            Boolean     @default(false)
+  failureCount           Int         @default(0)
+  lastSuccessAt          DateTime?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([sessionId])
 }

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { connection } from "next/server";
 import { ToastProvider } from "@/components/ui";
@@ -38,7 +39,9 @@ export async function generateMetadata(): Promise<Metadata> {
       "Rule-based WhatsApp support automation — message triage, escalation timers, and team notifications from one dashboard.",
     applicationName: brand.productName,
     robots: { index: false, follow: false },
-    icons: { icon: brand.iconUrl, apple: brand.iconUrl },
+    icons: { icon: brand.iconUrl, apple: brand.hasCustomIcon ? brand.iconUrl : "/app-icon-192.png" },
+    manifest: "/manifest.webmanifest",
+    appleWebApp: { capable: true, title: brand.productName, statusBarStyle: "default" },
   };
 }
 
@@ -46,8 +49,8 @@ export const viewport: Viewport = {
   // Both entries so the browser paints its own chrome to match whichever theme
   // the console is actually showing. Matches --color-background in globals.css.
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
-    { media: "(prefers-color-scheme: dark)", color: "#0b1220" },
+    { media: "(prefers-color-scheme: light)", color: "#083138" },
+    { media: "(prefers-color-scheme: dark)", color: "#083138" },
   ],
 };
 
@@ -78,6 +81,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <BrandingProvider value={brand}>
           <ToastProvider>{children}</ToastProvider>
+          <ServiceWorkerRegistrar />
         </BrandingProvider>
       </body>
     </html>

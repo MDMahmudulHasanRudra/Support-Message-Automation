@@ -53,6 +53,7 @@ export const SECURITY_HEADERS: Array<{ key: string; value: string }> = [
 export const HSTS_HEADER = { key: "Strict-Transport-Security", value: "max-age=86400" };
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["web-push"],
   // Lean, self-contained server bundle for the Docker runtime image
   // (see apps/web/Dockerfile) — avoids shipping the full node_modules tree.
   output: "standalone",

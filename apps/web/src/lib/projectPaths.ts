@@ -68,6 +68,11 @@ const OUTSIDE_PROJECT = [
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,
   /^\/_next\//,
+  // The installable app (AGENT_APP.md): files every address serves at its root.
+  /^\/manifest\.webmanifest$/,
+  /^\/sw\.js$/,
+  /^\/offline\.html$/,
+  /^\/app-icon-[a-z0-9-]+\.png$/,
 ];
 
 export function isOutsideProject(path: string): boolean {

@@ -119,6 +119,13 @@ services:
       SMART_IMPORT_PROCESSOR_DISABLED: ${SMART_IMPORT_PROCESSOR_DISABLED:-}
       INTEGRATIONS_PROCESSOR_DISABLED: ${INTEGRATIONS_PROCESSOR_DISABLED:-}
       SOCIAL_PROCESSOR_DISABLED: ${SOCIAL_PROCESSOR_DISABLED:-}
+      # Agent notifications (AGENT_APP.md). Empty keys = the option is simply not offered. Create them once with: npx web-push generate-vapid-keys
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      PUSH_PROCESSOR_DISABLED: ${PUSH_PROCESSOR_DISABLED:-}
+      # Instant inbox updates. "true" goes back to refreshing every four seconds.
+      INBOX_LIVE_DISABLED: ${INBOX_LIVE_DISABLED:-}
     volumes:
       - whatsapp_media:/app/media
     ports:

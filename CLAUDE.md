@@ -2954,6 +2954,10 @@ Feature `AUTO_ROUTING`, **off by default**, needs `UNIFIED_INBOX_V3` and its own
 - A group with an owner is never routed; groups are off unless switched on separately; one copy assigned means the other copy is not routed.
 - `enabledAt` keeps an old backlog from being handed out. An assignment is an `ASSIGNEE` event with `{ reason: "AUTO_ROUTING" }` in its context.
 
+### Instant inbox, phone app, notifications (`AGENT_APP.md`)
+
+Web app only: the worker and the message path do not know about any of it. `/p/<slug>/api/inbox/live` only says "something changed" (`server/inboxLive.ts`, one check per watched project; `LiveRefresh` falls back to the old 4 s refresh; `INBOX_LIVE_DISABLED=true`). Installable through `/manifest.webmanifest` and `public/sw.js`, which caches ONLY the offline page. Notifications (`PushDevice`, `server/pushProcessor.ts`, My account → This device, VAPID keys in env; no keys = not offered) rules worth not undoing: a push address must be a browser's own push service (`isAllowedPushEndpoint`: the server POSTs to it); a device belongs to a sign-in, so ending the session ends its alerts, and a support session never registers; every alert re-asks customer, project access, `messages.view`, module on, project active; no message text unless that device chose it; the position is in memory, so a restart starts from now, never replaying a backlog.
+
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 
 All Conversations (`/conversations/<all|whatsapp|messenger|instagram|telegram>`) plus Settings →
