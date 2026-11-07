@@ -1,4 +1,5 @@
 import { createSenderResolver, getDhakaDayRange, normalizePhoneNumber, whatsappIdKey } from "@support-automation/shared";
+import { slowJobMayRun } from "../messagesFirst.js";
 import { prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { currentProjectId, forEachProject } from "../project/context.js";
@@ -50,7 +51,7 @@ export function startIdentityReattributionProcessor(intervalMs = 30_000): NodeJS
   return setInterval(() => {
     if (processing) return;
     processing = true;
-    void forEachProject(LOOP_NAME, () => processNextReattribution())
+    void (slowJobMayRun(LOOP_NAME) ? forEachProject(LOOP_NAME, () => processNextReattribution()) : Promise.resolve())
       .catch((err) => console.error("[reattribution] unexpected error", err))
       .finally(() => {
         processing = false;

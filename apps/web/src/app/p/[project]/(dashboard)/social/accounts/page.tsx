@@ -55,11 +55,7 @@ export default async function SocialAccountsPage({ searchParams }: { searchParam
       {sp.connected ? <Alert tone="success" title={`Connected: ${sp.connected} account(s) ready${Number(sp.attention) ? `, ${sp.attention} need attention (see below)` : ""}.`} /> : null}
       {canManage && !ready.ok ? (
         <Alert tone="warning" title="Meta publishing is not available in this workspace yet.">
-          <ul className="list-disc pl-5 text-sm">
-            {ready.problems.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
+          <p className="text-sm">Connecting Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Get Assist platform to enable it.</p>
         </Alert>
       ) : null}
 

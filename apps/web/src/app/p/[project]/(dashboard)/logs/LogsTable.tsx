@@ -1,5 +1,6 @@
 "use client";
 
+import { enumLabel } from "@/lib/displayLabels";
 import Link from "@/components/ProjectLink";
 import { Fragment, useState } from "react";
 import { ChevronDown, ChevronRight, GitBranch } from "lucide-react";
@@ -81,7 +82,7 @@ export function LogsTable({ logs }: { logs: LogRow[] }) {
                   </Badge>
                 </Td>
                 <Td className="font-[family-name:var(--font-mono)] text-xs">{log.scope}</Td>
-                <Td className="max-w-xl">{log.message}</Td>
+                <Td className="max-w-xl">{/^[A-Z0-9_]+$/.test(log.message) ? enumLabel(log.message) : log.message}</Td>
                 <Td className="w-px">
                   {/* One click from "this line looks wrong" to every line that came from the same
                       incoming message — which is what the column was always for. */}

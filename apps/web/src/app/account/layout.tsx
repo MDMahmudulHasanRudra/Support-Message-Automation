@@ -21,16 +21,17 @@ export default async function AccountLayout({ children }: { children: React.Reac
   const [brand, portal] = await Promise.all([getBranding(), hasPermission(session, "projects.view")]);
   return (
     <div className="min-h-dvh bg-[var(--color-background)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
+      <header className="tide-field sticky top-0 z-10 bg-[var(--tide-bg)]">
         <div className="mx-auto flex h-14 max-w-4xl items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 items-center gap-3">
             <BrandMark className="size-7 shrink-0" />
-            <span className="truncate text-sm font-semibold">{brand.productName}</span>
+            <span className="hidden truncate text-sm font-semibold text-white sm:block">{brand.productName}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <NextLink href="/open" className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]">
               <ArrowLeft className="size-4" aria-hidden />
-              <span>Back to workspace</span>
+              <span className="sm:hidden">Back</span>
+              <span className="hidden sm:inline">Back to workspace</span>
             </NextLink>
             {portal ? (
               <NextLink href="/admin" className="hidden rounded-[var(--radius-sm)] px-2 py-1.5 text-sm text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)] sm:inline">

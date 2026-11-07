@@ -574,7 +574,10 @@ export async function updateTeamMember(
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.internalTeamMember.update({ where: { id }, data: input });
+      await tx.internalTeamMember.update({
+        where: { id },
+        data: { ...input, ...(input.whatsappId !== current.whatsappId ? { identityLinkSource: null, autoLinkOff: !input.whatsappId } : {}) },
+      });
       if (current.teamId !== input.teamId) await applyTeamChange(tx, id, input.teamId, new Date());
     });
   } catch (err) {
@@ -658,7 +661,7 @@ export async function linkWhatsAppSender(senderId: string, _prev: LinkSenderStat
   if (idConflict) return { error: `${idConflict.name} already has that WhatsApp ID, so it cannot also be ${member.name}'s.` };
 
   try {
-    await prisma.internalTeamMember.update({ where: { id: member.id }, data: { whatsappId: key } });
+    await prisma.internalTeamMember.update({ where: { id: member.id }, data: { whatsappId: key, identityLinkSource: null } });
   } catch (err) {
     if (isUniqueViolation(err)) return { error: "Someone already has that WhatsApp ID." };
     throw err;

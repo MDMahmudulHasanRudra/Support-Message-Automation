@@ -4,6 +4,7 @@ import { requireSession } from "@/server/auth";
 import { getMyAccount, getMyDevices, getMySecurityActivity } from "@/server/account";
 import { DevicesPanel, PasswordForm, PhotoForm, ProfileForm, TwoStepPanel, UsernameForm } from "./AccountForms";
 import { USERNAME_RULE_TEXT, MIN_PASSWORD_LENGTH } from "@/lib/userRules";
+import { ThisDevicePanel } from "@/components/pwa/ThisDevicePanel";
 
 /**
  * My account (ACCOUNT_SELF_SERVICE.md): the signed-in person's own profile, sign-in details, two-step
@@ -32,6 +33,11 @@ export async function AccountView() {
       ) : null}
 
       <div className="space-y-8">
+        <section id="this-device" className="scroll-mt-4">
+          <SectionHeader title="This device" description="The phone app and customer alerts, set separately on each browser or phone." />
+          <ThisDevicePanel disabled={readOnly} />
+        </section>
+
         <section>
           <SectionHeader title="Profile" description="How you appear to colleagues across every workspace." />
           <Card>

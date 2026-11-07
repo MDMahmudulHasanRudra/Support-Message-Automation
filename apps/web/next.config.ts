@@ -53,6 +53,7 @@ export const SECURITY_HEADERS: Array<{ key: string; value: string }> = [
 export const HSTS_HEADER = { key: "Strict-Transport-Security", value: "max-age=86400" };
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["web-push"],
   // Lean, self-contained server bundle for the Docker runtime image
   // (see apps/web/Dockerfile) — avoids shipping the full node_modules tree.
   output: "standalone",
@@ -69,6 +70,9 @@ const nextConfig: NextConfig = {
   // Do not announce the framework.
   poweredByHeader: false,
   experimental: {
+    // A page opened in the last 30 seconds comes back at once. Anything a person changes clears this
+    // straight away (revalidatePath), and live screens keep refreshing themselves. 30 is the shortest Next allows for `static`.
+    staleTimes: { dynamic: 30, static: 30 },
     // Default (1MB) is too small for a real Group Message Sender Excel upload.
     serverActions: {
       bodySizeLimit: "8mb",

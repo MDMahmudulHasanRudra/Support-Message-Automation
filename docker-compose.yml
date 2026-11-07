@@ -59,7 +59,7 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@example.com}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin}
     working_dir: /app/packages/db
-    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts"]
+    entrypoint: ["sh", "-c", "npx prisma migrate deploy && npx tsx prisma/seed.ts && npx tsx prisma/seedReleaseNotes.ts"]
     networks:
       - automation_net
 
@@ -75,6 +75,9 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # One Overview page asks about 30 questions at once; with the default of 10 the next person's click
+      # waited behind them. Well within postgres's max_connections of 100 alongside the worker's 10.
+      DATABASE_POOL_SIZE: ${APP_DATABASE_POOL_SIZE:-25}
       NODE_ENV: ${NODE_ENV:-production}
       TZ: ${TZ:-Asia/Dhaka}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
@@ -119,6 +122,13 @@ services:
       SMART_IMPORT_PROCESSOR_DISABLED: ${SMART_IMPORT_PROCESSOR_DISABLED:-}
       INTEGRATIONS_PROCESSOR_DISABLED: ${INTEGRATIONS_PROCESSOR_DISABLED:-}
       SOCIAL_PROCESSOR_DISABLED: ${SOCIAL_PROCESSOR_DISABLED:-}
+      # Agent notifications (AGENT_APP.md). Empty keys = the option is simply not offered. Create them once with: npx web-push generate-vapid-keys
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      PUSH_PROCESSOR_DISABLED: ${PUSH_PROCESSOR_DISABLED:-}
+      # Instant inbox updates. "true" goes back to refreshing every four seconds.
+      INBOX_LIVE_DISABLED: ${INBOX_LIVE_DISABLED:-}
     volumes:
       - whatsapp_media:/app/media
     ports:

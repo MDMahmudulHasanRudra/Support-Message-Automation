@@ -46,6 +46,7 @@ import type {
   StoreMessageRef,
   WhatsAppProvider,
 } from "../WhatsAppProvider.js";
+import type { ContactIdentityPair } from "../WhatsAppProvider.js";
 import {
   type ChatHistoryRead,
   chooseSendRoute,
@@ -459,6 +460,7 @@ export function toRawIncomingMessage(accountId: string, message: WaMessage): Raw
     // lines below has always split the domain off; this one was simply missed.
     senderPhone: stripJidDomain(senderJid),
     senderJid,
+    senderPhoneEvidence: phoneOnContact(message.sender),
     // `notifyName` is the push name carried in the message itself — present for an unsaved LID
     // contact whose contact object has none. `formattedName` is last because it is often just the
     // number back again.
@@ -642,6 +644,16 @@ const MIN_FIRST_CODE_TIMEOUT_MS = 240_000;
  */
 const LINK_WINDOW_MS = 300_000;
 
+
+/**
+ * The phone number on a sender's contact details, when WhatsApp includes it beside a private ID. Passive: read from
+ * the event already delivered.
+ */
+function phoneOnContact(sender: unknown): string | null {
+  const value = (sender as { phoneNumber?: string | { _serialized?: string } } | null | undefined)?.phoneNumber;
+  const text = typeof value === "string" ? value : value?._serialized;
+  return text && /@c\.us$/.test(text) ? text : null;
+}
 
 export class OpenWAProvider implements WhatsAppProvider {
   private client: Client | null = null;
@@ -2772,6 +2784,45 @@ export class OpenWAProvider implements WhatsAppProvider {
       return { ok: true, messages, undecrypted, reachedSince: reachedStart || oldestMs() <= sinceMs, earlierPagesLoaded: pages };
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  /**
+   * Who each private WhatsApp ID is, from what WhatsApp Web already holds in this page: its contact list and
+   * group members. Read-only and local: nothing is asked of WhatsApp's servers. A field a version of WhatsApp Web
+   * does not carry simply finds nothing. Null = could not read.
+   */
+  async readContactIdentities(): Promise<ContactIdentityPair[] | null> {
+    const client = this.client;
+    if (!client) return null;
+    try {
+      return await withTimeout(
+        client.getPage().evaluate(() => {
+          type Wid = string | { _serialized?: string } | null | undefined;
+          interface PageContact { id?: Wid; phoneNumber?: Wid; lid?: Wid; pushname?: string; name?: string }
+          interface PageStore<T> { getModelsArray?: () => T[]; models?: T[] }
+          const all = <T,>(store: PageStore<T> | undefined): T[] => (store ? (store.getModelsArray?.() ?? store.models ?? []) : []);
+          const text = (wid: Wid): string => (typeof wid === "string" ? wid : String(wid?._serialized ?? ""));
+          const store = (globalThis as unknown as {
+            Store?: { Contact?: PageStore<PageContact>; GroupMetadata?: PageStore<{ participants?: PageStore<PageContact> }> };
+          }).Store;
+          const found = new Map<string, { lid: string; phone: string; name: string | null }>();
+          const look = (c: PageContact) => {
+            const id = text(c.id);
+            const phone = text(c.phoneNumber);
+            const lid = text(c.lid);
+            const pair = id.endsWith("@lid") && phone.endsWith("@c.us") ? [id, phone] : id.endsWith("@c.us") && lid.endsWith("@lid") ? [lid, id] : null;
+            if (pair && found.size < 50_000) found.set(pair[0]!, { lid: pair[0]!.split("@")[0]!, phone: pair[1]!.split("@")[0]!, name: c.pushname || c.name || null });
+          };
+          all(store?.Contact).forEach(look);
+          for (const group of all(store?.GroupMetadata)) all(group.participants).forEach(look);
+          return [...found.values()];
+        }),
+        30_000,
+        "readContactIdentities",
+      );
+    } catch {
+      return null;
     }
   }
 

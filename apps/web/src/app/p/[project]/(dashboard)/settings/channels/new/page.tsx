@@ -1,4 +1,6 @@
 import { CHANNEL_TYPES, CHANNELS, isChannelType } from "@support-automation/shared";
+import { redirect } from "next/navigation";
+import { projectPath } from "@/server/projectPaths";
 import Link from "@/components/ProjectLink";
 import { Card, PageHeader } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
@@ -31,16 +33,14 @@ export default async function NewChannelPage({ searchParams }: { searchParams: P
     );
   }
 
+  // A website chat widget lives in its own module (WEBSITE_CHAT.md).
+  if (type === "WEBCHAT") redirect(await projectPath("/website-chat/widgets/new"));
   const def = CHANNELS[type];
   return (
     <div>
       <PageHeader
-        title={type === "WEBCHAT" ? "Create a website chat widget" : `Connect ${def.label}`}
-        description={
-          type === "WEBCHAT"
-            ? "Get Assist's own chat widget for your website — no outside account or password needed. Name it and list your website; next you design it, preview it and get the one-line install code."
-            : `Connect a ${def.accountNoun}. Credentials are checked with the provider before anything is saved, stored encrypted, and never shown again.`
-        }
+        title={`Connect ${def.label}`}
+        description={`Connect a ${def.accountNoun}. Credentials are checked with the provider before anything is saved, stored encrypted, and never shown again.`}
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card>

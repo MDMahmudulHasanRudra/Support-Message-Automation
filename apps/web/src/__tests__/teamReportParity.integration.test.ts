@@ -131,6 +131,12 @@ beforeAll(async () => {
   current = { userId: u.id, username: u.username, email: u.email!, name: "Parity" } as Session;
   const created = await createProjectWithDefaults({ name: `Parity ${tag}`, slug: `parity-${tag}`, status: "ACTIVE", creatorUserId: u.id }, rawPrisma);
   ids.project = created.id;
+  // The flag is on by default since 7 Nov 2026; these tests are about the report with it off.
+  await rawPrisma.projectFeature.upsert({
+    where: { projectId_key: { projectId: ids.project, key: "UNIFIED_REPORTING" } },
+    update: { enabled: false },
+    create: { projectId: ids.project, key: "UNIFIED_REPORTING", enabled: false },
+  });
   ids.slug = created.slug;
   const pid = { projectId: created.id };
 

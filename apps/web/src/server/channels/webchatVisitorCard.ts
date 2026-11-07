@@ -19,6 +19,13 @@ import { activeProjectId } from "@/server/projectContext";
  * typed email is shown as a POSSIBLE match, never as who the visitor is.
  */
 export interface WebchatVisitorCard {
+  /** A number the visitor typed: never proof of who they are, never used to find a client or an order. */
+  typedPhone: string | null;
+  answers: Array<{ label: string; value: string }>;
+  arrived: { firstPageUrl: string | null; referrer: string | null; campaign: string | null };
+  seenOn: string | null;
+  visitCount: number;
+  startedFrom: string | null;
   name: string | null;
   email: string | null;
   phone: string | null;
@@ -50,7 +57,7 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
   if (!conversation) return null;
   const visitor = await prisma.webChatVisitor.findFirst({
     where: { id: conversation.externalThreadId, connectionId: conversation.connectionId },
-    select: { name: true, email: true, phone: true, verifiedExternalId: true, pageUrl: true, typingAt: true, createdAt: true, lastSeenAt: true },
+    select: { startedFrom: true, typedPhone: true, customAnswers: true, firstPageUrl: true, referrer: true, utmSource: true, utmMedium: true, utmCampaign: true, browser: true, os: true, device: true, language: true, visitCount: true, name: true, email: true, phone: true, verifiedExternalId: true, pageUrl: true, typingAt: true, createdAt: true, lastSeenAt: true },
   });
   if (!visitor) return null;
 
@@ -61,6 +68,12 @@ export async function getWebchatVisitorCard(session: Session, conversationId: st
   const { clients, orders } = await lookupCustomerRecords(session, { email, phone, verified });
 
   return {
+    typedPhone: visitor.typedPhone,
+    answers: Array.isArray(visitor.customAnswers) ? (visitor.customAnswers as Array<{ label: string; value: string }>) : [],
+    arrived: { firstPageUrl: visitor.firstPageUrl, referrer: visitor.referrer, campaign: [visitor.utmSource, visitor.utmMedium, visitor.utmCampaign].filter(Boolean).join(" / ") || null },
+    seenOn: [visitor.device, visitor.os, visitor.browser, visitor.language].filter(Boolean).join(" · ") || null,
+    visitCount: visitor.visitCount,
+    startedFrom: visitor.startedFrom,
     name: visitor.name,
     email: visitor.email,
     phone,

@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui";
+import { ChevronDown } from "lucide-react";
 import { ChartCard, StackedBar } from "@/components/charts";
 import {
   REPLY_CATEGORIES_OF_REPLIES,
@@ -66,7 +67,7 @@ export function ReliabilitySection({
 }) {
   const answered = REPLY_CATEGORIES_OF_REPLIES.reduce((sum, c) => sum + response.firstReplyBy[c], 0) + response.firstReplyBy.UNCLASSIFIED;
   return (
-    <section className="mt-5 grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+    <section className="mt-5 grid grid-cols-1 items-start gap-3.5 lg:grid-cols-2">
       <ChartCard
         title="How customers were answered"
         description="Who sent the reply that ended each wait, then three measures, each defined once. None of them changes a figure above."
@@ -81,13 +82,22 @@ export function ReliabilitySection({
           <LineGroups lines={responseLines(response).filter((line) => line.section !== "First reply came from")} />
         </div>
       </ChartCard>
-      <Card className="p-5">
-        <h2 className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Reporting reliability</h2>
-        <p className="mb-4 mt-1 text-[13px] text-[color:var(--color-muted-foreground)]">
-          What this period&apos;s figures were built from, as counts. No accuracy score is given: any weighting of these
-          would be a judgement, not a measurement.
-        </p>
+      <Card className="!p-0">
+        <details className="group/reliability">
+          <summary className="flex cursor-pointer list-none items-start gap-3 rounded-[var(--radius-xl)] p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 flex-1">
+              <span className="block text-[15px] font-semibold text-[color:var(--color-foreground)]">Reporting reliability</span>
+              <span className="mt-1 block text-[13px] text-[color:var(--color-muted-foreground)]">
+                What this period&apos;s figures were built from, as counts. No accuracy score is given: any weighting of these
+                would be a judgement, not a measurement.
+              </span>
+            </span>
+            <ChevronDown className="mt-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform group-open/reliability:rotate-180" aria-hidden />
+          </summary>
+          <div className="px-5 pb-5">
         <LineGroups lines={extraLines?.length ? [...reliabilityLines(reliability), ...extraLines] : reliabilityLines(reliability)} />
+          </div>
+        </details>
       </Card>
     </section>
   );

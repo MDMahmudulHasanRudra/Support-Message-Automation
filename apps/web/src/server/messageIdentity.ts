@@ -2,6 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db";
 import {
   createReportClassifier,
+  pickNumberOperator,
+  type NumberOperatorPeriod,
   createSenderResolver,
   INTELLIGENCE_SQL_PREFILTER,
   normalizePhoneNumber,
@@ -164,6 +166,58 @@ export async function loadReportSenderResolver(): Promise<SenderResolver> {
 }
 
 /**
+ * Who answers from each of our numbers on their phone (TEAM_AUTOMATION.md). Nothing set up = no function, and the
+ * classifier behaves exactly as it always did. Several people on one number are told apart by the roster.
+ */
+async function loadNumberOperators(projectId: string): Promise<((ownSenderId: string, at: number) => string | null) | undefined> {
+  const periods = await prisma.whatsAppNumberOperator.findMany({ select: { accountId: true, teamMemberId: true, startedAt: true, endedAt: true } });
+  if (periods.length === 0) return undefined;
+  const accountIds = [...new Set(periods.map((p) => p.accountId))];
+  const [accounts, sent, duty] = await Promise.all([
+    prisma.whatsAppAccount.findMany({ select: { id: true, phoneNumber: true } }),
+    prisma.$queryRaw<Array<{ accountId: string; sender: string }>>`
+      SELECT DISTINCT m."accountId", m."senderPhone" AS sender FROM "Message" m
+      WHERE m."projectId" = ${projectId} AND m."direction" = 'OUTGOING' AND m."accountId" = ANY(${accountIds})
+        AND m."chatId" LIKE '%@g.us' AND m."senderPhone" <> split_part(m."chatId", '@', 1)`,
+    prisma.dutyAssignment.findMany({
+      where: { teamMemberId: { in: [...new Set(periods.map((p) => p.teamMemberId))] }, status: "DUTY" },
+      select: { teamMemberId: true, dutyDate: true, shiftStartMinute: true, shiftEndMinute: true },
+    }),
+  ]);
+  const accountOfSender = new Map<string, string>();
+  for (const account of accounts) {
+    const digits = normalizePhoneNumber(account.phoneNumber ?? "");
+    if (digits) accountOfSender.set(digits, account.id);
+  }
+  for (const row of sent) accountOfSender.set(row.sender, row.accountId);
+  const byAccount = new Map<string, NumberOperatorPeriod[]>();
+  for (const p of periods) {
+    const list = byAccount.get(p.accountId) ?? [];
+    list.push({ memberId: p.teamMemberId, startedAt: p.startedAt?.getTime() ?? null, endedAt: p.endedAt?.getTime() ?? null });
+    byAccount.set(p.accountId, list);
+  }
+  const dutyByMemberDay = new Map<string, Array<{ start: number | null; end: number | null }>>();
+  for (const row of duty) {
+    const key = `${row.teamMemberId}|${row.dutyDate.toISOString().slice(0, 10)}`;
+    dutyByMemberDay.set(key, [...(dutyByMemberDay.get(key) ?? []), { start: row.shiftStartMinute, end: row.shiftEndMinute }]);
+  }
+  const onDuty = (memberId: string, at: number): boolean => {
+    const local = new Date(at + 6 * 3_600_000);
+    const minute = local.getUTCHours() * 60 + local.getUTCMinutes();
+    const shifts = dutyByMemberDay.get(`${memberId}|${local.toISOString().slice(0, 10)}`) ?? [];
+    return shifts.some(({ start, end }) => {
+      if (start === null || end === null) return true;
+      return end > start ? minute >= start && minute < end : minute >= start || minute < end;
+    });
+  };
+  const onlyAccount = accounts.length === 1 ? accounts[0]!.id : null;
+  return (ownSenderId, at) => {
+    const accountId = accountOfSender.get(ownSenderId) ?? onlyAccount;
+    return accountId ? pickNumberOperator(byAccount.get(accountId) ?? [], at, onDuty) : null;
+  };
+}
+
+/**
  * The report identity for a project: the whole roster, our own numbers' ids, and the login → team
  * member links. One instance per report load.
  */
@@ -175,5 +229,5 @@ export async function loadReportIdentity(projectId: string): Promise<ReportIdent
   // The login → member link as it stands now (a link is not dated; re-linking a login moves its past
   // dashboard replies to the new member — the change is in System Logs).
   const memberByUserId = new Map(members.filter((m) => m.userId).map((m) => [m.userId!, { id: m.id, attributeFrom: m.attributeFrom }]));
-  return createReportClassifier(createSenderResolver(members), ownIds, memberByUserId);
+  return createReportClassifier(createSenderResolver(members), ownIds, memberByUserId, await loadNumberOperators(projectId));
 }

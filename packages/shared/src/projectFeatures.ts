@@ -174,7 +174,7 @@ export const PROJECT_FEATURES = [
     // Additive and new: no project gets it until a Main Admin switches it on. WhatsApp Chat is its
     // own feature and is unaffected either way.
     defaultEnabled: false,
-    routes: ["/conversations", "/settings/channels"],
+    routes: ["/conversations", "/settings/channels", "/website-chat"],
     permissionKeys: ["channels.view", "channels.manage", "conversations.reply"],
     workerEffect:
       "Messenger, Instagram and Telegram messages stop being processed and replies stop being sent; webhooks are still recorded so nothing is lost. Connections and conversation history are kept.",
@@ -208,7 +208,7 @@ export const PROJECT_FEATURES = [
     description:
       "Team Report additions: personal-chat and combined scopes, run information, data-quality detail, customer-specific replies, and the identity-change impact preview. Off = the Team Report exactly as before.",
     // A presentation switch like CHAT_UI_V2: it owns no page and no key, so it never blocks a page.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: [],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it; the reports read stored messages.",

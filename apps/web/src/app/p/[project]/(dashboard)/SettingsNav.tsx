@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "@/components/ProjectLink";
 import type { SettingsSection } from "./navigation";
 
@@ -23,6 +24,14 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
       .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
       .sort((a, b) => b.length - a.length)[0] ?? null;
 
+  // The rail scrolls by itself, so the page you are on has to be in view when it opens.
+  const rail = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = rail.current;
+    const link = box?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (box && link) box.scrollTop = link.offsetTop - box.clientHeight / 2;
+  }, [activeHref]);
+
   return (
     <nav aria-label="Settings" className="mb-6 lg:mb-0">
       <p className="mb-3 text-[15px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">Settings</p>
@@ -34,6 +43,7 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
             <Link
               key={link.href}
               href={link.href}
+              intent
               aria-current={link.href === activeHref ? "page" : undefined}
               className={`shrink-0 rounded-full px-3 py-1 text-xs transition-colors ${
                 link.href === activeHref
@@ -47,11 +57,11 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
         )}
       </div>
 
-      {/* Wide screens: grouped by area, each group with a line saying what it covers. */}
-      <div className="hidden space-y-5 lg:block">
+      {/* Wide screens: grouped by area, as tall as the window at most. */}
+      <div ref={rail} className="relative hidden max-h-[calc(100dvh-9.5rem)] space-y-4 overflow-y-auto pr-1 lg:block">
         {sections.map((section) => (
           <div key={section.label}>
-            <p className="px-3 text-[11px] font-medium uppercase tracking-[0.06em] text-[color:var(--color-subtle-foreground)]">
+            <p title={section.description} className="px-3 text-[12px] font-semibold text-[color:var(--color-foreground)]">
               {section.label}
             </p>
             <ul className="mt-1.5 space-y-0.5">
@@ -62,6 +72,7 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
                   <li key={link.href}>
                     <Link
                       href={link.href}
+                      intent
                       aria-current={active ? "page" : undefined}
                       className={`group relative flex items-center gap-2.5 rounded-[var(--radius-md)] py-1.5 pr-2.5 pl-3 text-[13px] transition-[background-color,color] duration-[var(--duration-fast)] ${
                         active
@@ -87,9 +98,6 @@ export function SettingsNav({ sections, pathname }: { sections: SettingsSection[
                 );
               })}
             </ul>
-            <p className="mt-1 px-3 text-[11px] leading-relaxed text-[color:var(--color-subtle-foreground)]">
-              {section.description}
-            </p>
           </div>
         ))}
       </div>

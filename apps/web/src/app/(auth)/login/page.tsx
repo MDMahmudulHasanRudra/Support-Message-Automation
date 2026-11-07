@@ -8,9 +8,9 @@ import { login, type LoginState } from "./actions";
 const initialState: LoginState = {};
 
 const CAPABILITIES = [
-  { title: "Rule-based triage", detail: "Every inbound message matched against priority-ordered rules." },
-  { title: "Escalation timers", detail: "SLA clocks that page the right person before a customer chases." },
-  { title: "Anti-spam limits", detail: "Per-client cooldowns and global rate caps on every auto-reply." },
+  { title: "One inbox", detail: "WhatsApp groups and chats, Messenger, Instagram, Telegram and your website." },
+  { title: "Nothing slips", detail: "Waits, assignments and alerts reach the right person before a customer has to chase." },
+  { title: "Safe sending", detail: "Rate limits and cooldowns on every automatic reply, and a kill switch." },
 ];
 
 export default function LoginPage() {
@@ -29,7 +29,7 @@ export default function LoginPage() {
     <main className="flex min-h-dvh bg-[var(--color-background)]">
       {/* Left panel — the one place in the product that carries brand rather than
           data, so it is allowed the dark treatment the console itself avoids. */}
-      <aside className="relative hidden w-[46%] max-w-[620px] flex-col justify-between overflow-hidden bg-[#0b0b0d] p-12 text-[#fafafa] lg:flex">
+      <aside className="relative hidden w-[46%] max-w-[620px] flex-col justify-between overflow-hidden bg-[var(--tide-bg)] p-12 text-white lg:flex">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 opacity-70"
@@ -58,7 +58,7 @@ export default function LoginPage() {
           </div>
         ) : (
         <div className="relative flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-[var(--radius-md)] bg-[#fafafa] text-[#0b0b0d]">
+          <span className="flex size-9 items-center justify-center rounded-[var(--radius-md)] bg-white text-[var(--tide-bg)]">
             <svg viewBox="0 0 24 24" fill="none" className="size-[62%]" aria-hidden>
               <path d="M5.5 16.5V8.2A2.7 2.7 0 0 1 8.2 5.5h4.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
               <path d="M18.5 7.5v8.3a2.7 2.7 0 0 1-2.7 2.7h-4.6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -72,22 +72,22 @@ export default function LoginPage() {
 
         <div className="relative max-w-md">
           <h2 className="text-[40px] font-semibold leading-[1.08] tracking-[-0.03em] [text-wrap:balance]">{brand.loginHeadline}</h2>
-          <p className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-white/60">{brand.loginSubheading}</p>
+          <p className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-white/75">{brand.loginSubheading}</p>
 
-          <dl className="mt-10 space-y-4 border-t border-white/10 pt-8">
+          <dl className="mt-10 space-y-4 border-t border-white/15 pt-8">
             {CAPABILITIES.map((item) => (
               <div key={item.title} className="flex gap-3">
-                <span className="mt-1.5 size-1 shrink-0 rounded-full bg-white/40" aria-hidden />
+                <span className="mt-1.5 size-1 shrink-0 rounded-full bg-[var(--marigold)]" aria-hidden />
                 <div>
                   <dt className="text-[13px] font-medium">{item.title}</dt>
-                  <dd className="mt-0.5 text-[13px] leading-relaxed text-white/45">{item.detail}</dd>
+                  <dd className="mt-0.5 text-[13px] leading-relaxed text-white/65">{item.detail}</dd>
                 </div>
               </div>
             ))}
           </dl>
         </div>
 
-        <p className="relative text-xs text-white/30">
+        <p className="relative text-xs text-white/55">
           &copy; {new Date().getFullYear()} {brand.productName}
         </p>
       </aside>

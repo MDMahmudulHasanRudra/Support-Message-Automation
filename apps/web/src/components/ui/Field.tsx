@@ -12,7 +12,7 @@ import {
 } from "react";
 
 const fieldBase =
-  "w-full rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,background-color] duration-[var(--duration-fast)] ease-[var(--ease-out)] placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12 disabled:cursor-not-allowed disabled:bg-[var(--color-neutral-bg)] disabled:opacity-60 disabled:hover:border-[var(--color-border-strong)]";
+  "field-fill rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-sm text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)] transition-[border-color,box-shadow,background-color] duration-[var(--duration-fast)] ease-[var(--ease-out)] placeholder:text-[color:var(--color-muted-foreground)] hover:border-[var(--color-muted-foreground)]/60 focus-visible:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--color-primary)]/12 disabled:cursor-not-allowed disabled:bg-[var(--color-neutral-bg)] disabled:opacity-60 disabled:hover:border-[var(--color-border-strong)]";
 
 /**
  * `ref` is declared explicitly on both of these.

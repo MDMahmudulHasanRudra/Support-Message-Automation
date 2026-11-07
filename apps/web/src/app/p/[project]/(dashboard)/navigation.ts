@@ -1,3 +1,4 @@
+import { Code2 as InstallIcon, RadioTower as LiveBoardIcon, UsersRound as VisitorsIcon } from "lucide-react";
 import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
@@ -382,6 +383,17 @@ export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: R
 // escalations, team activity) first, setup/config areas checked occasionally next, advanced
 // analytical modules and system admin — checked rarely — last.
 export const NAV_GROUPS: NavGroup[] = [
+  // The website chat widget's own module (WEBSITE_CHAT.md); the Omnichannel feature hides it when off.
+  {
+    label: "Website Chat",
+    icon: Globe,
+    links: [
+      { href: "/website-chat", label: "Live board", icon: LiveBoardIcon },
+      { href: "/conversations/website", label: "Conversations", icon: MessagesSquare },
+      { href: "/website-chat/visitors", label: "Visitors", icon: VisitorsIcon },
+      { href: "/website-chat/widgets", label: "Widgets & install", icon: InstallIcon },
+    ],
+  },
   {
     label: "Support",
     icon: MessageCircleMore,
@@ -393,7 +405,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
       { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
       { href: "/conversations/telegram", label: "Telegram", icon: Send },
-      { href: "/conversations/website", label: "Website Chat", icon: Globe },
       {
         href: "/messages",
         label: "Messages",
@@ -504,6 +515,8 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Users,
     links: [
       { href: "/team-management", label: "Today", icon: Users },
+      { href: "/team-members", label: "Team Members", icon: UserCog },
+      { href: "/teams", label: "Teams", icon: Network },
       { href: "/team-management/schedule", label: "Roster", icon: CalendarDays },
       { href: "/team-management/leave", label: "Leave", icon: ClipboardList },
       { href: "/support-activity/team", label: "Team Performance", icon: Gauge },
@@ -525,8 +538,6 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/accounts", label: "Accounts", icon: Smartphone },
       { href: "/groups", label: "Groups", icon: Users },
-      { href: "/team-members", label: "Team Members", icon: UserCog },
-      { href: "/teams", label: "Teams", icon: Network },
       {
         href: "/group-message-sender",
         label: "Broadcast",
@@ -733,6 +744,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/settings/security", "security_settings.view"],
   ["/settings/google-sheets", "google_sheets.view"],
   ["/settings/channels", "channels.view"],
+  ["/website-chat/widgets", "channels.view"],
+  ["/website-chat", "messages.view"],
   ["/settings/email", "communications.manage_email"],
   ["/settings/clients/configuration", "clients.manage_settings"],
   ["/settings/clients", "clients.manage_settings"],

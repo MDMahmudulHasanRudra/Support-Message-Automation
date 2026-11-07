@@ -575,7 +575,6 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                           <th className="px-1 pb-2 font-medium">Date</th>
                           <th className="px-1 pb-2 font-medium">Amount</th>
                           <th className="px-1 pb-2 font-medium">Method</th>
-                          <th className="px-1 pb-2 font-medium">Receipt</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -585,11 +584,13 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                               {formatDay(p.receivedDate)}
                               {p.recordedBy ? <span className={`block text-[11px] ${muted}`}>by {p.recordedBy}</span> : null}
                             </td>
-                            <td className="whitespace-nowrap px-1 py-2 font-medium tabular-nums">{money(p.amount, p.currency)}</td>
+                            <td className="whitespace-nowrap px-1 py-2 font-medium tabular-nums">
+                              {money(p.amount, p.currency)}
+                              {p.receiptNumber ? <span className={`block font-mono text-[11px] font-normal ${muted}`}>{p.receiptNumber}</span> : null}
+                            </td>
                             <td className="px-1 py-2">
                               <Badge color="gray">{(PAYMENT_METHOD_LABELS[p.method as PaymentMethod] ?? p.method).split(" (")[0]}</Badge>
                             </td>
-                            <td className="whitespace-nowrap px-1 py-2 font-mono text-xs">{p.receiptNumber ?? "—"}</td>
                           </tr>
                         ))}
                       </tbody>

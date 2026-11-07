@@ -62,6 +62,7 @@ import { startEmailOutboxProcessor } from "./email/outboxProcessor.js";
 import { startBillingProcessor } from "./billing/billingProcessor.js";
 import { startPictureProcessor } from "./avatars/whatsappPictures.js";
 import { startIdentityReattributionProcessor } from "./teamManagement/reattribution.js";
+import { startTeamAutomationProcessor } from "./teamManagement/teamAutomation.js";
 import { startChannelAiProcessor } from "./channels/aiReply.js";
 import { startMetaConnectionHealthProcessor } from "./channels/metaHealth.js";
 
@@ -238,6 +239,7 @@ async function main() {
     // Report accuracy: brings the stored team-member stamps, Support Activity members and Duty History
     // in line after a roster identity change (teamManagement/reattribution.ts). Database only.
     startIdentityReattributionProcessor(),
+    startTeamAutomationProcessor(registry),
     startCommandProcessor(registry),
     startNotificationDispatcher({
       TEAMS: new TeamsProvider(),

@@ -1371,6 +1371,8 @@ figures, never changing one:
 - **Reliability is counts only.** Stored copies, logical messages, attribution strength,
   conflicts, gaps, incomplete and unverified days. Never an accuracy percentage; a test refuses one.
 
+**Team automation (`TEAM_AUTOMATION.md`, 7 Nov 2026).** Rules worth not undoing: a member added late must have their earlier work (the owner's explicit, serious rule), so `matchTeamMembersToWhatsApp` connects phone-only members to their LID from WhatsApp's own pairing or an exact unique name in 3+ groups, and anything weaker stays a suggestion; a wrong match makes a customer staff, so never loosen that rule. A reply typed on our own number's phone is credited through `WhatsAppNumberOperator` / `pickNumberOperator`, and with no operators the classifier is unchanged. The roster fills itself (`fillRosterFromPattern`) and only ever fills blanks.
+
 **Team filter (28 Sep 2026): a Team is "who was in it AT THAT MOMENT", not "who is in it now".**
 `Team` rows are created on `/teams` (WhatsApp module); `InternalTeamMember.teamId` is the person's
 current Team, and `TeamMembership` (member, team, `startedAt`, `endedAt`) is the history the report
@@ -1431,7 +1433,7 @@ one.**
   period can be trusted. Every `/reports/<id>` page and the Team Report show the strip, and every
   Excel Summary carries it.
   - "No stored message" is never "no communication".
-  - An unset verified-from means nothing is verified. Never default it.
+  - An unset verified-from now defaults to the day pause recording began (7 Oct 2026, the owner's decision, 7 Nov 2026). The strip is one quiet line, and a box only while a number is not collecting right now.
 - **Five Support Intelligence reports.** Executive, Employee Effectiveness, Support Cases, Human
   Response SLA and Customer Appreciation & Preference.
   - They read `Message` through ONE loader (`server/intelligence/loader.ts`) and ONE pure model
@@ -2554,8 +2556,8 @@ a narrower window: the "wait" definition must stay identical to Team Performance
 
 Nav lives in one place — `(dashboard)/navigation.ts`. A pinned "Overview" link, then ten
 **collapsible modules** (27 Sep 2026): Support (WhatsApp Chat, Messages, Escalations), Team (Today,
-Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups, Team Members,
-Teams, Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning, Conversation Learning, System, Users &
+Team Members, Teams, Roster, Leave, Team Performance, Activity Feed), Reports, WhatsApp (Accounts, Groups,
+Broadcast, Add Number to Groups, Groups Admin Maker), Automation, AI Learning, Conversation Learning, System, Users &
 Permissions, Release Notes. It used to be thirteen always-expanded groups under four department
 headings — about fifty rows. **Navigation only: no route, page or permission changed**, and the
 check that proved it compared the old and new `navGroupsFor()` across 323 role sets (every single
@@ -2896,6 +2898,9 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
 
 ### Website live chat (`WEBSITE_CHAT.md`)
 
+Its own sidebar module since 7 Nov 2026: Live board, Conversations, Visitors, Widgets & install. `classifyWebchatConversation` is the one reading of who a conversation waits on; a failed reply is not an answer. `typedPhone` (typed, never trusted, links to nothing) stays separate from `phone` (signed). The chat form is enforced on the server too. Presence is anonymous and in memory only. `allowAnyWebsite` never reaches a browser.
+
+
 `ChannelType.WEBCHAT`: our own widget as a fourth channel. The public API (`/api/webchat/<key>`) checks the
 listed Origin (fails closed) and a hashed visitor token, and only RECORDS a `ChannelInboundEvent`; the
 worker's inbound processor makes the conversation and the send queue marks a WEBCHAT reply SENT on store.
@@ -2953,6 +2958,10 @@ Feature `AUTO_ROUTING`, **off by default**, needs `UNIFIED_INBOX_V3` and its own
 - Permission is the existing resolver (`resolveRoleKeys`, `levelAllows`, page selection), never a second one. Leave always excludes; the roster applies only with "only on duty".
 - A group with an owner is never routed; groups are off unless switched on separately; one copy assigned means the other copy is not routed.
 - `enabledAt` keeps an old backlog from being handed out. An assignment is an `ASSIGNEE` event with `{ reason: "AUTO_ROUTING" }` in its context.
+
+### Instant inbox, phone app, notifications (`AGENT_APP.md`)
+
+Web app only: the worker and the message path do not know about any of it. `/p/<slug>/api/inbox/live` only says "something changed" (`server/inboxLive.ts`, one check per watched project; `LiveRefresh` falls back to the old 4 s refresh; `INBOX_LIVE_DISABLED=true`). Installable through `/manifest.webmanifest` and `public/sw.js`, which caches ONLY the offline page. Notifications (`PushDevice`, `server/pushProcessor.ts`, My account → This device, VAPID keys in env; no keys = not offered) rules worth not undoing: a push address must be a browser's own push service (`isAllowedPushEndpoint`: the server POSTs to it); a device belongs to a sign-in, so ending the session ends its alerts, and a support session never registers; every alert re-asks customer, project access, `messages.view`, module on, project active; no message text unless that device chose it; the position is in memory, so a restart starts from now, never replaying a backlog.
 
 ### Omnichannel inbox — Messenger, Instagram DM, Telegram (`apps/web/src/server/channels/`, `apps/worker/src/channels/`, `OMNICHANNEL.md`)
 

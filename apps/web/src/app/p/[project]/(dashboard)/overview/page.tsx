@@ -51,6 +51,7 @@ import {
 } from "@/components/ui";
 import type { ModuleHealthStatus } from "@/components/ui/DashboardModuleCard";
 import { getGroupsAwaitingReply } from "@/server/supportActivityReports";
+import { softCached } from "@/server/softCache";
 import { getClientOverview, getCommerceOverview, getGettingStarted, getSetupChecklist } from "@/server/moduleOverview";
 import {
   AreaChart,
@@ -176,14 +177,14 @@ export default async function OverviewPage({
     getSystemLogsSummary(nowMs),
     getSupportActivityDashboardSummary(nowMs),
     getRecentMessageActivity(nowMs),
-    getMessageLoadSeries(nowMs),
-    getDecisionMix(nowMs),
-    getDeliveryOutcomes(nowMs),
-    getBusiestGroups(nowMs),
-    getAiOutcomeSeries(nowMs),
-    getResponseTimeSeries(nowMs),
-    getSupportActorMix(nowMs),
-    getExecutiveLoad(nowMs),
+    softCached("overview:message-load", () => getMessageLoadSeries(nowMs)),
+    softCached("overview:decision-mix", () => getDecisionMix(nowMs)),
+    softCached("overview:delivery", () => getDeliveryOutcomes(nowMs)),
+    softCached("overview:busiest-groups", () => getBusiestGroups(nowMs)),
+    softCached("overview:ai-outcomes", () => getAiOutcomeSeries(nowMs)),
+    softCached("overview:response-times", () => getResponseTimeSeries(nowMs)),
+    softCached("overview:actor-mix", () => getSupportActorMix(nowMs)),
+    softCached("overview:executive-load", () => getExecutiveLoad(nowMs)),
     getGroupsAwaitingReply(new Date(nowMs)),
     getWorkerLivenessSummary(nowMs),
     getCollectionHealthSummary(nowMs),

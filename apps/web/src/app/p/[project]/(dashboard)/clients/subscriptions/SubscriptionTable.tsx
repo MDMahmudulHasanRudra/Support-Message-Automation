@@ -71,7 +71,7 @@ export function SubscriptionTable({
     });
 
   const th = "sticky top-0 z-[2] whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
-  const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px]";
+  const td = "border-b border-[var(--color-border)] px-3 py-3 align-middle text-[13px]";
   return (
     <>
       {canDelete && selected.size > 0 ? (
@@ -102,7 +102,7 @@ export function SubscriptionTable({
               <th className={th}>Days left</th>
               <th className={th}>Status</th>
               <th className={`${th} hidden md:table-cell`}>Sold by</th>
-              <th className={`${th} text-right`}>Actions</th>
+              <th className={`${th} right-0 z-[3] border-l text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -172,7 +172,7 @@ export function SubscriptionTable({
                       <span className={muted}>—</span>
                     )}
                   </td>
-                  <td className={`${td} text-right`}>
+                  <td className={`${td} sticky right-0 z-[1] border-l bg-[var(--color-surface)] text-right`}>
                     <div className="flex items-center justify-end gap-1.5">
                       <Link href={`/clients/${c.id}?tab=subscriptions`} className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-3 text-xs font-medium hover:bg-[var(--color-neutral-bg)]">
                         <Eye className="size-3.5" aria-hidden /> View

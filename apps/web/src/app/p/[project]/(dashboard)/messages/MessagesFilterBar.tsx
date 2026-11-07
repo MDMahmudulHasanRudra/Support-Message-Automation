@@ -1,5 +1,6 @@
 "use client";
 
+import { enumLabel } from "@/lib/displayLabels";
 import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { useTransition, type FormEvent, type ReactNode } from "react";
 
@@ -103,7 +104,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
             <option value="">All</option>
             {DECISIONS.map((d) => (
               <option key={d} value={d}>
-                {d}
+                {enumLabel(d)}
               </option>
             ))}
           </Select>
@@ -123,7 +124,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
             <option value="">All</option>
             {AUTO_REPLY_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {enumLabel(s)}
               </option>
             ))}
           </Select>
@@ -133,7 +134,7 @@ export function MessagesFilterBar({ defaults, options }: { defaults: MessageFilt
             <option value="">All</option>
             {NOTIFICATION_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {enumLabel(s)}
               </option>
             ))}
           </Select>

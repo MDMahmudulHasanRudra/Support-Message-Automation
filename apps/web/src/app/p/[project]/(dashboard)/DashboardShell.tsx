@@ -5,6 +5,7 @@ import { Bot, ChevronRight, Menu } from "lucide-react";
 import { ProjectSwitcher } from "@/components/ProjectSwitcher";
 import { ShellSearch, ShellUserMenu } from "@/components/shell/ShellParts";
 import { usePathname, useSearchParams } from "next/navigation";
+import { useNavigationEpoch } from "@/lib/navigationPending";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import NextLink from "next/link";
@@ -118,6 +119,7 @@ export function DashboardShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const pathname = stripProjectPrefix(usePathname());
+  const navigationEpoch = useNavigationEpoch();
   const { productName } = useBranding();
   // WhatsApp Chat on a phone is a full-screen app, not a page in a card: no padding around it, and
   // nothing floating over its composer (see the content div and the floating controls below).
@@ -241,9 +243,8 @@ export function DashboardShell({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <main id="main-content" className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-background)] lg:rounded-tl-[22px]">
           <div
-            // A new page animates in, but moving between conversations must not: the list keeps its scroll,
-            // search and filters, and the reply box its draft.
-            key={isChatPage ? "inbox" : pathname}
+            // Moving between conversations keeps the list's scroll, search and filters, and the reply box its draft.
+            key={isChatPage ? "inbox" : `${pathname}#${navigationEpoch}`}
             // In the workspace the project tabs sit above the page: full-height pages (the chat
             // inbox) read this to leave room for them.
             // On a phone (below `sm`) the chat drops the page padding and fills the screen under the
@@ -256,7 +257,7 @@ export function DashboardShell({
                   : undefined
             }
             data-bleed={fullBleed ? "" : undefined}
-            className={fullBleed ? "group/page w-full" : `group/page mx-auto w-full ${isChatPage ? "px-5 py-7 sm:px-8" : "max-w-[var(--space-content-max)] animate-fade-in-rise px-4 py-6 sm:px-7 sm:py-7"}`}
+            className={fullBleed ? "group/page w-full" : `group/page mx-auto w-full ${isChatPage ? "px-5 py-7 sm:px-8" : "max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7"}`}
           >
             {workspaceProjects && workspaceCurrent ? (
               <WorkspaceTabs projects={workspaceProjects} current={workspaceCurrent} pathname={pathname} search={searchParams} />

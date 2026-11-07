@@ -296,11 +296,6 @@ function RowActions({ c, caps, onAct, onMessage }: { c: ClientTableRow; caps: Re
       <Link href={`/clients/${c.id}`} className={icon} title="View profile" aria-label={`Open ${name}`}>
         <Eye className="size-4" />
       </Link>
-      {caps.canManageSubscriptions && !archived ? (
-        <Link href={`/clients/${c.id}?tab=subscriptions`} className={icon} title={c.subscription ? "Renew subscription" : "Add a subscription"} aria-label={c.subscription ? "Renew subscription" : "Add a subscription"}>
-          <RefreshCw className="size-4" />
-        </Link>
-      ) : null}
       {chat ? (
         <Link href={chat} className={`${icon} !text-[color:var(--color-success-fg)]`} title="Open the WhatsApp group" aria-label="Open WhatsApp group">
           <MessageCircle className="size-4" />
@@ -484,7 +479,7 @@ export function ClientsTable({
   };
 
   const th = "sticky top-0 whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
-  const td = "border-b border-[var(--color-border)] px-4 py-3.5 align-middle text-[13px]";
+  const td = "border-b border-[var(--color-border)] px-3 py-3 align-middle text-[13px]";
   const sticky = "sticky z-[1] bg-[var(--color-surface)] group-hover:bg-[var(--color-surface-sunken)]";
 
   return (
@@ -604,7 +599,7 @@ export function ClientsTable({
                   {columnLabels[k] ?? k}
                 </th>
               ))}
-              <th className={`${th} z-[2] text-right`}>
+              <th className={`${th} right-0 z-[3] border-l text-right`}>
                 <span className="sr-only">Actions</span>
               </th>
             </tr>
@@ -625,7 +620,7 @@ export function ClientsTable({
                     {cell(k, c, caps, today)}
                   </td>
                 ))}
-                <td className={`${td} group-hover:bg-[var(--color-surface-sunken)]`}>
+                <td className={`${td} ${sticky} right-0 border-l`}>
                   <RowActions
                     c={c}
                     caps={caps}

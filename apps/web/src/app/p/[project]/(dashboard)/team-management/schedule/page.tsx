@@ -14,6 +14,8 @@ import {
 import { Alert, Card, EmptyState, PageHeader, SectionHeader, Table, Td, Th } from "@/components/ui";
 import { DateJump } from "./DateJump";
 import { RosterDay } from "./RosterDay";
+import { ScheduleSetup } from "./ScheduleSetup";
+import { WeekBoard } from "./WeekBoard";
 import { WeeklyGrid } from "./WeeklyGrid";
 
 /**
@@ -36,8 +38,13 @@ export default async function SchedulePage({
   const parsed = parseDhakaDayFromInput(params.date);
   const when = parsed ? parsed.start : new Date();
   const date = formatDhakaDateKey(when);
+  // The board shows the week around the chosen date, starting today unless they went elsewhere.
+  const todayStart = toDhakaDateOnly(new Date());
+  const chosenStart = toDhakaDateOnly(when);
+  const inThisWeek = chosenStart >= todayStart && chosenStart.getTime() < todayStart.getTime() + 7 * 86_400_000;
+  const boardStart = inThisWeek ? todayStart : chosenStart;
 
-  const [roster, coverage, candidates, weekly, allTemplates, recentChanges] = await Promise.all([
+  const [roster, coverage, candidates, weekly, allTemplates, recentChanges, weekRows, teamSettings] = await Promise.all([
     getRosterForDate(when),
     getCoverageForDate(when),
     getReplacementCandidates(when),
@@ -57,7 +64,27 @@ export default async function SchedulePage({
       orderBy: { createdAt: "desc" },
       take: 20,
     }),
+    prisma.dutyAssignment.findMany({
+      where: { dutyDate: { gte: boardStart, lt: new Date(boardStart.getTime() + 7 * 86_400_000) } },
+      select: { teamMemberId: true, dutyDate: true, status: true, shiftName: true },
+    }),
+    prisma.teamManagementSettings.findFirst({ select: { autoRoster: true } }),
   ]);
+  const todayKey = formatDhakaDateKey(new Date());
+  const boardDays = Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(boardStart.getTime() + i * 86_400_000);
+    const key = day.toISOString().slice(0, 10);
+    return { key, isToday: key === todayKey, label: new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", timeZone: "UTC" }).format(day) };
+  });
+  const boardRows = weekly.map((row) => ({
+    teamMemberId: row.teamMemberId,
+    name: row.name,
+    cells: Object.fromEntries(
+      weekRows
+        .filter((cell) => cell.teamMemberId === row.teamMemberId)
+        .map((cell) => [cell.dutyDate.toISOString().slice(0, 10), { status: cell.status, shiftName: cell.shiftName }]),
+    ),
+  }));
 
   // A disabled shift is offered only where it is already in use, and labelled so nobody picks it
   // thinking it is current. `setDutyAssignment` is the real gate — it refuses a disabled template
@@ -80,6 +107,16 @@ export default async function SchedulePage({
         description="What each person is doing on a given date, and the weekly pattern it is filled from. A date's assignment always wins over the pattern."
         actions={<DateJump date={date} />}
       />
+
+      {canManage && templates.length > 0 ? (
+        <ScheduleSetup
+          templates={templates}
+          autoRoster={teamSettings?.autoRoster ?? true}
+          members={weekly.map((row) => ({ id: row.teamMemberId, name: row.name, scheduled: row.days.some((day) => day.decided) }))}
+        />
+      ) : null}
+
+      {weekly.length > 0 ? <WeekBoard days={boardDays} rows={boardRows} selected={date} /> : null}
 
       <SectionHeader title={formatDate(when)} description="This date's assignments. Changing them never alters the weekly pattern." />
 
@@ -157,7 +194,7 @@ export default async function SchedulePage({
 
       <div className="mt-10">
         <SectionHeader
-          title="Weekly pattern"
+          title="Each person's week"
           description="The starting point for future dates. “Not set” and “Off” are different answers — one means nobody has decided, the other means somebody decided they are off."
         />
         {canManage ? (

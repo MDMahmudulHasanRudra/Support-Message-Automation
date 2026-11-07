@@ -255,6 +255,17 @@ function VisitorStrip({ card }: { card: WebchatVisitorCard }) {
         )}
         {card.email ? <span className="[overflow-wrap:anywhere]">{card.email}</span> : null}
         {card.phone ? <span className="tabular">+{card.phone}</span> : null}
+        {!card.phone && card.typedPhone ? <span className="tabular" title="As the visitor typed it">+{card.typedPhone}</span> : null}
+        {card.visitCount > 1 ? <span>{card.visitCount} visits</span> : null}
+        {card.startedFrom ? <span>Answered invitation: {card.startedFrom}</span> : null}
+        {card.seenOn ? <span>{card.seenOn}</span> : null}
+        {card.arrived.campaign ? <span>Campaign: {card.arrived.campaign}</span> : null}
+        {card.arrived.referrer ? <span>From {card.arrived.referrer.replace(/^https?:\/\//, "")}</span> : null}
+        {card.answers.map((a) => (
+          <span key={a.label}>
+            {a.label}: <span className="font-medium text-[color:var(--color-foreground)]">{a.value}</span>
+          </span>
+        ))}
         {card.pageUrl ? (
           <a href={card.pageUrl} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex min-w-0 max-w-full items-center gap-1 hover:underline" title={card.pageUrl}>
             <Globe className="size-3 shrink-0" aria-hidden />

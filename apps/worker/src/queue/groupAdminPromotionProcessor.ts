@@ -11,6 +11,7 @@ import {
   targetParticipantId,
 } from "@support-automation/shared";
 import { trackTick } from "../lifecycle.js";
+import { slowJobMayRun } from "../messagesFirst.js";
 import { platformPrisma, prisma } from "../db.js";
 import { accountInCurrentProject, OPERATING_PROJECT_FILTER, withProject } from "../project/context.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
@@ -287,7 +288,7 @@ export function startGroupAdminPromotionProcessor(providers: ProviderSource, int
     running = true;
     void trackTick(async () => {
       try {
-        await processOneAdminPromotion(providers);
+        if (slowJobMayRun(LOOP_NAME)) await processOneAdminPromotion(providers);
       } catch (err) {
         console.error("[admin-promotion] tick failed", err);
       } finally {

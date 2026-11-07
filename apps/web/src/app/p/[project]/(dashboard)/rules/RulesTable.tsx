@@ -4,8 +4,9 @@ import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { useMemo, useState, useTransition } from "react";
 
 import Link from "@/components/ProjectLink";
-import { ChevronDown, ChevronUp, Clock, Download, Upload, TriangleAlert } from "lucide-react";
-import { Alert, Badge, Button, ButtonLink, Checkbox, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
+import { ChevronDown, ChevronUp, Clock, Copy, Download, Pencil, Power, Trash2, Upload, TriangleAlert } from "lucide-react";
+import { Alert, Badge, Button, ButtonLink, Checkbox, ConfirmDialog, EmptyState, RowMenu, Table, Td, Th, Tooltip } from "@/components/ui";
+import { enumLabel } from "@/lib/displayLabels";
 import { deleteRule, duplicateRule, setRuleStatus, updatePriority } from "@/server/actions/rules";
 import { bulkDeleteRules, bulkSetRuleStatus, type BulkDeleteRulesResult, type BulkRuleStatusResult } from "@/server/actions/rulesBulk";
 import { RuleImportDialog } from "./RuleImportDialog";
@@ -14,8 +15,9 @@ export interface RuleRow {
   id: string;
   name: string;
   type: string;
-  trigger: string;
-  actionsSummary: string;
+  triggerKind: string;
+  triggerValue: string;
+  actions: string[];
   priority: number;
   status: string;
   executionCount: number;
@@ -143,7 +145,6 @@ export function RulesTable({ rules, filters }: { rules: RuleRow[]; filters: Rule
           selectedQs=""
           onImport={() => setImportOpen(true)}
           onBulkAction={() => {}}
-          disabled
         />
         <EmptyState>No automation rules match the current filters.</EmptyState>
         {importOpen ? <RuleImportDialog onClose={() => setImportOpen(false)} onImported={() => router.refresh()} /> : null}
@@ -196,19 +197,14 @@ export function RulesTable({ rules, filters }: { rules: RuleRow[]; filters: Rule
         <thead>
           <tr>
             <Th>
-              <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap font-normal normal-case">
-                <Checkbox checked={allVisibleSelected} onChange={toggleAllVisible} />
-                All visible
-              </label>
+              <Checkbox checked={allVisibleSelected} onChange={toggleAllVisible} aria-label="Select all visible rules" />
             </Th>
-            <Th>Name</Th>
-            <Th>Type</Th>
-            <Th>Trigger</Th>
-            <Th>Actions</Th>
+            <Th>Rule</Th>
+            <Th>When</Th>
+            <Th>Does</Th>
             <Th>Priority</Th>
             <Th>Status</Th>
-            <Th>Executions</Th>
-            <Th>Last Modified</Th>
+            <Th>Runs</Th>
             <Th>Manage</Th>
           </tr>
         </thead>
@@ -216,21 +212,44 @@ export function RulesTable({ rules, filters }: { rules: RuleRow[]; filters: Rule
           {rules.map((rule) => (
             <tr key={rule.id}>
               <Td>
-                <Checkbox checked={selected.has(rule.id)} onChange={() => toggleOne(rule.id)} />
+                <Checkbox checked={selected.has(rule.id)} onChange={() => toggleOne(rule.id)} aria-label={`Select ${rule.name}`} />
               </Td>
-              <Td>{rule.name}</Td>
-              <Td>{rule.type}</Td>
               <Td>
-                <div className="flex items-center gap-1.5">
-                  {rule.trigger}
+                <Link href={`/rules/${rule.id}/edit`} className="font-medium hover:underline">
+                  {rule.name}
+                </Link>
+                <p className="mt-0.5 text-xs text-[color:var(--color-muted-foreground)]">
+                  {rule.type} · Updated {rule.updatedAtLabel}
+                </p>
+              </Td>
+              <Td>
+                <div className="flex items-center gap-1.5 text-xs text-[color:var(--color-muted-foreground)]">
+                  {rule.triggerKind}
                   {rule.hasSchedule ? (
                     <Tooltip content="Only active during a scheduled time window">
-                      <Clock className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                      <Clock className="size-3.5 shrink-0" aria-hidden />
                     </Tooltip>
                   ) : null}
                 </div>
+                {rule.triggerValue ? (
+                  <p className="mt-0.5 line-clamp-2 max-w-72" title={rule.triggerValue}>
+                    {rule.triggerValue}
+                  </p>
+                ) : null}
               </Td>
-              <Td>{rule.actionsSummary}</Td>
+              <Td>
+                {rule.actions.length ? (
+                  <div className="flex flex-wrap gap-1">
+                    {rule.actions.map((action) => (
+                      <Badge key={action} color="blue">
+                        {action}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-[color:var(--color-muted-foreground)]">Nothing</span>
+                )}
+              </Td>
               <Td>
                 <div className="flex items-center gap-1">
                   <button
@@ -261,38 +280,26 @@ export function RulesTable({ rules, filters }: { rules: RuleRow[]; filters: Rule
               </Td>
               <Td>
                 <Badge color={rule.status === "ACTIVE" ? "green" : rule.status === "DRAFT" ? "yellow" : "gray"} dot>
-                  {rule.status}
+                  {enumLabel(rule.status)}
                 </Badge>
               </Td>
               <Td className="tabular-nums">{rule.executionCount}</Td>
-              <Td>{rule.updatedAtLabel}</Td>
               <Td>
-                <div className="flex flex-wrap gap-2">
-                  <Link href={`/rules/${rule.id}/edit`}>
-                    <Button variant="secondary" size="sm">
-                      Edit
-                    </Button>
-                  </Link>
-                  <Button variant="secondary" size="sm" onClick={() => setDialog({ kind: "duplicate", rule })}>
-                    Duplicate
-                  </Button>
-                  {rule.status === "ACTIVE" ? (
-                    <Button variant="secondary" size="sm" onClick={() => setDialog({ kind: "disable", rule })}>
-                      Disable
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      loading={isEnabling && enablingId === rule.id}
-                      onClick={() => enable(rule.id)}
-                    >
-                      Enable
-                    </Button>
-                  )}
-                  <Button variant="danger" size="sm" onClick={() => setDialog({ kind: "delete", rule })}>
-                    Delete
-                  </Button>
+                <div className="flex items-center gap-1.5">
+                  <ButtonLink href={`/rules/${rule.id}/edit`} variant="secondary" size="sm">
+                    <Pencil className="size-3.5" aria-hidden />
+                    Edit
+                  </ButtonLink>
+                  <RowMenu
+                    label={`More actions for ${rule.name}`}
+                    items={[
+                      { label: "Duplicate", icon: <Copy className="size-4" aria-hidden />, onSelect: () => setDialog({ kind: "duplicate", rule }) },
+                      rule.status === "ACTIVE"
+                        ? { label: "Disable", icon: <Power className="size-4" aria-hidden />, onSelect: () => setDialog({ kind: "disable", rule }) }
+                        : { label: isEnabling && enablingId === rule.id ? "Enabling…" : "Enable", icon: <Power className="size-4" aria-hidden />, onSelect: () => enable(rule.id) },
+                      { label: "Delete", icon: <Trash2 className="size-4" aria-hidden />, danger: true, onSelect: () => setDialog({ kind: "delete", rule }) },
+                    ]}
+                  />
                 </div>
               </Td>
             </tr>
@@ -364,7 +371,6 @@ function BulkToolbar({
   onImport,
   onBulkAction,
   onClearSelection,
-  disabled = false,
 }: {
   selectedCount: number;
   filterQs: string;
@@ -372,23 +378,19 @@ function BulkToolbar({
   onImport: () => void;
   onBulkAction: (action: "activate" | "disable" | "delete") => void;
   onClearSelection?: () => void;
-  disabled?: boolean;
 }) {
   return (
     <div className="mb-3 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={onImport} disabled={disabled}>
-          <Upload className="size-3.5" aria-hidden />
-          Import Excel
-        </Button>
-        <ButtonLink href="/api/automation-rules/import-template" variant="secondary" size="sm">
-          <Download className="size-3.5" aria-hidden />
-          Download Template
-        </ButtonLink>
-        <ButtonLink href={`/api/automation-rules/export${filterQs ? `?${filterQs}` : ""}`} variant="secondary" size="sm">
-          <Download className="size-3.5" aria-hidden />
-          Export Filtered
-        </ButtonLink>
+      <div className="flex justify-end">
+        <RowMenu
+          label="Import and export rules"
+          buttonText="Import / export"
+          items={[
+            { label: "Import from Excel", icon: <Upload className="size-4" aria-hidden />, onSelect: onImport },
+            { label: "Download import template", icon: <Download className="size-4" aria-hidden />, href: "/api/automation-rules/import-template" },
+            { label: "Export these rules", icon: <Download className="size-4" aria-hidden />, href: `/api/automation-rules/export${filterQs ? `?${filterQs}` : ""}` },
+          ]}
+        />
       </div>
 
       {selectedCount > 0 ? (

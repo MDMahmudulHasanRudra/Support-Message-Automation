@@ -160,6 +160,14 @@ const loadSession = cache(async (secret: string, host: string | null): Promise<S
   };
 });
 
+/** The stored id of this request's sign-in, for a record that must end with it. */
+export async function currentSessionId(): Promise<string | null> {
+  const secret = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!secret) return null;
+  const record = await prisma.userSession.findUnique({ where: { secretHash: hashSessionSecret(secret) }, select: { id: true, revokedAt: true, expiresAt: true } });
+  return record && !record.revokedAt && record.expiresAt > new Date() ? record.id : null;
+}
+
 /** Call at the top of any protected server component/page. */
 export async function requireSession(): Promise<Session> {
   const session = await getSession();

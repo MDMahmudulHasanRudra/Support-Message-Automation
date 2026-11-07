@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { cleanPathRule, normalizeOrigin, normalizeOriginInput, normalizeWebchatEvent, originAllowed, parseAllowedOrigins, parseWidgetSettings, widgetPathAllowed, widgetTeaserAllowed, wwwVariant, DEFAULT_WIDGET_SETTINGS } from "./webchat.js";
+import { cleanPathRule, normalizeOrigin, normalizeOriginInput, normalizeWebchatEvent, originAllowed, parseAllowedOrigins, parseWidgetSettings, widgetPathAllowed, widgetTeaserAllowed, wwwVariant, DEFAULT_WIDGET_SETTINGS,
+  classifyWebchatConversation,
+  parseInvitations,
+  parseRouting,
+  pickWebchatRoute,
+  webchatPathMatches,
+  widgetInvitationFor,
+  describeUserAgent,
+  extractContactFromText,
+  NEW_WIDGET_SETTINGS,
+  parsePrechat,
+  readPrechatAnswers,
+  readVisitorContext,
+  WEBCHAT_AI_GRACE_MS,
+} from "./webchat.js";
 
 describe("origins", () => {
   it("normalises to scheme + host, https only except localhost", () => {
@@ -147,5 +161,150 @@ describe("greeting teaser frequency (run by the widget as-is)", () => {
     expect(widgetTeaserAllowed(teaser, fresh, { ...ctx, hasConversation: true })).toBe(false);
     expect(widgetTeaserAllowed(teaser, fresh, { ...ctx, panelOpen: true })).toBe(false);
     expect(widgetTeaserAllowed({ ...teaser, enabled: false }, fresh, ctx)).toBe(false);
+  });
+});
+
+describe("the chat form", () => {
+  const form = parsePrechat({ enabled: true, fields: [{ key: "name", enabled: true, required: true, label: "Name" }, { key: "phone", enabled: true, required: true, label: "Mobile" }, { key: "email", enabled: true, required: false, label: "Email" }, { key: "c1", label: "Which service?", required: true, type: "select", options: ["Internet", "Billing"] }] });
+
+  it("refuses what is required and what cannot be right, on the server as well as in the browser", () => {
+    expect(readPrechatAnswers(form, { phone: "01712345678", custom: { c1: "Billing" } }).error).toContain("Name");
+    expect(readPrechatAnswers(form, { name: "Rahim", custom: { c1: "Billing" } }).error).toContain("Mobile");
+    expect(readPrechatAnswers(form, { name: "Rahim", phone: "abc", custom: { c1: "Billing" } }).error).toContain("mobile number");
+    expect(readPrechatAnswers(form, { name: "Rahim", phone: "01712345678", email: "nope", custom: { c1: "Billing" } }).error).toContain("email");
+    expect(readPrechatAnswers(form, { name: "Rahim", phone: "01712345678", custom: { c1: "Something else" } }).error).toContain("Which service");
+  });
+
+  it("keeps a good answer, with a local number completed and the question's wording", () => {
+    expect(readPrechatAnswers(form, { name: " Rahim ", phone: "০১৭১২-৩৪৫৬৭৮", email: "r@example.com", custom: { c1: "Billing" } })).toEqual({ name: "Rahim", phone: "8801712345678", email: "r@example.com", custom: [{ key: "c1", label: "Which service?", value: "Billing" }], consent: false });
+  });
+
+  it("needs the tick box only when there is one", () => {
+    const withConsent = parsePrechat({ enabled: true, consentText: "I agree", fields: [] });
+    expect(readPrechatAnswers({ ...withConsent, fields: [] }, {}).error).toContain("accept");
+    expect(readPrechatAnswers({ ...withConsent, fields: [] }, { consent: true }).error).toBeUndefined();
+  });
+
+  it("leaves a widget saved before the form exactly as it was, and turns it on for a new one", () => {
+    expect(parseWidgetSettings({ title: "Old" }).prechat.enabled).toBe(false);
+    expect(parseWidgetSettings({ title: "Old" }).visitorPresence).toBe(false);
+    expect(parseWidgetSettings(NEW_WIDGET_SETTINGS).prechat.enabled).toBe(true);
+    expect(parseWidgetSettings(NEW_WIDGET_SETTINGS).visitorPresence).toBe(true);
+    expect(parseWidgetSettings({}).allowAnyWebsite).toBe(false);
+  });
+
+  it("caps the business's own questions", () => {
+    const many = parsePrechat({ fields: Array.from({ length: 9 }, (_, i) => ({ key: `c${i + 1}`, label: `Q${i}` })) });
+    expect(many.fields.filter((f) => f.key.startsWith("c")).length).toBe(5);
+    expect(many.fields.slice(0, 3).map((f) => f.key)).toEqual(["name", "phone", "email"]);
+  });
+});
+
+describe("details a visitor gives or shows", () => {
+  it("finds a phone or email written in a message", () => {
+    expect(extractContactFromText("amar number 01712345678 call koren")).toEqual({ email: null, phone: "8801712345678" });
+    expect(extractContactFromText("মেইল rahim@example.com ফোন +৮৮০১৭১২৩৪৫৬৭৮".replace("+৮৮০", "০"))).toEqual({ email: "rahim@example.com", phone: "8801712345678" });
+    expect(extractContactFromText("my bill is 1200 for invoice 20261107")).toEqual({ email: null, phone: null });
+  });
+
+  it("keeps only the referrer's origin and path, and refuses odd values", () => {
+    const c = readVisitorContext({ referrer: "https://google.com/search?q=secret", utm: { utm_source: "facebook" }, language: "bn-BD", timeZone: "Asia/Dhaka" });
+    expect(c.referrer).toBe("https://google.com/search");
+    expect(c.utmSource).toBe("facebook");
+    expect(readVisitorContext({ referrer: "javascript:alert(1)", language: "<x>", timeZone: "<x>" })).toMatchObject({ referrer: null, language: null, timeZone: null });
+  });
+
+  it("names a device in plain words", () => {
+    expect(describeUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36")).toEqual({ browser: "Chrome", os: "Android", device: "Phone" });
+    expect(describeUserAgent(null)).toEqual({ browser: null, os: null, device: null });
+  });
+});
+
+describe("who a conversation is waiting on", () => {
+  const now = new Date("2026-11-07T10:00:00Z");
+  const base = { lastAiOutcome: null, aiEnabled: true, aiSuppressedUntil: null, now };
+  const ago = (ms: number) => new Date(now.getTime() - ms);
+
+  it("gives AI two minutes, then counts the customer as waiting for a person", () => {
+    expect(classifyWebchatConversation({ ...base, lastSender: "CUSTOMER", lastAt: ago(30_000) })).toBe("AI_ANSWERING");
+    expect(classifyWebchatConversation({ ...base, lastSender: "CUSTOMER", lastAt: ago(WEBCHAT_AI_GRACE_MS + 1) })).toBe("WAITING_PERSON");
+  });
+
+  it("counts a handover, AI being off and a person having taken over as waiting at once", () => {
+    expect(classifyWebchatConversation({ ...base, lastSender: "CUSTOMER", lastAt: ago(1000), lastAiOutcome: "HANDED_OVER" })).toBe("WAITING_PERSON");
+    expect(classifyWebchatConversation({ ...base, lastSender: "CUSTOMER", lastAt: ago(1000), aiEnabled: false })).toBe("WAITING_PERSON");
+    expect(classifyWebchatConversation({ ...base, lastSender: "CUSTOMER", lastAt: ago(1000), aiSuppressedUntil: new Date(now.getTime() + 60_000) })).toBe("WAITING_PERSON");
+  });
+
+  it("tells AI's answer from the team's", () => {
+    expect(classifyWebchatConversation({ ...base, lastSender: "AI", lastAt: ago(1000) })).toBe("AI_ANSWERED");
+    expect(classifyWebchatConversation({ ...base, lastSender: "AGENT", lastAt: ago(1000) })).toBe("TEAM_ANSWERED");
+    expect(classifyWebchatConversation({ ...base, lastSender: "BUSINESS", lastAt: ago(1000) })).toBe("TEAM_ANSWERED");
+    expect(classifyWebchatConversation({ ...base, lastSender: null, lastAt: null })).toBe("NO_MESSAGE");
+  });
+});
+
+describe("invitations", () => {
+  const rule = (over = {}) => ({ id: "a", enabled: true, pages: ["/pricing", "/products/*"], when: "any", audience: "any", mobile: false, ...over });
+  const at = (over = {}) => ({ path: "/pricing", online: true, mobile: false, returning: false, seen: [] as string[], ...over });
+
+  it("fits the page", () => {
+    expect(widgetInvitationFor([rule()], at(), webchatPathMatches)).toBe(0);
+    expect(widgetInvitationFor([rule()], at({ path: "/products/router-x" }), webchatPathMatches)).toBe(0);
+    expect(widgetInvitationFor([rule()], at({ path: "/products" }), webchatPathMatches)).toBe(0);
+    expect(widgetInvitationFor([rule()], at({ path: "/about" }), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ pages: [] })], at({ path: "/about" }), webchatPathMatches)).toBe(0);
+  });
+
+  it("respects each condition, and shows once a visit", () => {
+    expect(widgetInvitationFor([rule({ enabled: false })], at(), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule()], at({ seen: ["a"] }), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ when: "away" })], at(), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ when: "online" })], at({ online: false }), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ audience: "returning" })], at(), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ audience: "new" })], at({ returning: true }), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule()], at({ mobile: true }), webchatPathMatches)).toBe(-1);
+    expect(widgetInvitationFor([rule({ mobile: true })], at({ mobile: true }), webchatPathMatches)).toBe(0);
+  });
+
+  it("can run as text inside the widget, with nothing from outside", () => {
+    const run = new Function("return " + widgetInvitationFor.toString())() as typeof widgetInvitationFor;
+    const paths = new Function("return " + webchatPathMatches.toString())() as typeof webchatPathMatches;
+    expect(run([rule()], at(), paths)).toBe(0);
+    expect(paths("/billing/*", "/billing/invoice/")).toBe(true);
+  });
+
+  it("drops what cannot be used when saved", () => {
+    expect(parseInvitations([{ id: "a", message: "" }, { id: "../x", message: "Hi" }, { id: "b", message: "Hi", pages: ["no-slash", "/ok"], afterSeconds: 9999 }])).toEqual([
+      { id: "b", name: "Invitation", enabled: true, message: "Hi", pages: ["/ok"], afterSeconds: 600, when: "any", audience: "any", mobile: false },
+    ]);
+  });
+});
+
+describe("routing a new chat", () => {
+  const rule = (over = {}) => ({ id: "r", name: "R", enabled: true, pages: [] as string[], fieldKey: null as string | null, fieldValue: "", when: "any" as const, teamId: "t1", userId: null, ...over });
+  const at = (over = {}) => ({ path: "/billing/invoice", answers: [{ key: "c1", value: "Billing" }], online: true, ...over });
+
+  it("takes the first rule that matches, by page and by answer", () => {
+    const rules = [rule({ id: "a", pages: ["/sales"] }), rule({ id: "b", pages: ["/billing/*"] }), rule({ id: "c" })];
+    expect(pickWebchatRoute(rules, at())?.id).toBe("b");
+    expect(pickWebchatRoute([rule({ fieldKey: "c1", fieldValue: "billing" })], at())?.id).toBe("r");
+    expect(pickWebchatRoute([rule({ fieldKey: "c1", fieldValue: "Sales" })], at())).toBeNull();
+    expect(pickWebchatRoute([rule({ fieldKey: "c2" })], at())).toBeNull();
+    expect(pickWebchatRoute([rule({ pages: ["/billing/*"] })], at({ path: null }))).toBeNull();
+  });
+
+  it("needs a page AND an answer when a rule names both, and honours away", () => {
+    const both = rule({ pages: ["/billing/*"], fieldKey: "c1", fieldValue: "Sales" });
+    expect(pickWebchatRoute([both], at())).toBeNull();
+    expect(pickWebchatRoute([rule({ when: "away" as never })], at())).toBeNull();
+    expect(pickWebchatRoute([rule({ when: "away" as never })], at({ online: false }))?.id).toBe("r");
+    expect(pickWebchatRoute([rule({ enabled: false })], at())).toBeNull();
+  });
+
+  it("never keeps a rule with nowhere to send the chat, and never tells a browser about routing", () => {
+    expect(parseRouting([{ id: "a" }, { id: "b", userId: "u1" }]).map((r) => r.id)).toEqual(["b"]);
+    expect(parseWidgetSettings({}).routing).toEqual([]);
+    expect(parseWidgetSettings({}).prechatAway.enabled).toBe(false);
   });
 });

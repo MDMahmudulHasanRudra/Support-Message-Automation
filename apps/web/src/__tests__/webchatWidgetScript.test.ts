@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
 import { widgetPathAllowed, widgetTeaserAllowed } from "@support-automation/shared";
-import { WIDGET_SCRIPT } from "@/server/channels/webchatWidgetScript";
+import { WIDGET_SCRIPT, slimWidgetSource } from "@/server/channels/webchatWidgetScript";
 import { GET } from "@/app/api/webchat/widget.js/route";
 
 /**
@@ -27,8 +27,8 @@ describe("website chat widget script", () => {
   });
 
   it("embeds the shared page-targeting and teaser rules as source", () => {
-    expect(WIDGET_SCRIPT).toContain(widgetPathAllowed.toString());
-    expect(WIDGET_SCRIPT).toContain(widgetTeaserAllowed.toString());
+    expect(WIDGET_SCRIPT).toContain(slimWidgetSource(widgetPathAllowed.toString()));
+    expect(WIDGET_SCRIPT).toContain(slimWidgetSource(widgetTeaserAllowed.toString()));
   });
 
   // Found in the browser pass (docs/website-chat-v3/02-browser-e2e.md): a host rule like `div { outline: … }` drew a box

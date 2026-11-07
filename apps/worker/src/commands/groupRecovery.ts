@@ -1,4 +1,5 @@
 import os from "node:os";
+import { slowJobMayRun } from "../messagesFirst.js";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { platformPrisma, prisma } from "../db.js";
 import { projectIsOperating, withAccountProject } from "../project/context.js";
@@ -376,7 +377,9 @@ export function startGroupRecoveryProcessor(registry: ProviderRegistry, interval
   return setInterval(() => {
     if (running) return;
     running = true;
-    void trackTick(() => checkGroupRecovery(registry))
+    void trackTick(async () => {
+      if (slowJobMayRun(LOOP_NAME)) await checkGroupRecovery(registry);
+    })
       .catch((err) => console.error("[groupsync] group recovery tick failed", err))
       .finally(() => {
         running = false;

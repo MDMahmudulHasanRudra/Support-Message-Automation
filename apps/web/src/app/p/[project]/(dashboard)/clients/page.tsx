@@ -261,12 +261,12 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
       {/* ── Filters: drop-downs apply themselves; Enter searches. */}
       <AutoSubmitForm className={`${surface} space-y-3 p-3`}>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="relative min-w-0 flex-1 basis-full sm:basis-[300px]">
+          <label className="relative min-w-0 flex-1 basis-full sm:basis-[240px]">
             <Search className={`pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 ${mutedText}`} aria-hidden />
             <Input name="q" placeholder="Search name, phone, code, country, seller, service…" defaultValue={filters.q} className="pl-9" aria-label="Search clients" />
           </label>
           {caps.subscriptions ? (
-            <Select name="state" defaultValue={filters.state} className="sm:w-48" aria-label="Subscription">
+            <Select name="state" defaultValue={filters.state} className="sm:w-40" aria-label="Subscription">
               <option value="">All subscriptions</option>
               {SUBSCRIPTION_STATES.map((s) => (
                 <option key={s} value={s}>
@@ -276,7 +276,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
             </Select>
           ) : null}
           {caps.subscriptions ? (
-            <Select name="expiry" defaultValue={filters.expiry} className="sm:w-44" aria-label="Expiry window">
+            <Select name="expiry" defaultValue={filters.expiry} className="sm:w-36" aria-label="Expiry window">
               <option value="">All expiry</option>
               {Object.entries(EXPIRY_LABELS).map(([v, l]) => (
                 <option key={v} value={v}>
@@ -285,7 +285,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
               ))}
             </Select>
           ) : null}
-          <Select name="seller" defaultValue={filters.seller} className="sm:w-44" aria-label="Sold by">
+          <Select name="seller" defaultValue={filters.seller} className="sm:w-36" aria-label="Sold by">
             <option value="">All sellers</option>
             <option value="none">Seller not recorded</option>
             {data.members.map((m) => (
@@ -294,7 +294,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
               </option>
             ))}
           </Select>
-          <Select name="country" defaultValue={filters.country} className="sm:w-44" aria-label="Country">
+          <Select name="country" defaultValue={filters.country} className="sm:w-36" aria-label="Country">
             <option value="">All countries</option>
             {options.countries
               .map((c) => ({ c, n: countryName(c) ?? c }))
@@ -305,7 +305,6 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
                 </option>
               ))}
           </Select>
-          <ColumnChooser list="clients" available={available.map((c) => ({ key: c.key, label: c.label, locked: c.locked }))} selected={columns.columns} />
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <Select name="order" defaultValue={orderValue} className="sm:w-56" aria-label="Sort">
@@ -397,6 +396,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Sear
               </Select>
             </div>
           </details>
+          <ColumnChooser list="clients" available={available.map((c) => ({ key: c.key, label: c.label, locked: c.locked }))} selected={columns.columns} />
           <span className={`ml-auto self-center text-xs ${mutedText}`}>{data.total.toLocaleString()} result{data.total === 1 ? "" : "s"}</span>
         </div>
         {/* The chip's own view travels with every search. */}

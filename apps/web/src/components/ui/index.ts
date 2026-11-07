@@ -10,6 +10,7 @@ export * from "./Dialog";
 export * from "./EmptyState";
 export * from "./Field";
 export * from "./FilterBar";
+export * from "./RowMenu";
 export * from "./GroupPicker";
 export * from "./Help";
 export * from "./PageHeader";

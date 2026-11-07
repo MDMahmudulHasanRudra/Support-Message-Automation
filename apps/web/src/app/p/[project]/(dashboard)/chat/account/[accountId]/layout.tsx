@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
-import { AutoRefresh } from "@/components/AutoRefresh";
+import { LiveRefresh } from "@/components/LiveRefresh";
+import { PushPrompt } from "@/components/pwa/PushPrompt";
 import { getChatAccounts, getChatCategories, getChatInbox } from "@/server/chatInbox";
 import { picturePaths } from "@/server/whatsappPictures";
 import { isChatUiV2Enabled } from "@/server/chatThreadV2";
@@ -51,7 +52,8 @@ export default async function ChatAccountLayout({
       {/* Polls the server tree so new messages and delivery-state changes appear without a
           manual reload. Four seconds sits close enough to the outbound queue's own 2s tick
           that a reply's queued → sent transition is visible almost immediately. */}
-      <AutoRefresh intervalMs={4000} />
+      <LiveRefresh intervalMs={4000} />
+      <PushPrompt />
       <ChatWorkspace
         key={account.id}
         account={account}

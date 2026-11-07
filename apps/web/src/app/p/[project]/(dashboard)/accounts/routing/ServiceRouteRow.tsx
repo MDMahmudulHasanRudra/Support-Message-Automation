@@ -1,5 +1,6 @@
 "use client";
 
+import { enumLabel } from "@/lib/displayLabels";
 import { useActionState, useEffect } from "react";
 import { Badge, Button, Select, useToast, type BadgeColor } from "@/components/ui";
 import { updateServiceRoute, type ServiceRouteFormState } from "@/server/actions/whatsappRouting";
@@ -60,7 +61,7 @@ export function ServiceRouteRow({
             {route.resolvedSource ? (
               <>
                 {" "}
-                <Badge color={RESOLUTION_COLOR[route.resolvedSource] ?? "gray"}>{route.resolvedSource}</Badge>
+                <Badge color={RESOLUTION_COLOR[route.resolvedSource] ?? "gray"}>{enumLabel(route.resolvedSource)}</Badge>
               </>
             ) : null}
           </p>

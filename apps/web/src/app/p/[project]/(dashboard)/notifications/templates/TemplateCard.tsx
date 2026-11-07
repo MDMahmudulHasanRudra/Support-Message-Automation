@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useActionState, useMemo, useState, useTransition } from "react";
 import Link from "@/components/ProjectLink";
 import {
@@ -128,7 +129,10 @@ export function TemplateCard({
   };
 
   return (
-    <Card>
+    <Card className="!p-0">
+      <details className="group/template">
+      <summary className="flex cursor-pointer list-none items-start gap-3 rounded-[var(--radius-xl)] p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] [&::-webkit-details-marker]:hidden">
+      <div className="min-w-0 flex-1 [&>*:last-child]:!mb-0">
       {/* Badges sit above the header rather than inside its title, which takes a plain string.
           The audience one is worth permanent space: it changes how carefully somebody should edit,
           being the difference between an internal note and the company speaking. */}
@@ -139,9 +143,14 @@ export function TemplateCard({
           <Badge color="gray">Internal alert</Badge>
         )}
         {isCustomised ? <Badge color="blue">Customised</Badge> : null}
+        {!liveness.live ? <Badge color="gray">Not sending</Badge> : null}
       </div>
 
       <SectionHeader title={definition.label} description={definition.description} />
+      </div>
+      <ChevronDown className="mt-1 size-4 shrink-0 text-[color:var(--color-muted-foreground)] transition-transform group-open/template:rotate-180" aria-hidden />
+      </summary>
+      <div className="px-5 pb-5">
 
       {definition.audience === "CUSTOMER" ? (
         <div className="mt-3">
@@ -325,6 +334,8 @@ export function TemplateCard({
           </div>
         </div>
       </div>
+      </div>
+      </details>
 
       <ConfirmDialog
         open={confirmReset}

@@ -3,8 +3,8 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 /**
- * Release Notes seeded from this repository's own git history — never invoked by the routine
- * `pnpm db:seed`.
+ * Release Notes seeded from this repository's own git history. Runs on every deploy after the migrations (the
+ * `migrate` service): add-only by version, so nothing an admin edited or removed is touched.
  *
  * It began as a one-time historical backfill and still is one for v0.1.0–v0.14.0. It now also
  * carries the current release, because `DATABASE_URL` points at a host only reachable from inside
@@ -338,8 +338,6 @@ const RELEASES: HistoricalRelease[] = [
     title: "Procedure-aware AI, real duty hours, and a second way to link WhatsApp",
     releaseDate: "2026-09-16",
     releaseType: "FEATURE",
-    // DRAFT: this describes work that landed today. Somebody reads it and presses Publish.
-    status: "DRAFT",
     affectedModules: [
       "AI Learning",
       "Conversation Learning",
@@ -410,10 +408,402 @@ const RELEASES: HistoricalRelease[] = [
       "Answering from the product's own source while the customer waits requires the Softify Forge integration to be configured, enabled and pointed at a project.",
       "A link code is issued once per attempt and is not refreshed, unlike the QR code which rotates until it is scanned. If it expires, ask for a new one.",
     ],
-    technicalNotes: [
-      "Six database migrations are committed and NOT yet deployed. Run the migration deploy BEFORE the application, or the WhatsApp Accounts and Duty History pages will fail on columns that do not exist yet.",
-      "776 automated tests pass across the rule engine, shared, AI client and worker suites, 550 of them in the worker. Integration tests must be run against the isolated throwaway database, never the live one.",
+  },
+  {
+    version: "0.16.0",
+    title: "Smarter answers and link by phone number",
+    summary: "AI finds the right knowledge more often, and a number can be linked without scanning a QR code.",
+    releaseDate: "2026-09-18",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "AI Learning",
+      "WhatsApp Accounts & Groups"
     ],
+    whatsNew: [
+      "Link a WhatsApp number with a phone code as well as by QR",
+      "Message reactions, editing, and creating or joining groups from the number"
+    ],
+    improvements: [
+      "AI ranks your knowledge by how well it fits the question, not just by matching words"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.17.0",
+    title: "Roles enforced everywhere, and a safer way to add numbers",
+    summary: "What a role allows now applies on every page and every button.",
+    releaseDate: "2026-09-23",
+    releaseType: "IMPROVEMENT",
+    affectedModules: [
+      "Users & Permissions",
+      "Bulk Messaging",
+      "WhatsApp Accounts & Groups"
+    ],
+    whatsNew: [
+      "Add Number to Groups checks who is already a member before adding anyone",
+      "Only the Primary number answers customers; other numbers collect"
+    ],
+    improvements: [
+      "The sidebar shows only the pages a role can open",
+      "Large lists can be selected, filtered and handled in bulk",
+      "The Accounts page says what a link attempt is actually doing"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.18.0",
+    title: "Team Report, Teams and a tidier sidebar",
+    summary: "See each member's support work by day, week and month.",
+    releaseDate: "2026-09-27",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Reports",
+      "Team",
+      "AI Learning",
+      "Navigation"
+    ],
+    whatsNew: [
+      "Team Report: groups supported, replies, customer waits, missed and recall support, for one person or the whole team",
+      "Teams, with a Team filter that follows who was in the team at the time",
+      "AI Sandbox: correct an AI answer, verify it and save it as knowledge",
+      "AI can tell a customer when it could not understand them"
+    ],
+    improvements: [
+      "Ten collapsible modules instead of fifty always-open rows",
+      "All settings in one Settings module",
+      "All Reports hub"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.19.0",
+    title: "Multiple projects",
+    summary: "One installation can run many separate projects, with each one's data kept apart.",
+    releaseDate: "2026-09-29",
+    releaseType: "MAJOR",
+    affectedModules: [
+      "Main Admin",
+      "Projects"
+    ],
+    whatsNew: [
+      "Projects: separate data, people and settings for each",
+      "Main Admin Portal to create projects and decide who may enter them",
+      "Switch modules on or off per project"
+    ],
+    improvements: [
+      "The database itself refuses data crossing between projects"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.20.0",
+    title: "Main Admin workspace and support reports",
+    summary: "Work in every project from one screen, with eleven new reports.",
+    releaseDate: "2026-10-01",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Main Admin",
+      "Reports"
+    ],
+    whatsNew: [
+      "Main Admin workspace: open any module with your projects as tabs",
+      "Departments, job titles and employee records",
+      "Eleven support reports with common filters"
+    ],
+    improvements: [
+      "Project access levels: read, write or full"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.21.0",
+    title: "Support Intelligence and running jobs on every page",
+    summary: "Deeper reports, and long WhatsApp jobs you can follow from anywhere.",
+    releaseDate: "2026-10-05",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Reports",
+      "WhatsApp Accounts & Groups",
+      "Messages",
+      "Mood Detection"
+    ],
+    whatsNew: [
+      "Groups Admin Maker: make one member an admin in every group your number administers",
+      "A job indicator on every page for Add to Groups and Admin Maker",
+      "Unanswered Groups and Response Time for your Support Team",
+      "Support Intelligence: human response times, cases, effectiveness and customer signals",
+      "Executive Support Health and Inactive Groups reports",
+      "Mood Detection notices upset customers and acts only as you choose"
+    ],
+    improvements: [
+      "WhatsApp Chat shows one number at a time with real totals, and replies go out from that number only",
+      "Report times always read as hours and minutes"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.22.0",
+    title: "Support Assignment, personal chats, Google Sheets and more channels",
+    summary: "Assign waiting customers, answer personal chats and bring in Messenger, Instagram and Telegram.",
+    releaseDate: "2026-10-11",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Support Assignment",
+      "WhatsApp Chat",
+      "All Conversations",
+      "Google Sheets",
+      "Branding"
+    ],
+    whatsNew: [
+      "Support Assignment: give a waiting customer to a person, follow the deadline and alert when it passes",
+      "All Conversations: Messenger, Instagram DM and Telegram beside WhatsApp",
+      "Personal chats in WhatsApp Chat, with replies",
+      "Google Sheets work management, with time and activity per person",
+      "White labeling: your own name, colours, logo and icon"
+    ],
+    improvements: [
+      "WhatsApp Chat works properly on a phone",
+      "One rule everywhere for who sent a message; our own numbers are recognised"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.23.0",
+    title: "Client Management",
+    summary: "Your clients, subscriptions, invoices and payments in one place.",
+    releaseDate: "2026-10-17",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Clients",
+      "Email",
+      "WhatsApp Chat",
+      "Users & Permissions"
+    ],
+    whatsNew: [
+      "Client database with import, export and duplicate detection",
+      "Subscriptions, numbered invoices, payments and receipts",
+      "Email over your own mail server",
+      "Link clients to WhatsApp chats and groups",
+      "Project roles and project Leads, down to single pages",
+      "Chat V2: delivery and read ticks, deleted messages, polls, locations, stickers, forwarding and pins"
+    ],
+    improvements: [
+      "Real Support Overtime in the Team Report: time beyond each person's regular duty",
+      "Live messages are no longer lost one at a time",
+      "Every number's group list is re-read daily, so missing groups come back"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.24.0",
+    title: "Team Report for personal chats, and a colleague's history",
+    summary: "Add a colleague and their earlier work follows them.",
+    releaseDate: "2026-10-20",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Reports",
+      "Team"
+    ],
+    whatsNew: [
+      "Team Report covers groups, personal chats, or both",
+      "Employee ranking, daily engagement and comparison with the previous period",
+      "Customer-specific replies, from evidence only",
+      "See what an identity change would do before saving it"
+    ],
+    improvements: [
+      "Adding a colleague collects their earlier work",
+      "Personal messages missed during a restart are recovered",
+      "A full accuracy review of every team report"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.25.0",
+    title: "Get Assist as a service",
+    summary: "Customers, plans, billing and their own addresses.",
+    releaseDate: "2026-10-24",
+    releaseType: "MAJOR",
+    affectedModules: [
+      "Platform",
+      "Clients",
+      "WhatsApp Chat",
+      "All Conversations"
+    ],
+    whatsNew: [
+      "Platform control centre: customers, plans, subscriptions, payments and domains",
+      "Each customer gets a complete, separate copy of the software",
+      "Connect Messenger and Instagram with one click",
+      "Send photos, videos, voice notes and documents from WhatsApp Chat",
+      "Smart Bulk Import: any Excel or CSV, up to 5,000 clients, in the background"
+    ],
+    improvements: [
+      "WhatsApp profile pictures and group descriptions, with no extra requests to WhatsApp"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.26.0",
+    title: "Modules, Commerce, Website Chat and Social Studio",
+    summary: "Build the software each business needs.",
+    releaseDate: "2026-10-30",
+    releaseType: "MAJOR",
+    affectedModules: [
+      "Module Builder",
+      "Commerce",
+      "Website Chat",
+      "Social Studio",
+      "Inbox"
+    ],
+    whatsNew: [
+      "Module Builder and business types",
+      "Products, stock, orders and a sales pipeline",
+      "Couriers, WooCommerce, Shopify, a public API and webhooks",
+      "Website live chat with a widget builder, files, business hours and a WordPress plugin",
+      "Social Studio: plan, approve and publish to Facebook and Instagram, with AI drafts",
+      "Inbox workspace: notes, priority, tags and AI Copilot"
+    ],
+    improvements: [
+      "AI can answer from your catalogue and a customer's own order"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.27.0",
+    title: "Clients V7 and My account",
+    summary: "Invoices you can send, renewal offers and your own account page.",
+    releaseDate: "2026-11-02",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Clients",
+      "Account",
+      "Main Admin"
+    ],
+    whatsNew: [
+      "Invoice and receipt documents",
+      "Renewal offers and client message templates",
+      "Bulk email with a second person's approval",
+      "Client codes per project, with client lists you control",
+      "My account: profile, photo, password, two-step sign-in and your devices"
+    ],
+    improvements: [
+      "Money is stored exactly, never rounded"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.28.0",
+    title: "Safer and easier to watch",
+    summary: "Backups, monitoring and failed replies you can act on.",
+    releaseDate: "2026-11-05",
+    releaseType: "IMPROVEMENT",
+    affectedModules: [
+      "Messages",
+      "Platform",
+      "Security"
+    ],
+    whatsNew: [
+      "Failed Replies: see what did not go out and retry safely",
+      "A timeline of each message's journey",
+      "Scheduled backups with restore checks and alerts",
+      "Server, speed and database figures on Platform Monitoring"
+    ],
+    improvements: [
+      "Logs never contain customer text or phone numbers",
+      "Security headers and a sign-in limit per address"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.29.0",
+    title: "Inbox V3 and Premium Tide Board",
+    summary: "A complete inbox and a new look across the whole product.",
+    releaseDate: "2026-11-06",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Inbox",
+      "AI",
+      "Design"
+    ],
+    whatsNew: [
+      "Open, pending, snoozed and resolved conversations",
+      "Search the full message history",
+      "Automatic conversation routing",
+      "Satisfaction surveys after a resolved conversation",
+      "Follow-ups for call-backs, visits and promises",
+      "AI answers a verified customer's own account question in one-to-one chats"
+    ],
+    improvements: [
+      "Premium Tide Board: one design for Main Admin and every project",
+      "The inbox fills the window and opens WhatsApp in place"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.30.0",
+    title: "Instant inbox, phone app and a dedicated Website Chat",
+    summary: "New messages appear at once, on your phone too.",
+    releaseDate: "2026-11-07",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Inbox",
+      "Phone app",
+      "Website Chat",
+      "Reports",
+      "Settings"
+    ],
+    whatsNew: [
+      "Inbox updates the moment a message arrives",
+      "Install Get Assist on your phone, with notifications",
+      "Website Chat module: live board, visitors, chat form, and install by copy and paste",
+      "Invitations, routing by page or form answer, and a form for when your team is away"
+    ],
+    improvements: [
+      "Filters, tables, reports, settings and sign-in screens all finished to one standard"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.31.0",
+    title: "Faster everywhere, and customers first",
+    summary: "Pages open without loading screens, and messages go before background jobs.",
+    releaseDate: "2026-11-07",
+    releaseType: "IMPROVEMENT",
+    affectedModules: [
+      "All modules",
+      "WhatsApp Accounts & Groups"
+    ],
+    whatsNew: [],
+    improvements: [
+      "Clicking between pages no longer reloads the page or shows a loading screen",
+      "Pages load as you rest the pointer on a link",
+      "Overview and Team Performance open at once",
+      "Slow jobs such as Groups Admin Maker wait while customer messages are being handled",
+      "Group sync runs in the background while you keep working"
+    ],
+    bugFixes: []
+  },
+  {
+    version: "0.32.0",
+    title: "A team module that runs itself",
+    summary: "Every member's work is credited automatically, however late they were added.",
+    releaseDate: "2026-11-07",
+    releaseType: "FEATURE",
+    affectedModules: [
+      "Team",
+      "Reports"
+    ],
+    whatsNew: [
+      "Team members are matched to their WhatsApp messages by themselves, and their past work appears in every report",
+      "Say who answers from your number on their phone, and those replies count for them",
+      "Set the week once: the roster fills itself two weeks ahead",
+      "The week at a glance on the Roster",
+      "Sync history for any one member"
+    ],
+    improvements: [
+      "Team Members and Teams now live in the Team module",
+      "The report's data line is calm and speaks up only when something needs you"
+    ],
+    bugFixes: []
   },
 ];
 

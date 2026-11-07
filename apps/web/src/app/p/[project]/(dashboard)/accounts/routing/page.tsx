@@ -81,8 +81,8 @@ export default async function WhatsAppRoutingPage() {
             <HelpSection title="“Currently sends via” line">
               <p>
                 This shows the real, live result of that logic right now — which account would actually
-                be used if this service tried to send a message this second, and why (CONFIGURED = your
-                pin, PRIMARY_DEFAULT = following Primary because nothing's pinned, PRIMARY_FALLBACK =
+                be used if this service tried to send a message this second, and why (Configured = your
+                pin, Primary default = following Primary because nothing's pinned, Primary fallback =
                 your pinned account is down and it fell back). If it shows an error instead, that service
                 cannot send anything until you fix the underlying account or routing.
               </p>

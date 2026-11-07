@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { isInboxScope } from "@support-automation/shared";
-import { AutoRefresh } from "@/components/AutoRefresh";
+import { LiveRefresh } from "@/components/LiveRefresh";
+import { PushPrompt } from "@/components/pwa/PushPrompt";
 import { requireAccess } from "@/server/authorize";
 import { inboxFilterOptions, loadInbox } from "@/server/channels/inbox";
 import { mentionablePeople } from "@/server/inboxWorkspace";
@@ -14,7 +15,7 @@ import { InboxWorkspace } from "../InboxWorkspace";
  * never a copy. The scope is a path segment for the same reason WhatsApp Chat's account is: the list
  * lives in this layout, and a path segment is the only per-request state a layout can read.
  *
- * Polled every four seconds while the tab is visible (AutoRefresh pauses when it is hidden), like
+ * Refreshed as soon as something changes (LiveRefresh), every four seconds without a live connection, while the tab is visible (AutoRefresh pauses when it is hidden), like
  * WhatsApp Chat.
  */
 export default async function InboxLayout({ children, params }: { children: React.ReactNode; params: Promise<{ scope: string }> }) {
@@ -33,7 +34,8 @@ export default async function InboxLayout({ children, params }: { children: Reac
 
   return (
     <div data-v2="" className="flex h-[calc(100dvh_-_var(--chat-inset,6.75rem))] sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))] min-h-[30rem] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xs),var(--highlight-top)] group-data-[bleed]/page:rounded-none group-data-[bleed]/page:border-0 group-data-[bleed]/page:shadow-none max-sm:min-h-0 max-sm:rounded-none max-sm:border-0 max-sm:shadow-none sm:h-[calc(100dvh_-_var(--chat-inset-sm,8.25rem))]">
-      <AutoRefresh intervalMs={4000} />
+      <LiveRefresh intervalMs={4000} />
+      <PushPrompt />
       <InboxWorkspace scope={scope} items={inbox.items} counts={inbox.counts} truncated={inbox.truncated} options={options}>
         {children}
       </InboxWorkspace>

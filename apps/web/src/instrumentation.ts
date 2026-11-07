@@ -20,4 +20,9 @@ export async function register() {
     const { startSocialProcessor } = await import("./server/socialProcessor");
     startSocialProcessor();
   }
+  // Agent notifications (AGENT_APP.md). Does nothing until VAPID keys are set and somebody turns them on.
+  if (process.env.PUSH_PROCESSOR_DISABLED !== "true") {
+    const { startPushProcessor } = await import("./server/pushProcessor");
+    startPushProcessor();
+  }
 }

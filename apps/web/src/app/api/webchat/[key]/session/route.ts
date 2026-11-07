@@ -13,7 +13,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { key } = await params;
   return withWidget(request, key, async (widget, cors) => {
     const body = await readJson(request);
-    const session = await startVisitor(widget, { token: body.token, name: body.name, email: body.email, identity: body.identity, ip: clientIp(request) });
+    const session = await startVisitor(widget, {
+      token: body.token,
+      name: body.name,
+      email: body.email,
+      phone: body.phone,
+      custom: body.custom,
+      consent: body.consent,
+      context: body.context,
+      form: body.form,
+      visit: body.visit,
+      userAgent: request.headers.get("user-agent"),
+      identity: body.identity,
+      ip: clientIp(request),
+    });
     return json({ token: session.token, verified: session.verified }, 200, cors);
   });
 }

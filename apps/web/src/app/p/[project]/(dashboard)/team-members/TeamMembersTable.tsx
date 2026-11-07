@@ -4,9 +4,10 @@ import { useProjectRouter as useRouter } from "@/components/ProjectLink";
 import { useState, useTransition } from "react";
 
 import Link from "@/components/ProjectLink";
-import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip } from "@/components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, Table, Td, Th, Tooltip, useToast } from "@/components/ui";
 import { deleteTeamMember, toggleTeamMemberStatus } from "@/server/actions/teamMembers";
 import { whatsappIdBadge } from "@support-automation/shared";
+import { syncMemberHistory, undoAutomaticMatch } from "@/server/actions/teamAutomation";
 
 export interface TeamMemberRow {
   id: string;
@@ -23,7 +24,52 @@ export interface TeamMemberRow {
    */
   identityClash?: string[];
   /** Their earlier history after being added or re-identified: being collected, or what was found. */
+  identityLinkSource?: string | null;
   historySync?: { state: "SYNCING" | "DONE" | "FAILED"; messages: number | null; groups: number | null; firstAt: string | null };
+}
+
+/** How a WhatsApp ID was found when nobody typed it, with the way back. */
+function AutoMatchNote({ memberId, how }: { memberId: string; how: string }) {
+  const { showToast } = useToast();
+  const [pending, start] = useTransition();
+  return (
+    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)]">
+      <span>{how === "AUTO_PHONE" ? "Matched by WhatsApp from their number" : "Matched automatically from their WhatsApp name"}</span>
+      <button
+        type="button"
+        className="link"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const result = await undoAutomaticMatch(memberId);
+            showToast(result.error ? { tone: "danger", title: result.error } : { tone: "success", title: result.message ?? "Undone" });
+          })
+        }
+      >
+        Undo
+      </button>
+    </div>
+  );
+}
+
+function SyncHistoryButton({ memberId }: { memberId: string }) {
+  const { showToast } = useToast();
+  const [pending, start] = useTransition();
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      loading={pending}
+      onClick={() =>
+        start(async () => {
+          const result = await syncMemberHistory(memberId);
+          showToast(result.error ? { tone: "danger", title: result.error } : { tone: "success", title: result.message ?? "Syncing" });
+        })
+      }
+    >
+      Sync history
+    </Button>
+  );
 }
 
 function HistorySyncNote({ sync }: { sync: NonNullable<TeamMemberRow["historySync"]> }) {
@@ -109,6 +155,7 @@ export function TeamMembersTable({ members, unified = false }: { members: TeamMe
               <Td>
                 {m.name}
                 {m.historySync ? <HistorySyncNote sync={m.historySync} /> : null}
+                {m.identityLinkSource ? <AutoMatchNote memberId={m.id} how={m.identityLinkSource} /> : null}
               </Td>
               <Td className="font-[family-name:var(--font-mono)] text-xs">
                 {m.phoneNumber}
@@ -160,6 +207,7 @@ export function TeamMembersTable({ members, unified = false }: { members: TeamMe
               </Td>
               <Td>
                 <div className="flex gap-2">
+                  <SyncHistoryButton memberId={m.id} />
                   <Link href={`/team-members/${m.id}/edit`}>
                     <Button variant="secondary" size="sm">
                       Edit

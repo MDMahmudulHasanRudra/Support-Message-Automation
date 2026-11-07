@@ -97,8 +97,8 @@ export default async function ForgeIntegrationPage() {
       {!configured ? (
         <div className="mb-5">
           <Alert tone="warning">
-            Forge is not configured. Set <code>FORGE_API_KEY</code> and <code>FORGE_API_URL</code> in
-            the environment and restart, then this page can connect. See <code>FORGE_SETUP.md</code>.
+            Product Knowledge is not connected for this installation yet. Ask whoever runs your Get Assist
+            platform to connect it, then this page can sync.
           </Alert>
         </div>
       ) : null}

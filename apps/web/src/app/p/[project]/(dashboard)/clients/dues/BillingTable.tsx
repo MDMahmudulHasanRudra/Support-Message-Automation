@@ -145,7 +145,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
   );
   const data = columns.filter((k) => k !== "invoice");
   const th = "sticky top-0 whitespace-nowrap border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-[color:var(--color-muted-foreground)]";
-  const td = "border-b border-[var(--color-border)] px-4 py-3 align-middle text-[13px] group-hover:bg-[var(--color-surface-sunken)]";
+  const td = "border-b border-[var(--color-border)] px-3 py-3 align-middle text-[13px] group-hover:bg-[var(--color-surface-sunken)]";
 
   const invoiceCell = (r: BillingRow) => (
     <>
@@ -190,7 +190,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
                   {labels[k] ?? k}
                 </th>
               ))}
-              <th className={`${th} z-[2] text-right`}>Actions</th>
+              <th className={`${th} right-0 z-[3] border-l text-right`}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -207,7 +207,7 @@ export function BillingTable({ rows, columns, labels, canPay, canDelete = false,
                     {cell(k, r)}
                   </td>
                 ))}
-                <td className={td}>{actionsFor(r)}</td>
+                <td className={`${td} sticky right-0 z-[1] border-l bg-[var(--color-surface)]`}>{actionsFor(r)}</td>
               </tr>
             ))}
           </tbody>

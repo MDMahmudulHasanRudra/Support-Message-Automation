@@ -40,14 +40,16 @@ export function KpiCard({
 }) {
   const body = (
     <>
-      <span className={`flex size-12 shrink-0 items-center justify-center rounded-[var(--radius-lg)] ${ACCENT[accent]}`}>
-        <Icon className="size-[22px]" aria-hidden />
-      </span>
-      <div className="min-w-0">
-        <p className={`text-[13px] ${mutedText}`}>{label}</p>
-        <p className="flex flex-wrap items-center gap-2">
+      <div className="flex items-center gap-2.5">
+        <span className={`flex size-9 shrink-0 items-center justify-center rounded-[var(--radius-md)] ${ACCENT[accent]}`}>
+          <Icon className="size-[18px]" aria-hidden />
+        </span>
+        <p className={`min-w-0 text-[13px] font-medium leading-snug ${mutedText}`}>{label}</p>
+      </div>
+      <div className="mt-2.5 min-w-0">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span
-            className={`font-semibold tabular-nums tracking-[-0.02em] ${value.length > 12 ? "line-clamp-2 text-base leading-snug" : "text-2xl"} ${toneValue ? (VALUE_TONE[accent] ?? "") : ""}`}
+            className={`font-semibold tabular-nums tracking-[-0.02em] ${value.length > 14 ? "line-clamp-2 text-[17px] leading-snug" : "text-2xl leading-tight"} ${toneValue ? (VALUE_TONE[accent] ?? "") : ""}`}
             title={value}
           >
             {value}
@@ -55,14 +57,14 @@ export function KpiCard({
           {badge}
         </p>
         {hint ? (
-          <p className={`text-xs ${mutedText}`} title={hint}>
+          <p className={`mt-1 text-xs leading-snug ${mutedText}`} title={hint}>
             {hint}
           </p>
         ) : null}
       </div>
     </>
   );
-  const cls = `${surface} flex min-w-0 items-center gap-4 px-4 py-4`;
+  const cls = `${surface} block min-w-0 p-4`;
   return href ? (
     <Link href={href} className={`${cls} transition-[box-shadow,border-color] hover:border-[var(--color-border-strong)] hover:shadow-[var(--shadow-sm)]`}>
       {body}

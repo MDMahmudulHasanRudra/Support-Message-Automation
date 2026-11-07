@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { Download } from "lucide-react";
+import Link from "@/components/ProjectLink";
 import {
   Alert,
   ButtonLink,
@@ -71,7 +73,36 @@ const when = (ms: number | null) =>
 const count = (n: number) => n.toLocaleString("en-US");
 const duration = (seconds: number) => formatDurationShort(seconds);
 
-export default async function TeamReportPage({
+/**
+ * The report reads every message of its period, which takes seconds on a busy project. The page opens at
+ * once with its title and the figures follow; changing a filter keeps the current report on screen until
+ * the new one is ready.
+ */
+export default function TeamReportPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  return (
+    <Suspense fallback={<TeamReportArriving />}>
+      <TeamReportBody searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+function TeamReportArriving() {
+  return (
+    <div>
+      <PageHeader title="Team Report" description="Working out this period's figures from your messages…" />
+      <div className="space-y-3" aria-hidden>
+        <div className="h-20 animate-shimmer rounded-[var(--radius-lg)]" />
+        <div className="h-72 animate-shimmer rounded-[var(--radius-lg)]" />
+      </div>
+    </div>
+  );
+}
+
+async function TeamReportBody({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -157,6 +188,8 @@ export default async function TeamReportPage({
         })
       : null;
   const teamOnly = Boolean(filters.teamId && !filters.memberId);
+  // Their own figures, for anybody whose login is linked to a team member.
+  const myMember = await prisma.internalTeamMember.findFirst({ where: { userId: session.userId }, select: { id: true } });
   // The page's own moment travels with every export, so the file says what the screen said.
   const query = `${teamReportQuery(filters)}&asof=${now.getTime()}`;
 
@@ -185,6 +218,11 @@ export default async function TeamReportPage({
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {myMember && filters.memberId !== myMember.id ? (
+              <Link href={`/team-report?member=${myMember.id}`} className="inline-flex h-9 items-center rounded-[var(--radius-md)] border border-[var(--color-accent)] px-3 text-[13px] font-medium text-[color:var(--color-accent)]">
+                My work
+              </Link>
+            ) : null}
             <ButtonLink href={`/api/team-report/export?${query}&format=csv`}>
               <Download className="size-3.5" aria-hidden />
               CSV

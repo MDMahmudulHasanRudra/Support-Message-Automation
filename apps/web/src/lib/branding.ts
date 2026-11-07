@@ -16,7 +16,7 @@ export const DEFAULT_BRANDING = {
   productName: DEFAULT_PRODUCT_NAME,
   loginHeadline: "WhatsApp support that answers before anyone has to.",
   loginSubheading:
-    "Deterministic rules decide what gets an instant reply, what waits for a human, and what escalates — with the whole decision trace recorded for every message.",
+    "Rules and AI answer what they can, your team gets the rest, and every decision is recorded for every message.",
 } as const;
 
 export const BRANDING_LIMITS = {
