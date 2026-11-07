@@ -2,7 +2,12 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
   businessHoursStatus,
+  describeUserAgent,
+  extractContactFromText,
   isClientNonce,
+  NEW_WIDGET_SETTINGS,
+  readPrechatAnswers,
+  readVisitorContext,
   isWebchatStorageKey,
   normalizeOrigin,
   normalizePhoneNumber,
@@ -92,8 +97,23 @@ export async function loadPublicWidget(key: string): Promise<PublicWidget | null
 }
 
 /** CORS headers for an allowed origin; null when the origin may not use this widget. */
-export function corsFor(widget: PublicWidget, origin: string | null): Record<string, string> | null {
-  if (!originAllowed(origin, widget.allowedOrigins)) return null;
+/** The widget's own chat page lives on this app's address, so an Origin on the address that was asked is that page. */
+export function isOwnAddress(origin: string | null, host: string | null): boolean {
+  if (!origin || !host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
+function isWebOrigin(origin: string | null): boolean {
+  return Boolean(origin && /^https?:\/\/[^/\s]+$/.test(origin));
+}
+
+export function corsFor(widget: PublicWidget, origin: string | null, host: string | null = null): Record<string, string> | null {
+  const allowed = originAllowed(origin, widget.allowedOrigins) || (widget.settings.allowAnyWebsite && isWebOrigin(origin)) || (widget.settings.directLink && isOwnAddress(origin, host));
+  if (!allowed) return null;
   return {
     "Access-Control-Allow-Origin": origin!,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -140,8 +160,9 @@ export async function recordWidgetRefused(widget: PublicWidget, origin: string |
  * to its public address. Never a storage key, an uploader, a consent record or the weekly hours.
  */
 export function publicWidgetSettings(widget: PublicWidget) {
-  const { hours, assets, team, ...rest } = widget.settings;
+  const { hours, assets, team, allowAnyWebsite, ...rest } = widget.settings;
   void hours;
+  void allowAnyWebsite;
   // Relative to the widget's own API address: the script prefixes the address it was loaded from.
   const url = (id: string | null) => (id && assets.some((a) => a.id === id) ? `brand/${encodeURIComponent(id)}` : null);
   return {
@@ -169,11 +190,16 @@ export interface VisitorSession {
  */
 export async function startVisitor(
   widget: PublicWidget,
-  input: { token?: unknown; name?: unknown; email?: unknown; identity?: unknown; ip: string | null; now?: Date },
+  input: { token?: unknown; name?: unknown; email?: unknown; phone?: unknown; custom?: unknown; consent?: unknown; context?: unknown; visit?: unknown; userAgent?: string | null; identity?: unknown; ip: string | null; now?: Date },
 ): Promise<VisitorSession> {
   const now = input.now ?? new Date();
   if (typeof input.token === "string" && input.token.length >= 32) {
     const existing = await platformPrisma.webChatVisitor.findUnique({ where: { tokenHash: sha256(input.token) }, select: { id: true, connectionId: true, verifiedExternalId: true } });
+    // A returning visitor, once per browser session: the count of visits, and where they are now.
+    if (existing && existing.connectionId === widget.connectionId && input.visit === true) {
+      const page = pageOn(widget, readVisitorContext(input.context).pageUrl);
+      await platformPrisma.webChatVisitor.update({ where: { id: existing.id }, data: { visitCount: { increment: 1 }, lastSeenAt: now, ...(page ? { pageUrl: page } : {}) } }).catch(() => {});
+    }
     if (existing && existing.connectionId === widget.connectionId) return { visitorId: existing.id, token: null, verified: Boolean(existing.verifiedExternalId) };
   }
 
@@ -189,6 +215,12 @@ export async function startVisitor(
     const expected = createHmac("sha256", widget.identitySecret).update(identity.id).digest("hex");
     if (secretsEqual(identity.hash.toLowerCase(), expected)) verifiedExternalId = identity.id;
   }
+  // The chat form is checked here too, so it cannot be skipped by calling this address directly. A widget script
+  // from before the form (cached up to an hour) sends no context, and is let through rather than losing a message.
+  const form = !verifiedExternalId && widget.settings.prechat.enabled && input.context ? readPrechatAnswers(widget.settings.prechat, input) : null;
+  if (form?.error) throw new WebchatError(form.error, 400);
+  const context = readVisitorContext(input.context);
+  const seenOn = describeUserAgent(input.userAgent);
   const name = clean(verifiedExternalId ? identity?.name : input.name, 80);
   // A phone number counts only with its OWN signature, HMAC-SHA256(secret, "phone:<id>:<phone>"): the user-id
   // hash says who is signed in, not which number is theirs, and the number is what links them to a client.
@@ -203,7 +235,20 @@ export async function startVisitor(
   const visitorId = `v_${randomBytes(18).toString("base64url")}`;
   const token = randomBytes(32).toString("base64url");
   await platformPrisma.webChatVisitor.create({
-    data: { id: visitorId, projectId: widget.projectId, connectionId: widget.connectionId, tokenHash: sha256(token), verifiedExternalId, name, email, phone, ipHash, createdAt: now, lastSeenAt: now },
+    data: { id: visitorId, projectId: widget.projectId, connectionId: widget.connectionId, tokenHash: sha256(token), verifiedExternalId, name, email, phone, ipHash, createdAt: now, lastSeenAt: now,
+      typedPhone: form?.phone ?? null,
+      customAnswers: form?.custom.length ? (form.custom as never) : undefined,
+      consentAt: form?.consent ? now : null,
+      firstPageUrl: pageOn(widget, context.pageUrl),
+      pageUrl: pageOn(widget, context.pageUrl),
+      referrer: context.referrer,
+      utmSource: context.utmSource,
+      utmMedium: context.utmMedium,
+      utmCampaign: context.utmCampaign,
+      language: context.language,
+      timeZone: context.timeZone,
+      ...seenOn,
+    },
   });
   return { visitorId, token, verified: Boolean(verifiedExternalId) };
 }
@@ -228,11 +273,11 @@ export async function visitorFromToken(widget: PublicWidget, authorization: stri
 }
 
 /** The page a visitor is on, kept only when it is on one of the widget's listed websites. */
-function pageOn(widget: PublicWidget, raw: unknown): string | null {
+export function pageOn(widget: PublicWidget, raw: unknown): string | null {
   if (typeof raw !== "string" || raw.length > 1000) return null;
   try {
     const url = new URL(raw);
-    if (!widget.allowedOrigins.includes(normalizeOrigin(url.origin) ?? "")) return null;
+    if (!widget.settings.allowAnyWebsite && !widget.allowedOrigins.includes(normalizeOrigin(url.origin) ?? "")) return null;
     // Path only: a query string can carry a password-reset token or someone's email.
     return `${url.origin}${url.pathname}`.slice(0, 500);
   } catch {
@@ -272,7 +317,20 @@ export async function recordVisitorMessage(widget: PublicWidget, visitor: Visito
     skipDuplicates: true,
   });
   await touchVisitor(visitor, input.pageUrl, widget);
+  await keepContactFromMessage(visitor.id, text);
   return { duplicate: created.count === 0 };
+}
+
+/** A phone or email written in a message fills in what the form did not get. Best effort, and never replaces anything. */
+async function keepContactFromMessage(visitorId: string, text: string): Promise<void> {
+  const found = extractContactFromText(text);
+  if (!found.email && !found.phone) return;
+  try {
+    if (found.email) await platformPrisma.webChatVisitor.updateMany({ where: { id: visitorId, email: null }, data: { email: found.email } });
+    if (found.phone) await platformPrisma.webChatVisitor.updateMany({ where: { id: visitorId, typedPhone: null, phone: null }, data: { typedPhone: found.phone } });
+  } catch (err) {
+    console.error("[webchat] could not keep a contact detail", (err as Error).name);
+  }
 }
 
 async function touchVisitor(visitor: Visitor, pageUrl: unknown, widget: PublicWidget): Promise<void> {
@@ -518,7 +576,7 @@ export async function connectWebchat(input: { name: string; origins: string[]; u
       externalAccountName: "Website",
       webhookKey: randomBytes(24).toString("base64url"),
       allowedOrigins: input.origins,
-      widgetSettings: parseWidgetSettings({}) as never,
+      widgetSettings: parseWidgetSettings(NEW_WIDGET_SETTINGS) as never,
       lastCheckedAt: now,
       credentialsUpdatedAt: now,
       credentialsUpdatedByUsername: input.username,
@@ -617,4 +675,16 @@ export async function rotateWebchatIdentitySecret(id: string): Promise<string> {
   const updated = await prisma.channelConnection.updateMany({ where: { id, type: "WEBCHAT" }, data: { webhookSecretCiphertext: encryptSecret(secret) } });
   if (updated.count === 0) throw new WebchatError("That widget no longer exists.", 404);
   return secret;
+}
+
+/** Allows the website that last tried to start this widget and was refused, from the widget's page. */
+export async function allowRefusedOrigin(id: string): Promise<string | null> {
+  const row = await prisma.channelConnection.findFirst({ where: { id, type: "WEBCHAT" }, select: { allowedOrigins: true, widgetRefusedOrigin: true } });
+  const origin = normalizeOrigin(row?.widgetRefusedOrigin ?? "");
+  if (!row || !origin) return null;
+  await prisma.channelConnection.updateMany({
+    where: { id, type: "WEBCHAT" },
+    data: { allowedOrigins: row.allowedOrigins.includes(origin) ? row.allowedOrigins : [...row.allowedOrigins, origin], widgetRefusedAt: null, widgetRefusedOrigin: null },
+  });
+  return origin;
 }

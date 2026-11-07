@@ -21,6 +21,211 @@ export interface BusinessHours {
   days: Array<DayHours | null>;
 }
 
+// ── The chat form (WEBSITE_CHAT.md §Chat form) ──────────────────────────────────
+
+export type PrechatFieldKey = "name" | "phone" | "email" | `c${number}`;
+
+export interface PrechatField {
+  key: string;
+  label: string;
+  enabled: boolean;
+  required: boolean;
+  /** Custom questions only. */
+  type?: "text" | "select";
+  options?: string[];
+}
+
+export interface PrechatSettings {
+  enabled: boolean;
+  intro: string;
+  buttonLabel: string;
+  /** Name, phone, email, then up to five questions of the business's own. */
+  fields: PrechatField[];
+  /** A tick box the visitor must accept. Empty = none. */
+  consentText: string;
+}
+
+export const PRECHAT_MAX_CUSTOM = 5;
+
+const BUILT_IN_FIELDS: PrechatField[] = [
+  { key: "name", label: "Your name", enabled: true, required: true },
+  { key: "phone", label: "Mobile number", enabled: true, required: true },
+  { key: "email", label: "Email address", enabled: true, required: false },
+];
+
+export const DEFAULT_PRECHAT: PrechatSettings = {
+  enabled: false,
+  intro: "Tell us a little about you so we can help faster.",
+  buttonLabel: "Start chat",
+  fields: BUILT_IN_FIELDS,
+  consentText: "",
+};
+
+/** What a widget created today starts with. A widget saved before keeps exactly how it behaved. */
+export const NEW_WIDGET_SETTINGS = { prechat: { ...DEFAULT_PRECHAT, enabled: true }, visitorPresence: true };
+
+const shortText = (v: unknown, max: number, fallback: string) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ").slice(0, max) : fallback);
+
+export function parsePrechat(input: unknown): PrechatSettings {
+  const v = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const given = Array.isArray(v.fields) ? (v.fields as Array<Record<string, unknown>>) : [];
+  const builtIn = BUILT_IN_FIELDS.map((field) => {
+    const f = given.find((g) => g && g.key === field.key);
+    return { key: field.key, label: shortText(f?.label, 60, field.label) || field.label, enabled: f ? f.enabled !== false : field.enabled, required: f ? f.required === true : field.required };
+  });
+  const custom: PrechatField[] = [];
+  for (const f of given) {
+    if (!f || typeof f.key !== "string" || !/^c\d{1,3}$/.test(f.key) || custom.length >= PRECHAT_MAX_CUSTOM) continue;
+    const label = shortText(f.label, 80, "");
+    if (!label) continue;
+    const options = f.type === "select" && Array.isArray(f.options) ? [...new Set(f.options.map((o) => shortText(o, 60, "")).filter(Boolean))].slice(0, 20) : [];
+    custom.push({ key: f.key, label, enabled: f.enabled !== false, required: f.required === true, type: options.length ? "select" : "text", ...(options.length ? { options } : {}) });
+  }
+  return {
+    enabled: v.enabled === true,
+    intro: typeof v.intro === "string" ? v.intro.trim().slice(0, 200) : DEFAULT_PRECHAT.intro,
+    buttonLabel: shortText(v.buttonLabel, 30, DEFAULT_PRECHAT.buttonLabel) || DEFAULT_PRECHAT.buttonLabel,
+    fields: [...builtIn, ...custom],
+    consentText: typeof v.consentText === "string" ? v.consentText.trim().slice(0, 240) : "",
+  };
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Bangla digits as ordinary ones: a visitor in Bangladesh may well type ০১৭... */
+function asciiDigits(text: string): string {
+  return text.replace(/[\u09e6-\u09ef]/g, (d) => String(d.charCodeAt(0) - 0x09e6));
+}
+
+/** A number somebody could plausibly be called on, in its digits, with Bangladesh's local form completed. */
+export function readTypedPhone(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const raw = asciiDigits(input).trim();
+  if (!/^\+?[\d\s().-]{8,24}$/.test(raw)) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 8 || digits.length > 15) return null;
+  return /^01\d{9}$/.test(digits) ? `88${digits}` : digits;
+}
+
+export interface PrechatAnswers {
+  error?: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  custom: Array<{ label: string; value: string }>;
+  consent: boolean;
+}
+
+/** Checked on the server as well as in the browser: the form cannot be skipped by calling the API directly. */
+export function readPrechatAnswers(prechat: PrechatSettings, input: { name?: unknown; email?: unknown; phone?: unknown; custom?: unknown; consent?: unknown }): PrechatAnswers {
+  const out: PrechatAnswers = { name: null, email: null, phone: null, custom: [], consent: input.consent === true };
+  const answers = (input.custom && typeof input.custom === "object" ? input.custom : {}) as Record<string, unknown>;
+  for (const field of prechat.fields) {
+    if (!field.enabled) continue;
+    const raw = field.key === "name" || field.key === "email" || field.key === "phone" ? input[field.key] : answers[field.key];
+    const text = shortText(raw, field.key === "email" ? 120 : 200, "");
+    if (!text) {
+      if (field.required) return { ...out, error: `Please fill in: ${field.label}.` };
+      continue;
+    }
+    if (field.key === "name") out.name = text.slice(0, 80);
+    else if (field.key === "email") {
+      if (!EMAIL.test(text)) return { ...out, error: "Please check the email address." };
+      out.email = text;
+    } else if (field.key === "phone") {
+      const phone = readTypedPhone(text);
+      if (!phone) return { ...out, error: "Please check the mobile number." };
+      out.phone = phone;
+    } else {
+      if (field.type === "select" && !field.options?.includes(text)) return { ...out, error: `Please choose: ${field.label}.` };
+      out.custom.push({ label: field.label, value: text });
+    }
+  }
+  if (prechat.consentText && !out.consent) return { ...out, error: "Please accept to continue." };
+  return out;
+}
+
+/** An email or phone number a visitor wrote in a message, so a detail given mid-chat is not lost. */
+export function extractContactFromText(text: string): { email: string | null; phone: string | null } {
+  const ascii = asciiDigits(text);
+  const email = ascii.match(/[^\s@<>(),;:"']+@[^\s@<>(),;:"']+\.[a-zA-Z]{2,}/)?.[0] ?? null;
+  const phoneText = ascii.replace(/[^\s@]+@[^\s@]+/g, " ").match(/(?:\+?88[\s-]?)?01[3-9][\d\s-]{8,12}|\+\d[\d\s-]{8,16}\d/)?.[0] ?? null;
+  return { email, phone: phoneText ? readTypedPhone(phoneText) : null };
+}
+
+/** Browser, system and kind of device, in words, from the browser's own description of itself. */
+export function describeUserAgent(userAgent: string | null | undefined): { browser: string | null; os: string | null; device: string | null } {
+  const ua = userAgent ?? "";
+  if (!ua) return { browser: null, os: null, device: null };
+  const browser = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /OPR\/|Opera/.test(ua) ? "Opera" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Other";
+  const os = /Android/.test(ua) ? "Android" : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Windows/.test(ua) ? "Windows" : /Mac OS/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "Other";
+  const device = /iPad|Tablet/.test(ua) ? "Tablet" : /Mobi|iPhone|Android/.test(ua) ? "Phone" : "Computer";
+  return { browser, os, device };
+}
+
+export interface VisitorContext {
+  pageUrl: string | null;
+  referrer: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  language: string | null;
+  timeZone: string | null;
+}
+
+/** What the widget sends about a visit, cleaned. A referrer keeps origin and path: a query string can hold a token. */
+export function readVisitorContext(input: unknown): VisitorContext {
+  const v = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const utm = (v.utm && typeof v.utm === "object" ? v.utm : {}) as Record<string, unknown>;
+  let referrer: string | null = null;
+  if (typeof v.referrer === "string" && v.referrer.length <= 1000) {
+    try {
+      const url = new URL(v.referrer);
+      if (url.protocol === "https:" || url.protocol === "http:") referrer = `${url.origin}${url.pathname}`.slice(0, 300);
+    } catch {
+      referrer = null;
+    }
+  }
+  const short = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim().slice(0, 80) : null);
+  return {
+    pageUrl: typeof v.pageUrl === "string" ? v.pageUrl : null,
+    referrer,
+    utmSource: short(utm.utm_source),
+    utmMedium: short(utm.utm_medium),
+    utmCampaign: short(utm.utm_campaign),
+    language: typeof v.language === "string" && /^[a-zA-Z-]{2,35}$/.test(v.language) ? v.language : null,
+    timeZone: typeof v.timeZone === "string" && /^[A-Za-z_/+-]{1,64}$/.test(v.timeZone) ? v.timeZone : null,
+  };
+}
+
+// ── Who a conversation is waiting on (the Live board) ──────────────────────────
+
+export type WebchatQueueState = "WAITING_PERSON" | "AI_ANSWERING" | "AI_ANSWERED" | "TEAM_ANSWERED" | "NO_MESSAGE";
+
+/** How long AI gets to answer before the customer counts as waiting for a person. */
+export const WEBCHAT_AI_GRACE_MS = 2 * 60_000;
+
+/**
+ * Decided from the last message that really counts (a reply that failed is not an answer, and the caller
+ * leaves it out). A customer's message AI has handed over, or AI could not take, is waiting for a person.
+ */
+export function classifyWebchatConversation(input: {
+  lastSender: string | null;
+  lastAiOutcome: string | null;
+  lastAt: Date | null;
+  aiEnabled: boolean;
+  aiSuppressedUntil: Date | null;
+  now: Date;
+}): WebchatQueueState {
+  if (!input.lastSender || !input.lastAt) return "NO_MESSAGE";
+  if (input.lastSender === "AI") return "AI_ANSWERED";
+  if (input.lastSender !== "CUSTOMER") return "TEAM_ANSWERED";
+  const paused = Boolean(input.aiSuppressedUntil && input.aiSuppressedUntil > input.now);
+  const undecided = input.lastAiOutcome === null;
+  const fresh = input.now.getTime() - input.lastAt.getTime() < WEBCHAT_AI_GRACE_MS;
+  return input.aiEnabled && !paused && undecided && fresh ? "AI_ANSWERING" : "WAITING_PERSON";
+}
+
 export interface WidgetSettings {
   title: string;
   welcome: string;
@@ -30,6 +235,14 @@ export interface WidgetSettings {
   /** Ask for a name / email before the first message (optional fields, shown as unverified). */
   askName: boolean;
   askEmail: boolean;
+  /** The form a visitor fills in before the chat starts. Off: askName / askEmail as before. */
+  prechat: PrechatSettings;
+  /** Counts who is on the website now, anonymously, for the Live board. */
+  visitorPresence: boolean;
+  /** Runs on any website instead of only the listed ones. Server-side only: never sent to a browser. */
+  allowAnyWebsite: boolean;
+  /** The widget's own chat page, /c/<key>, for a link in a bio, an email or a QR code. */
+  directLink: boolean;
   /** Shown under the header: when people can expect an answer. */
   replyNote: string;
   /** A short text beside the round button ("Chat with us"); empty = the button alone. */
@@ -144,6 +357,10 @@ export const DEFAULT_WIDGET_SETTINGS: WidgetSettings = {
   position: "right",
   askName: true,
   askEmail: false,
+  prechat: DEFAULT_PRECHAT,
+  visitorPresence: false,
+  allowAnyWebsite: false,
+  directLink: true,
   replyNote: "We usually reply within a few minutes.",
   launcherLabel: "",
   bottomOffset: 20,
@@ -280,6 +497,10 @@ export function parseWidgetSettings(input: unknown): WidgetSettings {
     position: v.position === "left" ? "left" : "right",
     askName: typeof v.askName === "boolean" ? v.askName : DEFAULT_WIDGET_SETTINGS.askName,
     askEmail: typeof v.askEmail === "boolean" ? v.askEmail : DEFAULT_WIDGET_SETTINGS.askEmail,
+    prechat: parsePrechat(v.prechat),
+    visitorPresence: v.visitorPresence === true,
+    allowAnyWebsite: v.allowAnyWebsite === true,
+    directLink: v.directLink !== false,
     replyNote: typeof v.replyNote === "string" ? v.replyNote.trim().slice(0, 120) : DEFAULT_WIDGET_SETTINGS.replyNote,
     launcherLabel: typeof v.launcherLabel === "string" ? v.launcherLabel.trim().slice(0, 30) : DEFAULT_WIDGET_SETTINGS.launcherLabel,
     bottomOffset: typeof v.bottomOffset === "number" && Number.isFinite(v.bottomOffset) ? Math.min(200, Math.max(0, Math.round(v.bottomOffset))) : DEFAULT_WIDGET_SETTINGS.bottomOffset,
@@ -321,7 +542,7 @@ export function cleanPathRule(raw: string): string | null {
   return p;
 }
 
-type V1Keys = "title" | "welcome" | "color" | "position" | "askName" | "askEmail" | "replyNote" | "launcherLabel" | "bottomOffset" | "allowAttachments" | "hours" | "offlineMessage" | "offlineAskEmail";
+type V1Keys = "title" | "welcome" | "color" | "position" | "askName" | "askEmail" | "prechat" | "visitorPresence" | "allowAnyWebsite" | "directLink" | "replyNote" | "launcherLabel" | "bottomOffset" | "allowAttachments" | "hours" | "offlineMessage" | "offlineAskEmail";
 
 function parseV3(v: Record<string, unknown>): Omit<WidgetSettings, V1Keys> {
   const assets = parseAssets(v.assets);

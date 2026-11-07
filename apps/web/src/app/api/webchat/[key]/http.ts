@@ -12,6 +12,23 @@ export function json(body: unknown, status: number, cors: Record<string, string>
   return NextResponse.json(body, { status, headers: { ...BASE_HEADERS, ...(cors ?? {}) } });
 }
 
+/** The address this request came in on, as the proxy saw it. */
+export function requestHost(request: NextRequest): string | null {
+  return request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || request.headers.get("host");
+}
+
+/**
+ * The Origin header, or this app's own address for a same-page request, which browsers send without one: the
+ * widget's own chat page reading its settings. Sec-Fetch-Site is set by the browser and a page cannot change it.
+ */
+export function requestOrigin(request: NextRequest): string | null {
+  const origin = request.headers.get("origin");
+  if (origin) return origin;
+  if (request.headers.get("sec-fetch-site") !== "same-origin") return null;
+  const host = requestHost(request);
+  return host ? `${request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || request.nextUrl.protocol.replace(":", "")}://${host}` : null;
+}
+
 export async function withWidget(
   request: NextRequest,
   key: string,
@@ -19,10 +36,11 @@ export async function withWidget(
 ): Promise<NextResponse> {
   const widget = await loadPublicWidget(key);
   if (!widget) return json({ error: "Chat is not available." }, 404, null);
-  const cors = corsFor(widget, request.headers.get("origin"));
+  const origin = requestOrigin(request);
+  const cors = corsFor(widget, origin, requestHost(request));
   if (!cors) {
     // Remembered for the install page ("tried to start on https://x, which is not listed"); nothing else.
-    await recordWidgetRefused(widget, request.headers.get("origin"));
+    await recordWidgetRefused(widget, origin);
     return json({ error: "This website may not use this chat." }, 403, null);
   }
   try {
@@ -36,7 +54,7 @@ export async function withWidget(
 
 export async function preflight(request: NextRequest, key: string): Promise<NextResponse> {
   const widget = await loadPublicWidget(key);
-  const cors = widget ? corsFor(widget, request.headers.get("origin")) : null;
+  const cors = widget ? corsFor(widget, requestOrigin(request), requestHost(request)) : null;
   return new NextResponse(null, { status: cors ? 204 : 403, headers: { ...BASE_HEADERS, ...(cors ?? {}) } });
 }
 

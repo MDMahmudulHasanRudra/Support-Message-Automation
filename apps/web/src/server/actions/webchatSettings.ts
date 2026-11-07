@@ -5,7 +5,7 @@ import { parseAllowedOrigins } from "@support-automation/shared";
 import { checkPermission } from "@/server/authorize";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { projectPath } from "@/server/projectPaths";
-import { removeWidgetAsset, rotateWebchatIdentitySecret, saveWebchatSettings, WebchatError } from "@/server/channels/webchat";
+import { allowRefusedOrigin, removeWidgetAsset, rotateWebchatIdentitySecret, saveWebchatSettings, WebchatError } from "@/server/channels/webchat";
 
 /** Website chat widget settings (WEBSITE_CHAT.md). channels.manage, OMNICHANNEL on. */
 
@@ -50,6 +50,8 @@ export async function saveWidgetBuilderAction(connectionId: string, settingsJson
   }
   await logSystemEvent("INFO", "channels", "Website chat widget saved", { origins }, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: id });
   revalidatePath(await projectPath(`/settings/channels/${id}`));
+  revalidatePath(await projectPath(`/website-chat/widgets/${id}`));
+  revalidatePath(await projectPath("/website-chat/widgets"));
   return { success: "Saved. Websites showing the widget pick it up on their next page load." };
 }
 
@@ -65,6 +67,8 @@ export async function removeWidgetAssetAction(connectionId: string, assetId: str
   }
   await logSystemEvent("INFO", "channels", "Website chat image removed", {}, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: String(connectionId) });
   revalidatePath(await projectPath(`/settings/channels/${connectionId}`));
+  revalidatePath(await projectPath(`/website-chat/widgets/${connectionId}`));
+  revalidatePath(await projectPath("/website-chat/widgets"));
   return { success: "Removed." };
 }
 
@@ -76,9 +80,23 @@ export async function rotateWebchatSecretAction(id: string): Promise<{ secret?: 
     const secret = await rotateWebchatIdentitySecret(String(id));
     await logSystemEvent("WARN", "channels", "Website chat identity secret replaced", {}, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: String(id) });
     revalidatePath(await projectPath(`/settings/channels/${id}`));
+  revalidatePath(await projectPath(`/website-chat/widgets/${id}`));
+  revalidatePath(await projectPath("/website-chat/widgets"));
     return { secret };
   } catch (err) {
     if (err instanceof WebchatError) return { error: err.message };
     throw err;
   }
+}
+
+/** Lets the website that just tried to start this widget use it. channels.manage, like every widget setting. */
+export async function allowRefusedOriginAction(id: string): Promise<WebchatSettingsState> {
+  const access = await checkPermission("channels.manage", "OMNICHANNEL");
+  if ("denied" in access) return { error: access.denied };
+  const origin = await allowRefusedOrigin(id);
+  if (!origin) return { error: "No refused website to allow." };
+  await logSystemEvent("INFO", "channels", "Website chat website allowed", { origin }, { actorUserId: access.session.userId, targetType: "ChannelConnection", targetId: id });
+  revalidatePath(await projectPath(`/website-chat/widgets/${id}`));
+  revalidatePath(await projectPath("/website-chat/widgets"));
+  return { success: `${origin} can use this widget now.` };
 }

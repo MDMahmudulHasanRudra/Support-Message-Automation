@@ -2896,6 +2896,9 @@ Feature `WHATSAPP_AVATARS`, **off by default and never switched by a plan** (`ma
 
 ### Website live chat (`WEBSITE_CHAT.md`)
 
+Its own sidebar module since 7 Nov 2026: Live board, Conversations, Visitors, Widgets & install. `classifyWebchatConversation` is the one reading of who a conversation waits on; a failed reply is not an answer. `typedPhone` (typed, never trusted, links to nothing) stays separate from `phone` (signed). The chat form is enforced on the server too. Presence is anonymous and in memory only. `allowAnyWebsite` never reaches a browser.
+
+
 `ChannelType.WEBCHAT`: our own widget as a fourth channel. The public API (`/api/webchat/<key>`) checks the
 listed Origin (fails closed) and a hashed visitor token, and only RECORDS a `ChannelInboundEvent`; the
 worker's inbound processor makes the conversation and the send queue marks a WEBCHAT reply SENT on store.

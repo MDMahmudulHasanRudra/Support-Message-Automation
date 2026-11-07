@@ -14,6 +14,7 @@ import { Alert, Button, Field, Input } from "@/components/ui";
 import { useProjectHref, useProjectRouter } from "@/components/ProjectLink";
 import { removeWidgetAssetAction, rotateWebchatSecretAction, saveWidgetBuilderAction } from "@/server/actions/webchatSettings";
 import { CopyValue } from "./ConnectionPanel";
+import { AllowSiteButton } from "../../website-chat/widgets/WidgetTools";
 
 /**
  * The Website Chat Widget Builder (Website Chat V3, docs/website-chat-v3). Controls on one side, the REAL widget on
@@ -39,9 +40,10 @@ export interface StudioInstall {
   seenRecently: boolean;
 }
 
-type Section = "general" | "appearance" | "launcher" | "window" | "team" | "behaviour" | "messages" | "hours" | "ai" | "install" | "security" | "analytics";
+type Section = "general" | "prechat" | "appearance" | "launcher" | "window" | "team" | "behaviour" | "messages" | "hours" | "ai" | "install" | "security" | "analytics";
 const SECTIONS: Array<[Section, string]> = [
   ["general", "General"],
+  ["prechat", "Chat form"],
   ["appearance", "Appearance"],
   ["launcher", "Launcher"],
   ["window", "Chat window"],
@@ -170,6 +172,8 @@ export function WidgetStudio(props: {
               </Field>
             </>
           ) : null}
+
+          {section === "prechat" ? <PrechatEditor value={s.prechat} onChange={(next) => set("prechat", next)} /> : null}
 
           {section === "appearance" ? (
             <>
@@ -390,8 +394,8 @@ export function WidgetStudio(props: {
                 <Toggle checked={s.allowPdf} onChange={(v) => set("allowPdf", v)} label="Also PDFs" description="Widgets created before this release kept PDFs switched on; new widgets accept photos only." />
               ) : null}
               <Toggle checked={s.emoji} onChange={(v) => set("emoji", v)} label="Emoji picker" description="Emoji are ordinary text: they always work, this only shows the picker button." />
-              <Toggle checked={s.askName} onChange={(v) => set("askName", v)} label="Ask for a name before the first message" description="Optional for the visitor, shown to the team as unverified." />
-              <Toggle checked={s.askEmail} onChange={(v) => set("askEmail", v)} label="Ask for an email" description="Optional for the visitor." />
+              {s.prechat.enabled ? null : <Toggle checked={s.askName} onChange={(v) => set("askName", v)} label="Ask for a name before the first message" description="Optional for the visitor, shown to the team as unverified." />}
+              {s.prechat.enabled ? null : <Toggle checked={s.askEmail} onChange={(v) => set("askEmail", v)} label="Ask for an email" description="Optional for the visitor." />}
             </>
           ) : null}
 
@@ -413,12 +417,15 @@ export function WidgetStudio(props: {
           ) : null}
 
           {section === "install" ? (
-            <InstallSection scriptUrl={props.scriptUrl} widgetKey={props.widgetKey} wordpressHref={props.wordpressHref} install={props.install} enabled={props.enabled} origins={props.origins} onRecheck={() => router.refresh()} />
+            <InstallSection connectionId={props.connectionId} scriptUrl={props.scriptUrl} widgetKey={props.widgetKey} wordpressHref={props.wordpressHref} install={props.install} enabled={props.enabled} origins={props.origins} onRecheck={() => router.refresh()} />
           ) : null}
 
           {section === "security" ? (
             <>
               <OriginsEditor value={originsText} onChange={setOriginsText} />
+              <Toggle checked={s.allowAnyWebsite} onChange={(v) => set("allowAnyWebsite", v)} label="Run on any website" description="The code then works wherever it is pasted, with nothing to list. Leave off unless you need it: anyone who copies the code from your site could show your chat box on theirs. Rate limits still apply." />
+              <Toggle checked={s.directLink} onChange={(v) => set("directLink", v)} label="Own chat link" description="A full-page chat at this widget's own address, for a bio, an email or a QR code." />
+              <Toggle checked={s.visitorPresence} onChange={(v) => set("visitorPresence", v)} label="Count who is on the website now" description="Shows the number of people and the pages they have open on the Live board. Anonymous: a random id and a page address, kept in memory for two minutes, never linked to anyone." />
               <IdentitySecret connectionId={props.connectionId} canManage={props.canManage} hasIdentitySecret={props.hasIdentitySecret} />
             </>
           ) : null}
@@ -479,6 +486,7 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
   const [offline, setOffline] = useState(false);
   const [teaser, setTeaser] = useState(false);
   const [sample, setSample] = useState(true);
+  const [showForm, setShowForm] = useState(false);
   const [typing, setTyping] = useState(false);
   const [darkSite, setDarkSite] = useState(false);
 
@@ -497,7 +505,7 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
     }),
     [settings, team, assetUrl, widgetName, offline],
   );
-  const post = () => frame.current?.contentWindow?.postMessage({ type: "getassist-preview", config, messages: sample ? SAMPLE() : [], view: { open, teaser, typing } }, "*");
+  const post = () => frame.current?.contentWindow?.postMessage({ type: "getassist-preview", config, messages: sample ? SAMPLE() : [], view: { open, teaser, typing, prechat: showForm } }, "*");
   useEffect(() => {
     const t = setTimeout(post, 120);
     return () => clearTimeout(t);
@@ -528,6 +536,7 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
         <button type="button" className={chip(offline)} onClick={() => setOffline(!offline)} aria-pressed={offline}>{offline ? "Away" : "Online"}</button>
         <button type="button" className={chip(teaser)} onClick={() => { setTeaser(!teaser); setOpen(false); }} aria-pressed={teaser}>Greeting</button>
         <button type="button" className={chip(sample)} onClick={() => setSample(!sample)} aria-pressed={sample}>Sample chat</button>
+        <button type="button" className={chip(showForm)} onClick={() => { setShowForm(!showForm); setOpen(true); }} aria-pressed={showForm}>Chat form</button>
         <button type="button" className={chip(typing)} onClick={() => setTyping(!typing)} aria-pressed={typing}>Typing</button>
         <button type="button" className={chip(darkSite)} onClick={() => setDarkSite(!darkSite)} aria-pressed={darkSite}>Dark site</button>
       </div>
@@ -548,6 +557,73 @@ function WidgetPreview({ settings, team, assetUrl, widgetName, widgetKey }: { se
 }
 
 // ── Small controls ───────────────────────────────────────────────────────────────────────────────
+
+/** The form a visitor fills in before the chat starts: what to ask, what is required, and the business's own questions. */
+function PrechatEditor({ value, onChange }: { value: WidgetSettings["prechat"]; onChange: (next: WidgetSettings["prechat"]) => void }) {
+  const patchField = (key: string, patch: Partial<WidgetSettings["prechat"]["fields"][number]>) => onChange({ ...value, fields: value.fields.map((f) => (f.key === key ? { ...f, ...patch } : f)) });
+  const custom = value.fields.filter((f) => /^c\d/.test(f.key));
+  const addQuestion = () => {
+    const used = new Set(value.fields.map((f) => f.key));
+    let n = 1;
+    while (used.has(`c${n}`)) n += 1;
+    onChange({ ...value, fields: [...value.fields, { key: `c${n}`, label: "Your question", enabled: true, required: false, type: "text" }] });
+  };
+  return (
+    <>
+      <Toggle checked={value.enabled} onChange={(enabled) => onChange({ ...value, enabled })} label="Ask visitors to fill in a form before the chat starts" description="They see this first, then they can chat. Visitors signed in on your website skip it." />
+      {value.enabled ? (
+        <div className="space-y-3">
+          <Field label="Line at the top" htmlFor="pc-intro">
+            <Input id="pc-intro" value={value.intro} maxLength={200} onChange={(e) => onChange({ ...value, intro: e.target.value })} />
+          </Field>
+          <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-lg)] border border-[var(--color-border)]">
+            {value.fields.map((f) => {
+              const isCustom = /^c\d/.test(f.key);
+              return (
+                <li key={f.key} className="space-y-2 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input aria-label="Question" value={f.label} maxLength={80} onChange={(e) => patchField(f.key, { label: e.target.value })} className="min-w-0 flex-1 basis-40" />
+                    <label className="inline-flex items-center gap-1.5 text-[12.5px]">
+                      <input type="checkbox" checked={f.enabled} onChange={(e) => patchField(f.key, { enabled: e.target.checked, required: e.target.checked ? f.required : false })} /> Ask
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-[12.5px]">
+                      <input type="checkbox" checked={f.required} disabled={!f.enabled} onChange={(e) => patchField(f.key, { required: e.target.checked })} /> Required
+                    </label>
+                    {isCustom ? (
+                      <button type="button" aria-label={`Remove ${f.label}`} className="rounded-[var(--radius-sm)] p-1 text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-danger-fg)]" onClick={() => onChange({ ...value, fields: value.fields.filter((x) => x.key !== f.key) })}>
+                        <Trash2 className="size-4" aria-hidden />
+                      </button>
+                    ) : null}
+                  </div>
+                  {isCustom ? (
+                    <Input aria-label="Choices" placeholder="Choices, separated by commas (leave empty for a typed answer)" value={(f.options ?? []).join(", ")} onChange={(e) => {
+                      const options = e.target.value.split(",").map((o) => o.trimStart());
+                      patchField(f.key, { options: e.target.value ? options : [], type: e.target.value ? "select" : "text" });
+                    }} />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {custom.length < 5 ? (
+            <Button type="button" variant="secondary" size="sm" onClick={addQuestion}>
+              Add a question
+            </Button>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Button" htmlFor="pc-button">
+              <Input id="pc-button" value={value.buttonLabel} maxLength={30} onChange={(e) => onChange({ ...value, buttonLabel: e.target.value })} />
+            </Field>
+            <Field label="Tick box to accept (optional)" htmlFor="pc-consent">
+              <Input id="pc-consent" value={value.consentText} maxLength={240} placeholder="I agree to be contacted about my request." onChange={(e) => onChange({ ...value, consentText: e.target.value })} />
+            </Field>
+          </div>
+          <p className={hint}>Everything a visitor types here is shown to your team as typed, never as proof of who they are. See it in the preview with the Chat form button.</p>
+        </div>
+      ) : null}
+    </>
+  );
+}
 
 function Toggle({ checked, onChange, label, description }: { checked: boolean; onChange: (v: boolean) => void; label: string; description?: string }) {
   return (
@@ -862,7 +938,7 @@ const PLATFORMS: Array<[Platform, string]> = [
   ["other", "Other"],
 ];
 
-function InstallSection({ scriptUrl, widgetKey, wordpressHref, install, enabled, origins, onRecheck }: { scriptUrl: string | null; widgetKey: string; wordpressHref: string | null; install: StudioInstall; enabled: boolean; origins: string[]; onRecheck: () => void }) {
+function InstallSection({ connectionId, scriptUrl, widgetKey, wordpressHref, install, enabled, origins, onRecheck }: { connectionId: string; scriptUrl: string | null; widgetKey: string; wordpressHref: string | null; install: StudioInstall; enabled: boolean; origins: string[]; onRecheck: () => void }) {
   const [platform, setPlatform] = useState<Platform>("html");
   const [copied, setCopied] = useState(false);
   if (!scriptUrl) return <Alert tone="warning" title="This server's public address (NEXTAUTH_URL) is not set, so the install code cannot be built." />;
@@ -931,6 +1007,7 @@ function InstallSection({ scriptUrl, widgetKey, wordpressHref, install, enabled,
           {install.seenAt && !fresh ? <Status ok={false} text="Not seen in the last 7 days — has the code been removed, or the site moved?" /> : null}
           <Status ok={enabled} text={enabled ? "The widget is switched on." : "The widget is switched off (General): visitors see “Chat is not available right now”."} />
           <Status ok={origins.length > 0} text={origins.length ? `Allowed websites: ${origins.join(", ")}.` : "No website is listed under Security & domains."} />
+          {install.refusedOrigin ? <li><AllowSiteButton id={connectionId} /></li> : null}
           {install.refusedOrigin ? <Status ok={false} text={`${install.refusedOrigin} tried to start the widget (${install.refusedAt ? new Date(install.refusedAt).toLocaleString() : ""}) but is not listed. If it is your site, add it under Security & domains.`} /> : null}
         </ul>
         <details className="text-[color:var(--color-muted-foreground)]">

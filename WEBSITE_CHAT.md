@@ -10,6 +10,18 @@ typing columns, agent typing) and `20261030150000_webchat_v3` (the install check
 Builder, photos both ways, the install check and the WordPress plugin 1.1.0, on the same tables, API and
 embed line, so a site installed before V3 keeps working unchanged.
 
+## The Website Chat module (7 Nov 2026)
+
+Its own sidebar module, behind `OMNICHANNEL`: **Live board** (`/website-chat`), **Conversations** (the existing `/conversations/website`), **Visitors** (`/website-chat/visitors`, with a CSV export) and **Widgets & install** (`/website-chat/widgets`, the builder at `/widgets/<id>`; the old Settings address redirects here).
+
+- **Live board** (`server/websiteChat.ts`). One reading of who a conversation is waiting on, `classifyWebchatConversation`: a customer's last message is "AI is answering" for two minutes only while AI is on and has not decided, and otherwise "Waiting for a person". A reply that FAILED or is UNKNOWN is not an answer. Longest wait first. It refreshes through `LiveRefresh`.
+- **Chat form** (`prechat` in the widget settings). Name, mobile and email, each asked or not and required or not, up to five questions of the business's own, an optional tick box. Checked in the browser and again on the server, so calling the API cannot skip it. A widget saved before this keeps exactly how it behaved; a new one starts with it on. A script cached from before the form sends no `context` and is let through, rather than losing a message.
+- **Typed is never trusted.** `typedPhone` is a separate column from `phone`: it links to no client or order and gives AI nothing. Only the site's signature does that.
+- **Details kept automatically**: first and last page and the referrer (origin + path only, never a query string, which can hold a token), the three `utm_` values, browser, system, device, language, time zone, number of visits, and a phone or email written in a message when none was given (`extractContactFromText`; it never replaces anything).
+- **Who is on the website now** (`visitorPresence`, `webchatPresence.ts`): anonymous, a random id and a page address, in memory for two minutes, never in the database and never linked to a visitor. On for a new widget.
+- **Install**: the same one line. A site that is refused is named on the widgets page with **Allow this site**. **Run on any website** (`allowAnyWebsite`, off, never sent to a browser) is there for those who want no list. **Direct link** `/c/<key>`: the same widget full screen on this app's address, for a bio, an email or a QR code; a same-page request has no Origin header, so `requestOrigin` supplies it from Sec-Fetch-Site, and it never counts as "installed on a website".
+- **Voice and video** are shown as Coming soon, and nothing is built.
+
 ## Setting it up
 
 Settings → Messaging Channels → Website chat → Connect: a name and the website addresses it may run on. A

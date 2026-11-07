@@ -8267,6 +8267,23 @@ model WebChatVisitor {
   phone              String?
   /// The page the visitor was on when they last wrote (an address on a listed website only).
   pageUrl            String?
+  /// A phone number the visitor typed. Never trusted: it links to no client or order, unlike `phone`.
+  typedPhone         String?
+  /// The chat form's own questions, as [{ label, value }], with the wording they were asked in.
+  customAnswers      Json?
+  consentAt          DateTime?
+  /// How they arrived and on what (origin + path only, never a query string).
+  firstPageUrl       String?
+  referrer           String?
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  browser            String?
+  os                 String?
+  device             String?
+  language           String?
+  timeZone           String?
+  visitCount         Int               @default(1)
   /// When the visitor last typed; the inbox shows "typing…" for a few seconds after it.
   typingAt           DateTime?
   createdAt          DateTime          @default(now())
@@ -8274,6 +8291,7 @@ model WebChatVisitor {
 
   @@index([connectionId, createdAt])
   @@index([ipHash, createdAt])
+  @@index([projectId, lastSeenAt])
 }
 
 /// The business profile of a project (PROJECT_MODULES.md). Kept in sync with PROJECT_TYPES in

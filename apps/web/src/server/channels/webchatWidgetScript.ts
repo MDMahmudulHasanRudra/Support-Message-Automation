@@ -24,7 +24,7 @@ import { WIDGET_FONT_STACKS, widgetPathAllowed, widgetTeaserAllowed } from "@sup
  * Preview (`data-preview="1"`, the settings page only): no network at all. The configuration and sample messages come
  * from window.GetAssistChatPreview and from postMessage by the parent page; nothing is sent, no visitor is created.
  */
-const VERSION = "3.1.0";
+const VERSION = "3.2.0";
 
 export const WIDGET_SCRIPT = String.raw`(function () {
   "use strict";
@@ -35,6 +35,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   window.__getAssistChatLoaded = true;
   var key = script.getAttribute("data-key");
   if (!key) return;
+  var direct = script.getAttribute("data-direct") === "1";
   var VERSION = "` + VERSION + String.raw`";
   var base = new URL(script.src, location.href).origin + "/api/webchat/" + encodeURIComponent(key);
   var storeKey = "getassist-chat-" + key;
@@ -162,6 +163,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       ".dz{position:absolute;inset:0;background:rgba(37,99,235,.08);border:2px dashed " + p.brand + ";border-radius:" + r + "px;display:none;align-items:center;justify-content:center;font-weight:600;color:" + p.brand + ";z-index:3;pointer-events:none}.dz.on{display:flex}",
       ".lb{position:absolute;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;z-index:4;cursor:zoom-out}.lb.on{display:flex}.lb img{max-width:94%;max-height:90%;border-radius:8px}",
       ".pv{font-size:11px;text-align:center;color:" + p.muted + ";padding:2px 8px 6px}",
+      ".pf{flex:1;min-height:0;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;background:" + p.bg + "}.pf .pi{margin:0;font-size:14px;line-height:1.45;color:" + p.text + "}.pf label{display:flex;flex-direction:column;gap:5px;font-size:12.5px;font-weight:600;color:" + p.text + "}.pf input:not([type=checkbox]),.pf select{border:1px solid " + p.border + ";background:" + p.surface + ";color:" + p.text + ";border-radius:10px;padding:10px 11px;font:inherit;font-size:14px;font-weight:400;width:100%;box-sizing:border-box}.pf .pc{flex-direction:row;align-items:flex-start;gap:8px;font-weight:400;line-height:1.4}.pf .pe{margin:0;font-size:12.5px;color:#c62828;min-height:0}.pf .pg{border:0;border-radius:10px;padding:12px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;background:var(--ga-accent," + (S.cfg.settings.color || "#2563eb") + ");color:#fff}.pf .pg:disabled{opacity:.6;cursor:default}",
       ".cs{align-self:stretch;margin:10px 2px 4px;padding:12px;border:1px solid " + p.border + ";border-radius:" + Math.max(8, r - 2) + "px;background:" + p.surface + ";color:" + p.text + ";display:flex;flex-direction:column;gap:8px}",
       ".cs p{margin:0;font-size:13.5px;line-height:1.45;white-space:pre-wrap}.cs .st{display:flex;gap:4px}.cs .st button{flex:1;min-width:0;height:40px;border:1px solid " + p.border + ";border-radius:10px;background:transparent;cursor:pointer;font-size:18px;line-height:1;color:" + p.muted + "}",
       ".cs .st button.on{background:" + p.brand + ";border-color:" + p.brand + ";color:" + p.brandInk + "}.cs .st button span{display:block;font-size:10.5px;margin-top:2px}",
@@ -170,7 +172,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
       "@media (max-width:480px){" + (c.mobileFullscreen !== false
         ? ".p{position:fixed;inset:0;width:auto;height:100%;max-height:none;max-width:none;border-radius:0;border:0;padding-bottom:env(safe-area-inset-bottom)}.b.op{display:none}"
         : ".p{position:fixed;left:8px;right:8px;bottom:" + (size + 24) + "px;width:auto;height:min(" + h + "px,calc(100vh - " + (size + 48) + "px))}") +
-        ".f textarea,.pre input,.ep input,.cs textarea{font-size:16px}.lab{display:none}.tz{max-width:calc(100vw - 100px)}}",
+        ".f textarea,.pre input,.ep input,.cs textarea,.pf input:not([type=checkbox]),.pf select{font-size:16px}.lab{display:none}.tz{max-width:calc(100vw - 100px)}}",
     ].join("");
   }
 
@@ -294,7 +296,11 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     pre = null;
     var signed = opts.user && opts.user.id && opts.user.hash;
     var askEmail = c.askEmail || (offline && c.offlineAskEmail);
-    if (!S.token && !signed && (c.askName || askEmail) && !preview) {
+    var pc = c.prechat && c.prechat.enabled ? c.prechat : null;
+    if (pc && !signed && (preview ? S.previewPrechat : !S.token)) {
+      pre = prechatForm(pc);
+      S.formOpen = true;
+    } else if (!pc && !S.token && !signed && (c.askName || askEmail) && !preview) {
       pre = el("div", "pre");
       if (offline && c.offlineAskEmail) pre.appendChild(el("p", null, "Leave your email so we can reply when we're back."));
       if (c.askName) { var n = el("input"); n.placeholder = "Your name (optional)"; n.maxLength = 80; n.setAttribute("aria-label", "Your name"); n.dataset.f = "name"; n.autocomplete = "name"; pre.appendChild(n); }
@@ -307,6 +313,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     panel.appendChild(note);
     panel.appendChild(draftEl);
     if (pre) panel.appendChild(pre);
+    if (S.formOpen) { listWrap.style.display = "none"; form.style.display = "none"; counter.style.display = "none"; note.style.display = "none"; typingEl.style.display = "none"; }
     panel.appendChild(counter);
     if (preview) panel.appendChild(el("div", "pv", "Preview — nothing is sent"));
     panel.appendChild(form);
@@ -314,6 +321,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     panel.appendChild(lightbox);
     panel.addEventListener("keydown", function (e) { if (e.key === "Escape" && lightbox.className.indexOf("on") > -1) { lightbox.className = "lb"; lightbox.textContent = ""; } });
     shadow.appendChild(panel);
+    if (direct) shadow.appendChild(el("style", null, ".p{position:fixed!important;inset:0!important;width:auto!important;height:100%!important;max-height:none!important;max-width:none!important;border-radius:0!important;border:0!important}.b,.x{display:none!important}"));
     shadow.appendChild(teaserEl);
     shadow.appendChild(wrap);
     (document.body || document.documentElement).appendChild(root);
@@ -340,6 +348,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
 
   var savedOverflow = null;
   function toggle(open, how) {
+    if (direct && !open) return;
     if (!panel) return;
     S.open = open;
     panel.className = open ? "p o" : "p";
@@ -361,18 +370,98 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     clearTimeout(S.timer);
     if (!S.token || preview || S.destroyed) return;
     if (document.visibilityState === "hidden") return;
-    var wait = S.open ? 3000 : 30000;
+    var wait = S.open ? 2000 : 30000;
     if (S.failures) wait = Math.min(60000, 3000 * Math.pow(2, S.failures));
     S.timer = setTimeout(function () { poll(); schedule(); }, wait);
+  }
+
+  // How this visit arrived. Origin and path on the server; only these three campaign words from the query string.
+  function visitContext() {
+    var utm = {};
+    try { var q = new URLSearchParams(location.search); ["utm_source", "utm_medium", "utm_campaign"].forEach(function (k) { var v = q.get(k); if (v) utm[k] = v; }); } catch (e) { /* an old browser simply sends none */ }
+    var zone = null;
+    try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch (e) { zone = null; }
+    return { pageUrl: location.href, referrer: document.referrer || null, utm: utm, language: navigator.language || null, timeZone: zone };
+  }
+  function closeForm() {
+    S.formOpen = false;
+    if (pre) { pre.remove(); pre = null; }
+    listWrap.style.display = ""; form.style.display = ""; counter.style.display = ""; note.style.display = ""; typingEl.style.display = "";
+    if (S.open && !touch) input.focus();
+  }
+  function prechatForm(pc) {
+    var box = el("form", "pf");
+    box.noValidate = true;
+    if (pc.intro) box.appendChild(el("p", "pi", pc.intro));
+    pc.fields.forEach(function (f) {
+      if (!f.enabled) return;
+      var label = el("label");
+      label.appendChild(el("span", null, f.label + (f.required ? " *" : "")));
+      var field;
+      if (f.type === "select") {
+        field = el("select");
+        var blank = el("option", null, "Choose…"); blank.value = ""; field.appendChild(blank);
+        (f.options || []).forEach(function (v) { var o = el("option", null, v); o.value = v; field.appendChild(o); });
+      } else {
+        field = el("input");
+        field.type = f.key === "email" ? "email" : f.key === "phone" ? "tel" : "text";
+        if (f.key === "name") field.autocomplete = "name";
+        if (f.key === "email") field.autocomplete = "email";
+        if (f.key === "phone") { field.autocomplete = "tel"; field.inputMode = "tel"; }
+        field.maxLength = f.key === "email" ? 120 : 200;
+      }
+      field.dataset.f = f.key;
+      field.dataset.r = f.required ? "1" : "";
+      field.dataset.l = f.label;
+      label.appendChild(field);
+      box.appendChild(label);
+    });
+    if (pc.consentText) {
+      var line = el("label", "pc");
+      var tick = el("input"); tick.type = "checkbox"; tick.dataset.f = "consent";
+      line.appendChild(tick);
+      line.appendChild(el("span", null, pc.consentText));
+      box.appendChild(line);
+    }
+    var problem = el("p", "pe");
+    problem.setAttribute("role", "alert");
+    var go = el("button", "pg", pc.buttonLabel || "Start chat");
+    go.type = "submit";
+    box.appendChild(problem);
+    box.appendChild(go);
+    box.onsubmit = function (e) {
+      e.preventDefault();
+      problem.textContent = "";
+      var missing = Array.prototype.find.call(box.querySelectorAll("input,select"), function (i) { return i.dataset.r === "1" && !i.value.trim(); });
+      if (missing) { problem.textContent = "Please fill in: " + missing.dataset.l + "."; missing.focus(); return; }
+      if (preview) { S.previewPrechat = false; closeForm(); return; }
+      go.disabled = true;
+      ensureSession().catch(function (err) { problem.textContent = (err && err.message) || "Could not start the chat. Try again."; go.disabled = false; });
+    };
+    return box;
+  }
+  var lastPing = 0;
+  function pingPresence() {
+    if (preview || !S.cfg || !S.cfg.settings.visitorPresence || document.visibilityState === "hidden" || Date.now() - lastPing < 5000) return;
+    lastPing = Date.now();
+    var id = store("pid");
+    if (!id) { id = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 32); store("pid", id); }
+    api("/presence", { method: "POST", body: JSON.stringify({ pid: id, pageUrl: location.href, chatting: Boolean(S.token) }) }).catch(function () {});
   }
 
   function ensureSession() {
     if (S.token) return Promise.resolve();
     if (S.starting) return S.starting;
-    var body = { identity: opts.user || null };
-    if (pre) Array.prototype.forEach.call(pre.querySelectorAll("input"), function (i) { body[i.dataset.f] = i.value; });
+    var body = { identity: opts.user || null, context: visitContext() };
+    if (pre) Array.prototype.forEach.call(pre.querySelectorAll("input,select"), function (i) {
+      var f = i.dataset.f;
+      if (!f) return;
+      if (f === "consent") body.consent = i.checked;
+      else if (f === "name" || f === "email" || f === "phone") body[f] = i.value;
+      else { body.custom = body.custom || {}; body.custom[f] = i.value; }
+    });
     S.starting = api("/session", { method: "POST", body: JSON.stringify(body) }).then(function (r) {
-      S.token = r.token; save(); if (pre) { pre.remove(); pre = null; } hideTeaser(); schedule();
+      S.token = r.token; save(); if (S.formOpen) closeForm(); else if (pre) { pre.remove(); pre = null; } hideTeaser(); schedule(); pingPresence();
     }).finally(function () { S.starting = null; });
     return S.starting;
   }
@@ -696,7 +785,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
   }
 
   // ── Starting, navigation, teardown ─────────────────────────────────────────────────────────────
-  function onNavigate() { if (!S.destroyed) applyVisibility(); }
+  function onNavigate() { if (!S.destroyed) { applyVisibility(); pingPresence(); } }
   function onVisibility() { if (S.destroyed) return; if (document.visibilityState === "visible") { poll(); schedule(); } else clearTimeout(S.timer); }
   function onKey(e) { if (e.key === "Escape" && S.open && root && e.composedPath && e.composedPath().indexOf(root) > -1) { S.userClosed = true; toggle(false); } }
   function patchHistory() {
@@ -721,11 +810,16 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     schedule();
     startTimers();
     applyVisibility();
+    if (direct) toggle(true, { auto: true, silent: true });
+    pingPresence();
+    S.presenceTimer = setInterval(pingPresence, 60000);
+    // A returning visitor, once per browser session.
+    if (S.token && !session("visit")) { session("visit", "1"); api("/session", { method: "POST", body: JSON.stringify({ token: S.token, visit: true, context: visitContext() }) }).catch(function () {}); }
   }
   function rebuild() { var wasOpen = S.open; if (root) root.remove(); picker = null; build(); if (wasOpen) toggle(true, { auto: true, silent: true }); applyVisibility(); }
   function destroy() {
     S.destroyed = true;
-    clearTimeout(S.timer); timers.forEach(clearTimeout);
+    clearTimeout(S.timer); timers.forEach(clearTimeout); clearInterval(S.presenceTimer);
     window.removeEventListener("popstate", onNavigate); window.removeEventListener("hashchange", onNavigate); window.removeEventListener("getassist:navigate", onNavigate);
     document.removeEventListener("visibilitychange", onVisibility); document.removeEventListener("keydown", onKey);
     if (savedOverflow !== null) document.documentElement.style.overflow = savedOverflow;
@@ -742,7 +836,7 @@ export const WIDGET_SCRIPT = String.raw`(function () {
     // The settings page: a configuration and sample conversation, updated live by postMessage. No network at all.
     var pv = window.GetAssistChatPreview || {};
     function apply(data) {
-      S.cfg = data.config; S.token = "preview"; S.msgs = (data.messages || []).slice(); S.pending = []; S.shown = true; S.agentTyping = Boolean(data.view && data.view.typing);
+      S.cfg = data.config; S.token = "preview"; S.msgs = (data.messages || []).slice(); S.pending = []; S.shown = true; S.agentTyping = Boolean(data.view && data.view.typing); S.previewPrechat = Boolean(data.view && data.view.prechat); S.formOpen = false;
       if (root) root.remove(); picker = null; build();
       if (data.view && data.view.open) toggle(true, { auto: true, silent: true });
       if (data.view && data.view.teaser && !(data.view && data.view.open)) showTeaser(true);

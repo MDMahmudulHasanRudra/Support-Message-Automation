@@ -174,7 +174,7 @@ export const PROJECT_FEATURES = [
     // Additive and new: no project gets it until a Main Admin switches it on. WhatsApp Chat is its
     // own feature and is unaffected either way.
     defaultEnabled: false,
-    routes: ["/conversations", "/settings/channels"],
+    routes: ["/conversations", "/settings/channels", "/website-chat"],
     permissionKeys: ["channels.view", "channels.manage", "conversations.reply"],
     workerEffect:
       "Messenger, Instagram and Telegram messages stop being processed and replies stop being sent; webhooks are still recorded so nothing is lost. Connections and conversation history are kept.",
