@@ -3,7 +3,19 @@
  * page and Main Admin → Users & Permissions — so the two can never accept different passwords or
  * store usernames differently.
  */
+/** Platform operators' fixed rule. A customer's people follow server/passwordPolicy.ts. */
 export const MIN_PASSWORD_LENGTH = 12;
+
+/** A customer's password length: what it starts at, and how far it can go. Below 6 is guessed in minutes. */
+export const DEFAULT_PASSWORD_LENGTH = 8;
+export const PASSWORD_LENGTH_FLOOR = 6;
+export const PASSWORD_LENGTH_CEILING = 128;
+
+/** A length someone typed, or null when it is not a whole number inside the limits. */
+export function readPasswordLength(raw: unknown): number | null {
+  const value = Number(String(raw ?? "").trim());
+  return Number.isInteger(value) && value >= PASSWORD_LENGTH_FLOOR && value <= PASSWORD_LENGTH_CEILING ? value : null;
+}
 
 /** Logins are by username, compared lowercase and trimmed. */
 export function normalizeUsername(raw: unknown): string {
@@ -25,8 +37,8 @@ export function validateUsername(username: string): string | null {
 }
 
 /** A new password: long enough, not the username, and confirmed. Returns the reason, or null. */
-export function validateNewPassword(password: string, confirm: string, username: string): string | null {
-  if (password.length < MIN_PASSWORD_LENGTH) return `The new password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+export function validateNewPassword(password: string, confirm: string, username: string, minLength: number): string | null {
+  if (password.length < minLength) return `The new password must be at least ${minLength} characters.`;
   if (password.length > 200) return "The new password is too long (200 characters at most).";
   if (password.trim().toLowerCase() === username.trim().toLowerCase()) return "The new password cannot be your username.";
   if (password !== confirm) return "The two new passwords do not match.";

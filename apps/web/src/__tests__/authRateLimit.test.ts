@@ -71,7 +71,7 @@ describe("both sign-ins use it (source)", () => {
 
   it("customer sign-in checks the address before looking the user up, and counts unknown users, wrong passwords and wrong codes", () => {
     expect(login.indexOf("userSignInFailures.check(")).toBeGreaterThan(-1);
-    expect(login.indexOf("userSignInFailures.check(")).toBeLessThan(login.indexOf("prisma.user.findUnique"));
+    expect(login.indexOf("userSignInFailures.check(")).toBeLessThan(login.indexOf("const user = await findSignInUser("));
     // unknown user, wrong password, wrong two-step code
     expect(login.match(/countFailedSignIn\(address\)/g)?.length).toBe(3);
   });

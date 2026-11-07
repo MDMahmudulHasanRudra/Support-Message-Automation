@@ -1,4 +1,6 @@
 import NextLink from "next/link";
+import { customerPasswordLength } from "@/server/passwordPolicy";
+import { currentTenant } from "@/server/tenant";
 import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
 import { Alert, PageHeader } from "@/components/ui";
@@ -42,6 +44,7 @@ export default async function NewAdminUserPage() {
       </NextLink>
       <PageHeader title="New user" description="The person, their login, their role and the projects they may enter. Nothing is saved until every part is valid." />
       <NewUserForm
+        minPasswordLength={await customerPasswordLength(await currentTenant())}
         roles={roles}
         projects={projects}
         canAccess={canAccess}

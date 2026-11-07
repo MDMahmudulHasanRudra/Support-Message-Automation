@@ -7,7 +7,7 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import { runWithTenant, tenantOfCustomer } from "@/server/tenant";
 import { confirmOperatorPassword, requireOperatorAction } from "@/server/platform/auth";
 import { logPlatformEvent } from "@/server/platform/log";
-import { MIN_PASSWORD_LENGTH } from "@/lib/userRules";
+import { customerPasswordLength } from "@/server/passwordPolicy";
 
 /**
  * The one thing the platform does to a customer's people (SAAS_PLATFORM_PLAN.md §12): give a
@@ -20,9 +20,10 @@ export async function resetCustomerUserPassword(customerId: string, userId: stri
   if ("denied" in access) return { error: access.denied };
   if (!(await confirmOperatorPassword(access.operator, formData.get("operatorPassword")))) return { error: "Your platform password is not correct." };
   const password = String(formData.get("newPassword") ?? "");
-  if (password.length < MIN_PASSWORD_LENGTH) return { error: `The new password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
-
   const tenant = await tenantOfCustomer(customerId);
+  const minLength = await customerPasswordLength(tenant);
+  if (password.length < minLength) return { error: `The new password must be at least ${minLength} characters.` };
+
   const user = await globalPrisma.user.findFirst({ where: { id: userId, customerId: tenant, supportOperatorId: null }, select: { id: true, username: true } });
   if (!user) return { error: "That person is not one of this customer's people." };
 

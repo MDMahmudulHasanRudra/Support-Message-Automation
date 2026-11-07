@@ -11,6 +11,7 @@ import { currentSessionRowId } from "@/server/account";
 import { getBranding } from "@/server/branding";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { normalizeUsername, validateNewPassword, validateUsername } from "@/lib/userRules";
+import { passwordLengthForUser } from "@/server/passwordPolicy";
 import {
   formatSecretForTyping,
   generateRecoveryCodes,
@@ -102,7 +103,7 @@ export async function updateMyProfile(_prev: AccountFormState, form: FormData): 
   if (Object.keys(fieldErrors).length) return { fieldErrors };
 
   if (email && email !== me.user.email) {
-    const holder = await globalPrisma.user.findUnique({ where: { email }, select: { id: true } });
+    const holder = await globalPrisma.user.findFirst({ where: { email, customerId: me.user.customerId }, select: { id: true } });
     if (holder && holder.id !== me.user.id) return { fieldErrors: { email: "Another login already uses that email address." } };
   }
   try {
@@ -128,8 +129,8 @@ export async function changeMyUsername(_prev: AccountFormState, form: FormData):
   const wrong = await checkCurrentPassword(me.user, String(form.get("currentPassword") ?? ""));
   if (wrong) return { fieldErrors: { currentPassword: wrong } };
 
-  // Usernames are unique across the whole platform; "taken" never says by whom.
-  if (await globalPrisma.user.findUnique({ where: { username }, select: { id: true } })) return { fieldErrors: { username: "That username is not available." } };
+  // Unique inside the person's own customer; "taken" never says by whom.
+  if (await globalPrisma.user.findFirst({ where: { username, customerId: me.user.customerId }, select: { id: true } })) return { fieldErrors: { username: "That username is not available." } };
   try {
     await globalPrisma.user.update({ where: { id: me.user.id }, data: { username, usernameChangedAt: new Date(), failedLoginAttempts: 0, lastFailedLoginAt: null } });
   } catch (err) {
@@ -147,7 +148,7 @@ export async function changeMyPassword(_prev: AccountFormState, form: FormData):
   const me = await self();
   if ("error" in me) return { error: me.error };
   const next = String(form.get("newPassword") ?? "");
-  const invalid = validateNewPassword(next, String(form.get("confirmPassword") ?? ""), me.user.username);
+  const invalid = validateNewPassword(next, String(form.get("confirmPassword") ?? ""), me.user.username, await passwordLengthForUser(me.user.id));
   if (invalid) return { fieldErrors: { newPassword: invalid } };
   const current = String(form.get("currentPassword") ?? "");
   const wrong = await checkCurrentPassword(me.user, current);

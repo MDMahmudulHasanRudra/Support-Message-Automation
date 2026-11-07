@@ -15,10 +15,10 @@ describe("validateUsername", () => {
 
 describe("validateNewPassword", () => {
   const good = "a".repeat(MIN_PASSWORD_LENGTH);
-  it("accepts a long, confirmed password", () => expect(validateNewPassword(good, good, "rudra")).toBeNull());
+  it("accepts a long, confirmed password", () => expect(validateNewPassword(good, good, "rudra", 12)).toBeNull());
   it("refuses short, mismatched, or username passwords", () => {
-    expect(validateNewPassword("short", "short", "rudra")).toMatch(/at least/);
-    expect(validateNewPassword(good, good + "x", "rudra")).toMatch(/do not match/);
-    expect(validateNewPassword("rudrarudrarudra", "rudrarudrarudra", "RudraRudraRudra")).toMatch(/username/);
+    expect(validateNewPassword("short", "short", "rudra", 12)).toMatch(/at least/);
+    expect(validateNewPassword(good, good + "x", "rudra", 12)).toMatch(/do not match/);
+    expect(validateNewPassword("rudrarudrarudra", "rudrarudrarudra", "RudraRudraRudra", 12)).toMatch(/username/);
   });
 });

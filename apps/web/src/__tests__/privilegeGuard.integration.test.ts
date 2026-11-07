@@ -124,7 +124,7 @@ describe("a role without projects.manage cannot reach Main Admin", () => {
       users.createUser({}, form({ username: `sneaky_${tag}`, name: "Sneaky", password: "correct horse battery", confirmPassword: "correct horse battery", permissionModuleId: ids.mainRole })),
     );
     expect(r).toEqual({ error: MAIN_ADMIN_ONLY_ERROR });
-    expect(await rawPrisma.user.findUnique({ where: { username: `sneaky_${tag}` } })).toBeNull();
+    expect(await rawPrisma.user.findFirst({ where: { username: `sneaky_${tag}` } })).toBeNull();
   });
 
   it("cannot create one from the Main Admin portal either", async () => {
@@ -132,7 +132,7 @@ describe("a role without projects.manage cannot reach Main Admin", () => {
       admin.createUserFromAdmin({}, form({ username: `sneaky2_${tag}`, name: "Sneaky", password: "correct horse battery", confirmPassword: "correct horse battery", permissionModuleId: ids.mainRole })),
     );
     expect(r).toEqual({ error: MAIN_ADMIN_ONLY_ERROR });
-    expect(await rawPrisma.user.findUnique({ where: { username: `sneaky2_${tag}` } })).toBeNull();
+    expect(await rawPrisma.user.findFirst({ where: { username: `sneaky2_${tag}` } })).toBeNull();
   });
 
   it("cannot move somebody onto a Main Admin role (Users & Permissions → role)", async () => {

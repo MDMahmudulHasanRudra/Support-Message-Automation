@@ -227,7 +227,7 @@ describe("3. a Lead runs their own project, and only that", () => {
       ),
     );
     expect(to).toBe("/p/x/project-members?created=1");
-    const created = await rawPrisma.user.findUniqueOrThrow({ where: { username: `newbie_${tag}` }, select: { id: true, permissionModuleId: true, projectAccess: { select: { projectId: true } } } });
+    const created = await rawPrisma.user.findFirstOrThrow({ where: { username: `newbie_${tag}` }, select: { id: true, permissionModuleId: true, projectAccess: { select: { projectId: true } } } });
     expect(created.permissionModuleId).toBeNull();
     expect(created.projectAccess.map((a) => a.projectId)).toEqual([A.id]);
     const newbie = { userId: created.id, username: `newbie_${tag}`, email: "", name: "Newbie" } as Session;

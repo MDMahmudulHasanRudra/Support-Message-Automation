@@ -13,7 +13,8 @@ import { memberFacts } from "@/server/projectAdmin";
 import { projectPath } from "@/server/projectPaths";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
-import { MIN_PASSWORD_LENGTH } from "@/lib/userRules";
+import { PASSWORD_LENGTH_CEILING, PASSWORD_LENGTH_FLOOR, readPasswordLength } from "@/lib/userRules";
+import { projectPasswordLength } from "@/server/passwordPolicy";
 import { keysForSectionAccess, sanitizeSectionAccess } from "@/app/p/[project]/(dashboard)/projectSections";
 
 /**
@@ -135,6 +136,19 @@ export async function removeProjectMember(userId: string): Promise<ProjectAdminS
   return { success: `${facts.user.username} can no longer enter this project.` };
 }
 
+/** A Lead's password length for this project. Empty goes back to the company's. Existing passwords keep working. */
+export async function setProjectPasswordLength(_prev: ProjectAdminState, form: FormData): Promise<ProjectAdminState> {
+  const admin = await membersAdmin();
+  if ("denied" in admin) return { error: admin.denied };
+  const raw = String(form.get("minPasswordLength") ?? "").trim();
+  const value = raw ? readPasswordLength(raw) : null;
+  if (raw && value === null) return { error: `Use a whole number from ${PASSWORD_LENGTH_FLOOR} to ${PASSWORD_LENGTH_CEILING}, or leave it empty to follow the company's setting.` };
+  await platformPrisma.project.update({ where: { id: admin.project.id }, data: { minPasswordLength: value } });
+  await logSystemEvent("INFO", "security", "PROJECT_PASSWORD_LENGTH_CHANGED", { actorId: admin.session.userId, minPasswordLength: value });
+  revalidatePath(await projectPath("/project-members"));
+  return { success: value ? `New passwords in this project now need at least ${value} characters.` : "This project now follows the company's password length." };
+}
+
 /** Only for a login that exists for this project alone (or by a Main Admin). Signs them out everywhere. */
 export async function resetProjectMemberPassword(userId: string, newPassword: string): Promise<ProjectAdminState> {
   const admin = await membersAdmin();
@@ -142,7 +156,8 @@ export async function resetProjectMemberPassword(userId: string, newPassword: st
   const facts = await memberFacts(admin.project.id, userId, admin.session.userId);
   if (!facts) return { error: "That person is not a member of this project." };
   if (!facts.can.resetPassword) return { error: "This login is also used outside this project, so only a Main Admin can reset its password." };
-  if (newPassword.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  const minLength = await projectPasswordLength(admin.project.id);
+  if (newPassword.length < minLength) return { error: `Password must be at least ${minLength} characters.` };
   await platformPrisma.$transaction([
     platformPrisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword), passwordChangedAt: new Date() } }),
     platformPrisma.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: "PASSWORD_CHANGED" } }),

@@ -126,7 +126,7 @@ describe("creating a user from the Main Admin Portal", () => {
     expect((await createUserWithAccess(rawPrisma, { ...base("mismatch"), confirmPassword: "something else entirely" })).ok).toBe(false);
     // Stored trimmed and lowercase, as the App Users page stores it.
     expect((await createUserWithAccess(rawPrisma, { ...base("upper"), username: `  UPPER_${tag.toUpperCase()}  ` })).ok).toBe(true);
-    const upper = await rawPrisma.user.findUnique({ where: { username: `upper_${tag}` } });
+    const upper = await rawPrisma.user.findFirst({ where: { username: `upper_${tag}` } });
     expect(upper).not.toBeNull();
     if (upper) created.users.push(upper.id);
   });

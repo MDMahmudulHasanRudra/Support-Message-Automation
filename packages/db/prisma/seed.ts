@@ -29,16 +29,17 @@ async function main() {
   // Only sets credentials on first creation, same as every other seed step below — an admin who
   // has since changed their password through the dashboard must never have it silently reset back
   // to the .env value by a routine restart/redeploy re-running this script.
-  const admin = await prisma.user.upsert({
-    where: { username: adminUsername },
-    update: {},
-    create: {
-      username: adminUsername,
-      email: adminEmail,
-      name: "Administrator",
-      passwordHash: hashPassword(adminPassword),
-    },
-  });
+  // The original installation's own login (customerId null): another customer may have the same username.
+  const admin =
+    (await prisma.user.findFirst({ where: { username: adminUsername, customerId: null } })) ??
+    (await prisma.user.create({
+      data: {
+        username: adminUsername,
+        email: adminEmail,
+        name: "Administrator",
+        passwordHash: hashPassword(adminPassword),
+      },
+    }));
   console.log(`Seeded admin user: ${admin.username}`);
 
   // Multi-project (MULTI_PROJECT_PLAN.md): the original installation's project (id

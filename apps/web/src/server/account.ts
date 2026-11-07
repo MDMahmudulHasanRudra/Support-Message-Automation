@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { passwordLengthForUser } from "@/server/passwordPolicy";
 import { cookies } from "next/headers";
 import { globalPrisma } from "@/server/db";
 import type { Session } from "@/server/auth";
@@ -66,6 +67,7 @@ export interface MyAccount {
   createdAt: Date;
   lastLoginAt: Date | null;
   passwordChangedAt: Date | null;
+  minPasswordLength: number;
   usernameChangedAt: Date | null;
   mfaEnabledAt: Date | null;
   mfaSetupPending: boolean;
@@ -109,6 +111,7 @@ export async function getMyAccount(session: Session): Promise<MyAccount | null> 
     createdAt: user.createdAt,
     lastLoginAt: user.lastLoginAt,
     passwordChangedAt: user.passwordChangedAt,
+    minPasswordLength: await passwordLengthForUser(user.id),
     usernameChangedAt: user.usernameChangedAt,
     mfaEnabledAt: user.mfaSecretCiphertext ? user.mfaEnabledAt : null,
     mfaSetupPending: !user.mfaSecretCiphertext && Boolean(user.mfaPendingSecretCiphertext),

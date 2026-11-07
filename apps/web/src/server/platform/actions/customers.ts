@@ -1,6 +1,7 @@
 "use server";
 
 import { randomBytes } from "node:crypto";
+import { DEFAULT_PASSWORD_LENGTH } from "@/lib/userRules";
 import { isIP } from "node:net";
 import { revalidatePath } from "next/cache";
 import { createProjectWithDefaults, ensureDefaultRoles, prisma as globalPrisma, type Prisma } from "@support-automation/db";
@@ -206,7 +207,7 @@ export async function createCustomer(_prev: CustomerFormState, formData: FormDat
     if (ownerEmail && !EMAIL_RE.test(ownerEmail)) fieldErrors.ownerEmail = "Enter a valid email address, or leave it empty.";
     if (ownerMode === "login") {
       if (!text(formData, "ownerUsername", 60)) fieldErrors.ownerUsername = "Choose the owner's username.";
-      if (String(formData.get("ownerPassword") ?? "").length < 12) fieldErrors.ownerPassword = "At least 12 characters.";
+      if (String(formData.get("ownerPassword") ?? "").length < DEFAULT_PASSWORD_LENGTH) fieldErrors.ownerPassword = `At least ${DEFAULT_PASSWORD_LENGTH} characters.`;
     }
   }
 

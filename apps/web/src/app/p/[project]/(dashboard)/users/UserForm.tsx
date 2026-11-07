@@ -22,12 +22,14 @@ export function UserForm({
   permissionModules,
   mode,
   submitLabel = "Save",
+  minPasswordLength = 8,
 }: {
   action: (prevState: UserFormState, formData: FormData) => Promise<UserFormState>;
   defaults?: UserFormDefaults;
   permissionModules: PermissionModuleOption[];
   mode: "create" | "edit";
   submitLabel?: string;
+  minPasswordLength?: number;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
 
@@ -59,7 +61,7 @@ export function UserForm({
 
         {mode === "create" ? (
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Password" required hint="At least 12 characters.">
+            <Field label="Password" required hint={`At least ${minPasswordLength} characters.`}>
               <Input name="password" type="password" autoComplete="new-password" required />
             </Field>
             <Field label="Confirm Password" required>

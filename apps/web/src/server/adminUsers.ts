@@ -4,7 +4,9 @@ import { hashPassword } from "@/server/auth";
 import { lockAndCheckCustomerLimit } from "@/server/customerLimits";
 import { createEmployee, type EmployeeInput } from "@/server/configuration";
 import { isUniqueViolation } from "@/lib/prismaErrors";
-import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
+import { normalizeUsername } from "@/lib/userRules";
+import { customerPasswordLength, projectPasswordLength } from "@/server/passwordPolicy";
+import { currentTenant } from "@/server/tenant";
 
 /**
  * Main Admin → Users & Permissions (MAIN_ADMIN_WORKSPACE.md §5): a login, the person behind it, their
@@ -52,10 +54,13 @@ export async function createUserWithAccess(db: PrismaClient, input: NewUserInput
 
   if (!username) return { ok: false, error: "Username is required." };
   if (!name) return { ok: false, error: "Display name is required." };
-  if (password.length < MIN_PASSWORD_LENGTH) return { ok: false, error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  // One project: that project's length. Several or none: the customer's.
+  const grants = [...new Set(input.access.map((a) => a.projectId))];
+  const minLength = grants.length === 1 ? await projectPasswordLength(grants[0]!) : await customerPasswordLength(await currentTenant());
+  if (password.length < minLength) return { ok: false, error: `Password must be at least ${minLength} characters.` };
   if (password !== String(input.confirmPassword ?? "")) return { ok: false, error: "Passwords do not match." };
-  if (await db.user.findUnique({ where: { username }, select: { id: true } })) return { ok: false, error: `A user named "${username}" already exists.` };
-  if (email && (await db.user.findUnique({ where: { email }, select: { id: true } }))) return { ok: false, error: "Another user already has that email address." };
+  if (await db.user.findFirst({ where: { username }, select: { id: true } })) return { ok: false, error: `A user named "${username}" already exists.` };
+  if (email && (await db.user.findFirst({ where: { email }, select: { id: true } }))) return { ok: false, error: "Another user already has that email address." };
   if (permissionModuleId && !(await db.permissionModule.findUnique({ where: { id: permissionModuleId }, select: { id: true } }))) {
     return { ok: false, error: "That role no longer exists." };
   }

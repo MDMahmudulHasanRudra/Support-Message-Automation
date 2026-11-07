@@ -139,7 +139,7 @@ export function OwnerPanel({ customerId, people, invitations, canManage }: { cus
               <Input id="ol-email" name="email" type="email" maxLength={200} autoComplete="off" />
             </Field>
             <div />
-            <Field label="Password" htmlFor="ol-password" required hint="At least 12 characters. Share it privately.">
+            <Field label="Password" htmlFor="ol-password" required hint="At least 8 characters, unless this customer has set a different length. Share it privately.">
               <Input id="ol-password" name="password" type="password" autoComplete="new-password" required />
             </Field>
             <Field label="Confirm password" htmlFor="ol-confirm" required>

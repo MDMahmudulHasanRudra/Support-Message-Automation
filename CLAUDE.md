@@ -337,6 +337,10 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   address. A project opens only for its own customer's people (`decideAccess`), on its customer's address or an open one,
   never on the platform address (`hostAllowsProject`). Sign-in: the address's customer must be the person's
   (`mayUseThisAddress`). `VENDOR_PERMISSION_KEYS` (release notes) work only in the original installation.
+- **A customer has its own logins** (`LOGINS_PER_CUSTOMER`, 7 Nov 2026): username and email are unique per customer
+  (expression indexes), never across the server. Read a login with `findFirst` inside its customer, never by name alone.
+  Sign-in is decided by the address (`findSignInUser`). Password length is the customer's (`SecuritySettings.minPasswordLength`,
+  default 8, 6-128) or a Lead's for one project (`Project.minPasswordLength`): `server/passwordPolicy.ts`. Platform operators keep 12.
 - A customer has ITS OWN standard roles (`ensureDefaultRoles`, also run by the seed for every customer) — role, department
   and job-title names are unique per customer (partial indexes). Plan limits count per customer
   (`lockAndCheckCustomerLimit`: users on login creation only, WhatsApp numbers across its workspaces). A new project

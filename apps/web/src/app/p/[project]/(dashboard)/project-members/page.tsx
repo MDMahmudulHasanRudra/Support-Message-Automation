@@ -6,7 +6,10 @@ import { requireActiveProject } from "@/server/projectContext";
 import { listProjectMembers, listProjectRoles } from "@/server/projectAdmin";
 import { formatDateTime } from "@/lib/date";
 import { createProjectMember } from "@/server/actions/projectAdmin";
-import { AddProjectMemberForm, ProjectMembersTable, type MemberRow } from "./ProjectMembersClient";
+import { AddProjectMemberForm, ProjectMembersTable, ProjectPasswordLengthForm, type MemberRow } from "./ProjectMembersClient";
+import { platformPrisma } from "@/server/db";
+import { customerPasswordLength, projectPasswordLength } from "@/server/passwordPolicy";
+import { currentTenant } from "@/server/tenant";
 
 export const metadata = { title: "Project Members" };
 
@@ -19,10 +22,13 @@ export default async function ProjectMembersPage({ searchParams }: { searchParam
   const session = await requireAccess("project_members.manage");
   const project = await requireActiveProject();
   const { created } = await searchParams;
-  const [members, roles, canManageRoles] = await Promise.all([
+  const [members, roles, canManageRoles, ownLength, companyLength, minPasswordLength] = await Promise.all([
     listProjectMembers(project.id, session.userId),
     listProjectRoles(),
     hasPermission(session, "project_roles.manage"),
+    platformPrisma.project.findUnique({ where: { id: project.id }, select: { minPasswordLength: true } }),
+    currentTenant().then((tenant) => customerPasswordLength(tenant)),
+    projectPasswordLength(project.id),
   ]);
 
   const rows: MemberRow[] = members.map((m) => ({
@@ -94,13 +100,18 @@ export default async function ProjectMembersPage({ searchParams }: { searchParam
             )}
           </Alert>
         ) : (
-          <AddProjectMemberForm action={createProjectMember} roles={roleOptions} />
+          <AddProjectMemberForm action={createProjectMember} roles={roleOptions} minPasswordLength={minPasswordLength} />
         )}
       </Card>
 
       <Card>
         <SectionHeader title={`Members (${rows.length})`} description="Project role here, access level, and the logins you may manage." />
-        <ProjectMembersTable rows={rows} roles={roleOptions} />
+        <ProjectMembersTable rows={rows} roles={roleOptions} minPasswordLength={minPasswordLength} />
+      </Card>
+
+      <Card>
+        <SectionHeader title="Passwords" description="How long new passwords must be for this project's people." />
+        <ProjectPasswordLengthForm value={ownLength?.minPasswordLength ?? null} company={companyLength} />
       </Card>
     </div>
   );
