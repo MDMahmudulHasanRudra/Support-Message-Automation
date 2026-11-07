@@ -14,6 +14,7 @@ import { createUserFromAdmin } from "@/server/actions/adminUsers";
 type Named = { id: string; name: string };
 
 export function NewUserForm({
+  minPasswordLength,
   roles,
   projects,
   canAccess,
@@ -22,6 +23,7 @@ export function NewUserForm({
   departments,
   jobTitles,
 }: {
+  minPasswordLength: number;
   roles: Array<Named & { description: string | null }>;
   projects: Array<Named & { status: ProjectStatusValue }>;
   canAccess: boolean;
@@ -136,11 +138,11 @@ export function NewUserForm({
             <Input name="email" type="email" />
           </Field>
           <div />
-          <Field label="Password" required hint="At least 12 characters.">
-            <Input name="password" type="password" required minLength={12} autoComplete="new-password" />
+          <Field label="Password" required hint={`At least ${minPasswordLength} characters.`}>
+            <Input name="password" type="password" required minLength={minPasswordLength} autoComplete="new-password" />
           </Field>
           <Field label="Confirm password" required>
-            <Input name="confirmPassword" type="password" required minLength={12} autoComplete="new-password" />
+            <Input name="confirmPassword" type="password" required minLength={minPasswordLength} autoComplete="new-password" />
           </Field>
         </div>
       </Card>

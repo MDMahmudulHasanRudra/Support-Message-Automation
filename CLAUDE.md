@@ -337,6 +337,10 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   address. A project opens only for its own customer's people (`decideAccess`), on its customer's address or an open one,
   never on the platform address (`hostAllowsProject`). Sign-in: the address's customer must be the person's
   (`mayUseThisAddress`). `VENDOR_PERMISSION_KEYS` (release notes) work only in the original installation.
+- **A customer has its own logins** (`LOGINS_PER_CUSTOMER`, 7 Nov 2026): username and email are unique per customer
+  (expression indexes), never across the server. Read a login with `findFirst` inside its customer, never by name alone.
+  Sign-in is decided by the address (`findSignInUser`). Password length is the customer's (`SecuritySettings.minPasswordLength`,
+  default 8, 6-128) or a Lead's for one project (`Project.minPasswordLength`): `server/passwordPolicy.ts`. Platform operators keep 12.
 - A customer has ITS OWN standard roles (`ensureDefaultRoles`, also run by the seed for every customer) — role, department
   and job-title names are unique per customer (partial indexes). Plan limits count per customer
   (`lockAndCheckCustomerLimit`: users on login creation only, WhatsApp numbers across its workspaces). A new project
@@ -352,6 +356,8 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   nothing. Sessions are bound to their address. The hostname is `visitedHost()` (x-forwarded-host first). Caddy gets
   certificates only for what `/api/platform/tls-allowed` approves. Recovery (§8): localhost/IP always open,
   `SAAS_HOST_ROUTING_DISABLED=true`. `saasTwoLayers.integration.test.ts` pins every rule above.
+
+**A public address is the customer's, never `NEXTAUTH_URL`** (`server/customerAddress.ts`, `pickCustomerOrigin`, 7 Nov 2026). That setting names one address, and on the live server it is a customer's, so every other customer was handed it in its widget code, chat link and webhook addresses. Anything shown to or registered for one project uses `activeProjectOrigin()` / `publicOriginForProject()`; a redirect back to the person uses `requestOrigin(request)`. A customer with no address gets none, never another's. `publicOrigin()` stays only for installation-wide things: the platform's one Meta app and the env Google client. `customerAddress.integration.test.ts` pins it.
 
 The migration's `projectId` foreign keys were added `NOT VALID` and validated in a separate
 migration (`…_projects_foundation_validate`): a plain FK add scans `Message` under a write-blocking

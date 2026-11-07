@@ -223,7 +223,7 @@ export function UsersTable({ users }: { users: UserRow[] }) {
         ) : (
           <div className="space-y-3">
             {resetError ? <Alert tone="danger">{resetError}</Alert> : null}
-            <Field label="New Password" hint="At least 12 characters.">
+            <Field label="New Password" hint="Your company's password length applies.">
               <Input
                 type="password"
                 autoComplete="new-password"

@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
+import { PASSWORD_LENGTH_CEILING, PASSWORD_LENGTH_FLOOR, readPasswordLength } from "@/lib/userRules";
 
 const MIN_SESSION_LIFETIME_HOURS = 1;
 const MAX_SESSION_LIFETIME_HOURS = 720; // 30 days — this app's safe maximum, per spec
@@ -47,9 +48,15 @@ export async function updateSecuritySettings(
     return { error: "Login lockout duration must be at least 1 minute." };
   }
 
+  const minPasswordLength = readPasswordLength(formData.get("minPasswordLength"));
+  if (minPasswordLength === null) {
+    return { error: `Minimum password length must be a whole number from ${PASSWORD_LENGTH_FLOOR} to ${PASSWORD_LENGTH_CEILING}.` };
+  }
+
   await prisma.securitySettings.upsert({
     where: { id: "global" },
     update: {
+      minPasswordLength,
       sessionLifetimeHours,
       loginLockoutThreshold,
       loginLockoutWindowMinutes,
@@ -57,6 +64,7 @@ export async function updateSecuritySettings(
     },
     create: {
       id: "global",
+      minPasswordLength,
       sessionLifetimeHours,
       loginLockoutThreshold,
       loginLockoutWindowMinutes,

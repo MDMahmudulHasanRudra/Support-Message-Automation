@@ -322,7 +322,7 @@ describe("the owner invitation", () => {
 
     jar.clear();
     await expect(acceptInvitation(token, {}, form({ username: `owner_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }))).rejects.toMatchObject({ redirectTo: "/open" });
-    const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `owner_${tag}` }, include: { permissionModule: true } });
+    const owner = await rawPrisma.user.findFirstOrThrow({ where: { username: `owner_${tag}` }, include: { permissionModule: true } });
     expect(owner.customerId).toBe(ws.limited.customerId);
     expect(owner.permissionModule).toMatchObject({ customerId: ws.limited.customerId, name: "Administrator" });
     const session = (await auth.getSession())!;

@@ -3,7 +3,7 @@ import { Badge, Card, PageHeader, SectionHeader } from "@/components/ui";
 import { requireSession } from "@/server/auth";
 import { getMyAccount, getMyDevices, getMySecurityActivity } from "@/server/account";
 import { DevicesPanel, PasswordForm, PhotoForm, ProfileForm, TwoStepPanel, UsernameForm } from "./AccountForms";
-import { USERNAME_RULE_TEXT, MIN_PASSWORD_LENGTH } from "@/lib/userRules";
+import { USERNAME_RULE_TEXT } from "@/lib/userRules";
 import { ThisDevicePanel } from "@/components/pwa/ThisDevicePanel";
 
 /**
@@ -69,7 +69,7 @@ export async function AccountView() {
             <Card>
               <h3 className="text-sm font-semibold">Password</h3>
               <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">Last changed: {when(account.passwordChangedAt)}</p>
-              <PasswordForm minLength={MIN_PASSWORD_LENGTH} disabled={readOnly} />
+              <PasswordForm minLength={account.minPasswordLength} disabled={readOnly} />
             </Card>
           </div>
         </section>

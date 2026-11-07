@@ -1,6 +1,6 @@
 import { requireAccess } from "@/server/authorize";
 import { shopConnectionView } from "@/server/commerce";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 import { PageHeader } from "@/components/ui";
 import { ShopSettingsPanel } from "@/components/commerce/ShopSettingsPanel";
 
@@ -8,7 +8,7 @@ export const metadata = { title: "WooCommerce" };
 
 export default async function WooCommerceSettingsPage() {
   await requireAccess("woocommerce.manage");
-  const view = await shopConnectionView("WOOCOMMERCE", publicOrigin());
+  const view = await shopConnectionView("WOOCOMMERCE", await activeProjectOrigin());
   return (
     <div>
       <PageHeader

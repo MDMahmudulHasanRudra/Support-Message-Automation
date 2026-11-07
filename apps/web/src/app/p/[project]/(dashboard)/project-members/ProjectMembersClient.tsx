@@ -9,8 +9,7 @@ import {
   resetProjectMemberPassword,
   setMemberProjectRole,
   setProjectMemberActive,
-  type ProjectAdminState,
-} from "@/server/actions/projectAdmin";
+  type ProjectAdminState, setProjectPasswordLength } from "@/server/actions/projectAdmin";
 
 export interface MemberRow {
   userId: string;
@@ -31,12 +30,31 @@ export interface MemberRow {
 
 type RoleOption = { id: string; name: string };
 
+/** A Lead's own password length for this project. Empty follows the company's. */
+export function ProjectPasswordLengthForm({ value, company }: { value: number | null; company: number }) {
+  const [state, formAction, pending] = useActionState(setProjectPasswordLength, {});
+  return (
+    <form action={formAction} className="flex flex-wrap items-end gap-3">
+      <Field label="Minimum password length" hint={`For new passwords in this project, from 6 to 128. Leave empty to follow your company's ${company}. Existing passwords keep working.`}>
+        <Input name="minPasswordLength" type="number" min={6} max={128} defaultValue={value ?? ""} placeholder={String(company)} />
+      </Field>
+      <Button type="submit" variant="secondary" size="sm" loading={pending}>
+        Save
+      </Button>
+      {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
+      {state.success ? <Alert tone="success">{state.success}</Alert> : null}
+    </form>
+  );
+}
+
 export function AddProjectMemberForm({
   action,
   roles,
+  minPasswordLength,
 }: {
   action: (prev: ProjectAdminState, form: FormData) => Promise<ProjectAdminState>;
   roles: RoleOption[];
+  minPasswordLength: number;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   return (
@@ -63,7 +81,7 @@ export function AddProjectMemberForm({
             ))}
           </Select>
         </Field>
-        <Field label="Password" required hint="At least 12 characters. Give it to them privately; nobody can read it back later.">
+        <Field label="Password" required hint={`At least ${minPasswordLength} characters. Give it to them privately; nobody can read it back later.`}>
           <Input name="password" type="password" autoComplete="new-password" required />
         </Field>
         <Field label="Confirm password" required>
@@ -120,7 +138,7 @@ function RoleCell({ row, roles }: { row: MemberRow; roles: RoleOption[] }) {
   );
 }
 
-export function ProjectMembersTable({ rows, roles }: { rows: MemberRow[]; roles: RoleOption[] }) {
+export function ProjectMembersTable({ rows, roles, minPasswordLength }: { rows: MemberRow[]; roles: RoleOption[]; minPasswordLength: number }) {
   const router = useRouter();
   const { showToast } = useToast();
   const [removeTarget, setRemoveTarget] = useState<MemberRow | null>(null);
@@ -287,7 +305,7 @@ export function ProjectMembersTable({ rows, roles }: { rows: MemberRow[]; roles:
         ) : (
           <div className="space-y-3">
             {dialogError ? <Alert tone="danger">{dialogError}</Alert> : null}
-            <Field label="New password" hint="At least 12 characters.">
+            <Field label="New password" hint={`At least ${minPasswordLength} characters.`}>
               <Input type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             </Field>
           </div>

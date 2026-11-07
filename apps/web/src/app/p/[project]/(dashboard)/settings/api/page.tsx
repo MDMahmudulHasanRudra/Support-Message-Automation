@@ -1,6 +1,6 @@
 import { requireAccess } from "@/server/authorize";
 import { prisma } from "@/server/db";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 import { HelpButton, HelpSection, PageHeader } from "@/components/ui";
 import { ApiKeysPanel, WebhooksPanel } from "./ApiSettings";
 
@@ -12,7 +12,7 @@ export default async function ApiSettingsPage() {
     prisma.apiKey.findMany({ orderBy: [{ revokedAt: { sort: "asc", nulls: "first" } }, { createdAt: "desc" }], take: 100 }),
     prisma.webhookEndpoint.findMany({ orderBy: { createdAt: "asc" }, include: { deliveries: { orderBy: { createdAt: "desc" }, take: 15 } } }),
   ]);
-  const origin = publicOrigin();
+  const origin = await activeProjectOrigin();
   return (
     <div className="space-y-6">
       <PageHeader

@@ -11,7 +11,7 @@ export function AcceptInvitationForm({ token }: { token: string }) {
       <Field label="Username" htmlFor="inv-username" required hint="Lower-case letters, digits, dots, dashes or underscores.">
         <Input id="inv-username" name="username" autoComplete="username" required maxLength={60} />
       </Field>
-      <Field label="Password" htmlFor="inv-password" required hint="At least 12 characters.">
+      <Field label="Password" htmlFor="inv-password" required hint="At least 8 characters, unless your company has set a different length.">
         <Input id="inv-password" name="password" type="password" autoComplete="new-password" required />
       </Field>
       <Field label="Confirm password" htmlFor="inv-confirm" required>

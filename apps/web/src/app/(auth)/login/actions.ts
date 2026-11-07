@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { createSession, verifyPassword } from "@/server/auth";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { currentHostScope, requestHostname } from "@/server/hostScope";
-import { runWithTenant, tenantOfCustomer } from "@/server/tenant";
+import { foundingCustomerId, runWithTenant, tenantOfCustomer } from "@/server/tenant";
 import { decryptSecret } from "@support-automation/db";
 import { recordFailedSecret } from "@/server/loginLockout";
 import { clientAddress, tooManyAttemptsMessage, userSignInFailures } from "@/server/authRateLimit";
@@ -42,6 +42,24 @@ async function mayUseThisAddress(userTenant: string | null, scope: HostScope): P
   return (await tenantOfCustomer(scope.customerId)) === userTenant;
 }
 
+/**
+ * Whose login this is. A username belongs to one person inside one customer, so the address decides: a customer's
+ * address looks only among its own people. An address with no customer (routing off, recovery by IP) means the
+ * original installation's person, or the only one with that name; several others cannot be told apart, so nobody.
+ */
+async function findSignInUser(username: string) {
+  const scope = await currentHostScope();
+  if (scope.kind === "CUSTOMER") {
+    const tenant = await tenantOfCustomer(scope.customerId);
+    // The original installation's people carry no customer at all.
+    const customerId = tenant === null ? { OR: [{ customerId: null }, { customerId: scope.customerId }] } : { customerId: tenant };
+    return prisma.user.findFirst({ where: { username, ...customerId } });
+  }
+  const rows = await prisma.user.findMany({ where: { username }, take: 5, orderBy: { createdAt: "asc" } });
+  const founding = await foundingCustomerId();
+  return rows.find((row) => row.customerId === null || row.customerId === founding) ?? (rows.length === 1 ? rows[0]! : null);
+}
+
 export async function login(_prevState: LoginState, formData: FormData): Promise<LoginState> {
   const username = String(formData.get("username") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
@@ -57,8 +75,7 @@ export async function login(_prevState: LoginState, formData: FormData): Promise
   const limit = userSignInFailures.check(address);
   if (limit.limited) return { error: tooManyAttemptsMessage(limit.retryAfterSeconds) };
 
-  // Usernames are unique across the platform; which customer the person belongs to is checked below.
-  const user = await prisma.user.findUnique({ where: { username } });
+  const user = await findSignInUser(username);
   if (!user) {
     // Counted here as well: without it, guessing across usernames is never slowed down.
     await countFailedSignIn(address);

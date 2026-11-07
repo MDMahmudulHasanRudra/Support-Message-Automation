@@ -387,7 +387,7 @@ describe("onboarding a new customer from the platform", () => {
     // Every module — except the switches that need their own approval (`manualOnly`), which no plan turns on.
     const manualOnly = new Set<string>(PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key));
     expect(features.filter((f) => !f.enabled).map((f) => f.key).sort()).toEqual(features.filter((f) => manualOnly.has(f.key)).map((f) => f.key).sort());
-    const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `cowner_${tag}` }, include: { permissionModule: true } });
+    const owner = await rawPrisma.user.findFirstOrThrow({ where: { username: `cowner_${tag}` }, include: { permissionModule: true } });
     expect(owner.customerId).toBe(c);
     expect(owner.permissionModule?.customerId).toBe(c);
     expect(owner.permissionModule?.name).toBe("Administrator");
@@ -413,7 +413,7 @@ describe("onboarding a new customer from the platform", () => {
     expect((await acceptInvitation(token, {}, form({ username: `binv_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }))).error).toMatch(/not valid/);
     request.host = host.b;
     await expect(acceptInvitation(token, {}, form({ username: `binv_${tag}`, password: PASSWORD, confirmPassword: PASSWORD }))).rejects.toMatchObject({ redirectTo: "/open" });
-    const owner = await rawPrisma.user.findUniqueOrThrow({ where: { username: `binv_${tag}` }, include: { permissionModule: true } });
+    const owner = await rawPrisma.user.findFirstOrThrow({ where: { username: `binv_${tag}` }, include: { permissionModule: true } });
     expect(owner.customerId).toBe(customer.b);
     expect(owner.permissionModule).toMatchObject({ customerId: customer.b, name: "Administrator" });
   });

@@ -3,7 +3,7 @@ import Link from "@/components/ProjectLink";
 import { Card, PageHeader, SectionHeader } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
 import { activeProjectId } from "@/server/projectContext";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 import { getMediaStorage } from "@/server/mediaStorage";
 import { socialMetaReadiness } from "@/server/social/metaConnect";
 import { mediaUsage } from "@/server/social/media";
@@ -19,7 +19,7 @@ export const metadata = { title: "Social Publishing settings" };
 export default async function SocialSettingsPage() {
   await requireAccess("social.manage", "SOCIAL_STUDIO");
   const [ready, usage] = await Promise.all([activeProjectId().then((id) => socialMetaReadiness(id)), mediaUsage()]);
-  const origin = publicOrigin();
+  const origin = await activeProjectOrigin();
   const storage = Boolean(getMediaStorage());
   const signing = Boolean(process.env.SOCIAL_MEDIA_URL_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim() || process.env.AUTH_SECRET?.trim());
   const processorOn = process.env.SOCIAL_PROCESSOR_DISABLED !== "true";

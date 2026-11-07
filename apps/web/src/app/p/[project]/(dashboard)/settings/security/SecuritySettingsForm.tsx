@@ -84,6 +84,9 @@ export function SecuritySettingsForm({ settings }: { settings: SecuritySettings 
             Temporarily blocks login after too many wrong passwords in a row.
           </p>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <Field label="Minimum password length" hint="For new passwords, from 6 to 128 characters. Existing passwords keep working. A project's Lead can set a different length for their project.">
+              <Input name="minPasswordLength" type="number" min={6} max={128} defaultValue={settings.minPasswordLength} required />
+            </Field>
             <Field label="Failed Attempts Before Lockout">
               <Input name="loginLockoutThreshold" type="number" min={1} defaultValue={settings.loginLockoutThreshold} />
             </Field>

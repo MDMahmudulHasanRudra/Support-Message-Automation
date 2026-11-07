@@ -28,11 +28,13 @@ describe("configuration", () => {
     expect(oauth.googleOAuthConfig()).toEqual({ clientId: "id", clientSecret: "x", redirectUri: "https://assist.example.com/api/google/oauth/callback" });
   });
 
-  it("builds ONE redirect URI from the public address, whatever path NEXTAUTH_URL carries", () => {
+  it("builds the environment client's redirect URI from the public address, whatever path NEXTAUTH_URL carries", () => {
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_ID", "id");
+    vi.stubEnv("GOOGLE_OAUTH_CLIENT_SECRET", "x");
     vi.stubEnv("NEXTAUTH_URL", "https://zoventio.example.com/some/path");
-    expect(oauth.expectedRedirectUri()).toBe("https://zoventio.example.com/api/google/oauth/callback");
+    expect(oauth.googleOAuthConfig()?.redirectUri).toBe("https://zoventio.example.com/api/google/oauth/callback");
     vi.stubEnv("NEXTAUTH_URL", "not a url");
-    expect(oauth.expectedRedirectUri()).toBeNull();
+    expect(oauth.googleOAuthConfig()).toBeNull();
   });
 });
 

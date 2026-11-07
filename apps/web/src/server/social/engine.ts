@@ -107,7 +107,7 @@ export async function publishTarget(targetId: string, now = new Date()): Promise
   const media: AdapterMedia[] = [];
   for (const id of target.post.mediaIds) {
     const a = byId.get(id)!;
-    const signed = signedAssetUrl(a.id, now);
+    const signed = await signedAssetUrl(a.id, now);
     if (!signed.ok) return failNow(signed.reason);
     media.push({ kind: (a.kind === "VIDEO" ? "VIDEO" : "IMAGE") as SocialMediaKind, mimeType: a.mimeType, sizeBytes: a.sizeBytes, url: signed.url });
   }

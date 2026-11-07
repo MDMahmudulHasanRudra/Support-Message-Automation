@@ -44,7 +44,7 @@ const readRow = () => prisma.googleIntegrationConfig.findUnique({ where: { id: "
 
 /** The client THIS project talks to Google with right now, or why it may not. */
 export async function resolveProjectGoogleClient(): Promise<ProjectGoogleClient> {
-  const redirectUri = expectedRedirectUri();
+  const redirectUri = await expectedRedirectUri();
   if (!redirectUri) {
     return { ok: false, reason: "NOT_CONFIGURED", message: "The server's public address (NEXTAUTH_URL) is not set, so Google sign-in cannot be used." };
   }
@@ -94,7 +94,7 @@ export async function getGoogleIntegrationView(): Promise<GoogleIntegrationView>
     enabledChangedAt: row?.enabledChangedAt ?? null,
     enabledChangedByUsername: row?.enabledChangedByUsername ?? null,
     environmentClientAvailable: Boolean(e.clientId?.trim() && e.clientSecret?.trim()),
-    redirectUri: expectedRedirectUri(),
+    redirectUri: await expectedRedirectUri(),
   };
 }
 
@@ -127,7 +127,7 @@ export async function saveProjectGoogleClient(input: { clientId: string; clientS
   if (!isPlausibleGoogleClientId(clientId)) {
     throw new GoogleClientConfigError("That is not a Google OAuth client ID. It ends in “.apps.googleusercontent.com” — copy it from Google Cloud → Google Auth Platform → Clients.");
   }
-  const redirectUri = expectedRedirectUri();
+  const redirectUri = await expectedRedirectUri();
   if (!redirectUri) throw new GoogleClientConfigError("The server's public address (NEXTAUTH_URL) is not set, so there is no redirect URI to register.");
 
   const row = await prisma.googleIntegrationConfig.findUnique({ where: { id: "global" }, select: { clientId: true, clientSecretCiphertext: true } });
@@ -167,7 +167,7 @@ export async function saveProjectGoogleClient(input: { clientId: string; clientS
 /** Ask Google again whether the stored pair is accepted, and record the answer. */
 export async function revalidateProjectGoogleClient(fetchImpl?: FetchImpl, now: Date = new Date()): Promise<{ status: GoogleClientStatus; message: string | null }> {
   const row = await prisma.googleIntegrationConfig.findUnique({ where: { id: "global" }, select: { clientId: true, clientSecretCiphertext: true } });
-  const redirectUri = expectedRedirectUri();
+  const redirectUri = await expectedRedirectUri();
   if (!row?.clientId || !row.clientSecretCiphertext || !redirectUri) throw new GoogleClientConfigError("This project has no OAuth client of its own to validate.");
   let secret: string;
   try {

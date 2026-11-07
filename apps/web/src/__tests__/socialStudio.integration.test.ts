@@ -522,7 +522,7 @@ describe("media library — the allowance under parallel uploads", () => {
     const R = await project("SocialSign");
     const asset = await runWithProject(R, () => media.uploadSocialAsset({ bytes: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(1000)]), fileName: "p.jpg", folder: null, username: "u" }));
     const other = await runWithProject(R, () => media.uploadSocialAsset({ bytes: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(1000)]), fileName: "q.jpg", folder: null, username: "u" }));
-    const signed = media.signedAssetUrl(asset.id);
+    const signed = await runWithProject(R, () => media.signedAssetUrl(asset.id));
     expect(signed.ok).toBe(true);
     const url = new URL((signed as { url: string }).url);
     expect(url.origin).toBe("https://app.example.test");
@@ -534,7 +534,7 @@ describe("media library — the allowance under parallel uploads", () => {
     // The same signature for another file, an altered one, and an expired one are all plain 404s.
     expect((await get(url.toString().replace(asset.id, other.id), other.id)).status).toBe(404);
     expect((await get(url.toString().replace(/sig=[^&]+/, "sig=AAAA"), asset.id)).status).toBe(404);
-    const past = media.signedAssetUrl(asset.id, new Date(Date.now() - 3 * 3_600_000));
+    const past = await runWithProject(R, () => media.signedAssetUrl(asset.id, new Date(Date.now() - 3 * 3_600_000)));
     expect((await get((past as { url: string }).url, asset.id)).status).toBe(404);
     expect((await get(`https://app.example.test/api/social/media/${asset.id}`, asset.id)).status).toBe(404);
     await runWithProject(R, () => media.deleteSocialAsset(asset.id));

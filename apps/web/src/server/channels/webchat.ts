@@ -24,10 +24,10 @@ import {
   type WidgetSettings,
 } from "@support-automation/shared";
 import { getMediaStorage } from "@/server/mediaStorage";
-import { decryptSecret, encryptSecret } from "@support-automation/db";
+import { decryptSecret, encryptSecret, TenantScopeError } from "@support-automation/db";
 import { platformPrisma, prisma } from "@/server/db";
 import { disabledFeaturesFor } from "@/server/projectFeatures";
-import { publicOrigin } from "@/server/google/oauth";
+import { activeProjectOrigin } from "@/server/customerAddress";
 import { secretsEqual } from "@/server/channels/connections";
 import { routeNewWebchatConversation } from "@/server/channels/webchatRouting";
 
@@ -69,6 +69,16 @@ const KEY = /^[A-Za-z0-9_-]{20,64}$/;
 
 /** The widget a key names, or null when there is none to serve (wrong key, disconnected, feature or project off). */
 export async function loadPublicWidget(key: string): Promise<PublicWidget | null> {
+  try {
+    return await readPublicWidget(key);
+  } catch (err) {
+    // The platform address belongs to no customer, so no widget opens there: "not available", never a server error.
+    if (err instanceof TenantScopeError) return null;
+    throw err;
+  }
+}
+
+async function readPublicWidget(key: string): Promise<PublicWidget | null> {
   if (!KEY.test(key)) return null;
   const row = await platformPrisma.channelConnection.findUnique({
     where: { webhookKey: key },
@@ -523,8 +533,9 @@ export function widgetBrandAsset(widget: PublicWidget, assetId: string): WidgetA
 
 // ── Settings (project-scoped; the caller checks channels.manage) ─────────────────────────────────
 
-export function widgetScriptUrl(): string | null {
-  const origin = publicOrigin();
+/** This project's widget script, on its own customer's address. */
+export async function widgetScriptUrl(): Promise<string | null> {
+  const origin = await activeProjectOrigin();
   return origin ? `${origin}/api/webchat/widget.js` : null;
 }
 
@@ -553,7 +564,7 @@ export async function getWebchatDetails(id: string, now: Date = new Date()): Pro
   ]);
   return {
     key: row.webhookKey,
-    scriptUrl: widgetScriptUrl(),
+    scriptUrl: await widgetScriptUrl(),
     settings: parseWidgetSettings(row.widgetSettings),
     allowedOrigins: row.allowedOrigins,
     hasIdentitySecret: Boolean(row.webhookSecretCiphertext),

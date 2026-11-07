@@ -141,7 +141,7 @@ export function NewCustomerForm({
                     <Field label="Username" htmlFor="c-owner-user" required error={e.ownerUsername}>
                       <Input id="c-owner-user" name="ownerUsername" maxLength={60} autoComplete="off" />
                     </Field>
-                    <Field label="Password" htmlFor="c-owner-pass" required error={e.ownerPassword} hint="At least 12 characters. Share it privately.">
+                    <Field label="Password" htmlFor="c-owner-pass" required error={e.ownerPassword} hint="At least 8 characters. Share it privately.">
                       <Input id="c-owner-pass" name="ownerPassword" type="password" autoComplete="new-password" />
                     </Field>
                   </>

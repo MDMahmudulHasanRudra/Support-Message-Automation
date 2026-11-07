@@ -1,5 +1,7 @@
 
 import { prisma } from "@/server/db";
+import { projectPasswordLength } from "@/server/passwordPolicy";
+import { activeProjectId } from "@/server/projectContext";
 import { requireSession } from "@/server/auth";
 import { requirePermission } from "@/server/permissions";
 import { PageHeader } from "@/components/ui";
@@ -18,7 +20,7 @@ export default async function NewUserPage() {
   return (
     <div>
       <PageHeader title="Create App User" />
-      <UserForm action={createUser} permissionModules={permissionModules} mode="create" submitLabel="Create User" />
+      <UserForm action={createUser} permissionModules={permissionModules} minPasswordLength={await projectPasswordLength(await activeProjectId())} mode="create" submitLabel="Create User" />
     </div>
   );
 }

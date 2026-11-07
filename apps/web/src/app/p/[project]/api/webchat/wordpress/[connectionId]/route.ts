@@ -19,8 +19,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
     select: { name: true, webhookKey: true, status: true },
   });
   if (!row || row.status === "DISCONNECTED") return NextResponse.json({ error: "That widget no longer exists." }, { status: 404 });
-  const scriptUrl = widgetScriptUrl();
-  if (!scriptUrl) return NextResponse.json({ error: "This server's public address (NEXTAUTH_URL) is not set." }, { status: 503 });
+  const scriptUrl = await widgetScriptUrl();
+  if (!scriptUrl) return NextResponse.json({ error: "This workspace has no web address yet. Ask your provider to add one." }, { status: 503 });
   const zip = buildZip(wordpressPluginFiles({ scriptUrl, widgetKey: row.webhookKey, widgetName: row.name }));
   return new NextResponse(new Uint8Array(zip), {
     status: 200,

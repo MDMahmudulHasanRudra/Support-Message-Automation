@@ -11,7 +11,8 @@ import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import { privilegeRefusal, userIsPrivileged } from "@/server/privilegeGuard";
 import { isMainAdmin } from "@/server/projectContext";
-import { MIN_PASSWORD_LENGTH, normalizeUsername } from "@/lib/userRules";
+import { normalizeUsername } from "@/lib/userRules";
+import { passwordLengthForUser, projectPasswordLength } from "@/server/passwordPolicy";
 import { CustomerLimitError, lockAndCheckCustomerLimit } from "@/server/customerLimits";
 import { activeProjectId } from "@/server/projectContext";
 
@@ -36,16 +37,17 @@ export async function createUser(_prevState: UserFormState, formData: FormData):
   if (!name) return { error: "Display name is required." };
   const roleError = await roleOfThisCustomer(permissionModuleId);
   if (roleError) return { error: roleError };
-  if (password.length < MIN_PASSWORD_LENGTH) return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  const minLength = await projectPasswordLength(await activeProjectId());
+  if (password.length < minLength) return { error: `Password must be at least ${minLength} characters.` };
   if (password !== confirmPassword) return { error: "Passwords do not match." };
   // A login on a role holding Main Admin keys is a new Main Admin (server/privilegeGuard.ts).
   const privileged = await privilegeRefusal(session.userId, { assignsRoleId: permissionModuleId });
   if (privileged) return { error: privileged };
 
-  const existing = await prisma.user.findUnique({ where: { username } });
+  const existing = await prisma.user.findFirst({ where: { username } });
   if (existing) return { error: `A user named "${username}" already exists.` };
   // Email is unique too, and was not checked: reusing one threw a raw P2002 that replaced the page.
-  if (email && (await prisma.user.findUnique({ where: { email } }))) {
+  if (email && (await prisma.user.findFirst({ where: { email } }))) {
     return { error: "Another user already has that email address." };
   }
 
@@ -99,7 +101,7 @@ export async function updateUser(id: string, _prevState: UserFormState, formData
   // Email is unique; changing it to one another user already has threw a raw P2002 that replaced
   // the page. Checked against everyone else, so saving without changing it is not a clash.
   if (email && email !== target.email) {
-    const holder = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    const holder = await prisma.user.findFirst({ where: { email }, select: { id: true } });
     if (holder && holder.id !== id) return { error: "Another user already has that email address." };
   }
 
@@ -174,8 +176,9 @@ export async function resetUserPassword(id: string, newPassword: string): Promis
   const session = await requireSession();
   if (!(await hasPermission(session, "users.edit"))) return { error: PERMISSION_DENIED_ERROR };
 
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    return { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  const minLength = await passwordLengthForUser(id);
+  if (newPassword.length < minLength) {
+    return { error: `Password must be at least ${minLength} characters.` };
   }
 
   const target = await prisma.user.findUnique({ where: { id } });

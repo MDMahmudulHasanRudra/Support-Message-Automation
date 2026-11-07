@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { activeProjectOrigin, installationOrigin } from "@/server/customerAddress";
 import { decryptSecret, encryptSecret } from "@support-automation/db";
 
 /**
@@ -57,16 +58,8 @@ export interface GoogleOAuthConfig {
   redirectUri: string;
 }
 
-/** The public address this installation is reached at — the same value sign-in depends on. */
-export function publicOrigin(): string | null {
-  const raw = process.env.NEXTAUTH_URL?.trim();
-  if (!raw) return null;
-  try {
-    return new URL(raw).origin;
-  } catch {
-    return null;
-  }
-}
+/** The installation's own address. For anything that belongs to one customer use `activeProjectOrigin`. */
+export const publicOrigin = installationOrigin;
 
 /**
  * The server's ENVIRONMENT client only — the fallback. Every caller that acts for a project uses
@@ -80,9 +73,9 @@ export function googleOAuthConfig(): GoogleOAuthConfig | null {
   return { clientId, clientSecret, redirectUri: `${origin}${CALLBACK_PATH}` };
 }
 
-/** The redirect URI to register in Google Cloud, shown on the settings page even before setup. */
-export function expectedRedirectUri(): string | null {
-  const origin = publicOrigin();
+/** The redirect URI to register in Google Cloud for this project, shown on the settings page even before setup. */
+export async function expectedRedirectUri(): Promise<string | null> {
+  const origin = await activeProjectOrigin();
   return origin ? `${origin}${CALLBACK_PATH}` : null;
 }
 

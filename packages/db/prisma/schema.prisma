@@ -558,6 +558,8 @@ enum ProjectStatus {
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
   id                  String           @id @default(cuid())
+  /// A Lead's own password length for this project; null = the customer's. 6 to 128 (CHECK).
+  minPasswordLength Int?
   whatsAppIdentityEvidence WhatsAppIdentityEvidence[]
   whatsAppNumberOperators  WhatsAppNumberOperator[]
   /// Platform approvals naming this project (MODULE_APPROVALS.md). Not project-owned data: see ModuleApproval.
@@ -861,8 +863,10 @@ model ProjectFeature {
 
 model User {
   id           String  @id @default(cuid())
-  username     String  @unique
-  email        String? @unique // optional: login is by username, not email; every existing
+  /// Unique per customer, not across the server (User_customer_username_key, an expression index Prisma cannot model):
+  /// each customer has its own logins, and the address decides which customer a sign-in is for.
+  username     String
+  email        String? // unique per customer too (User_customer_email_key); optional: login is by username, not email; every existing
   // display site already does `createdBy?.email ?? "—"`, so a missing email was already a
   // normal, handled case before this field was ever made nullable.
   passwordHash String
@@ -1011,6 +1015,9 @@ model User {
   followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
 
   @@index([customerId])
+
+  @@index([username])
+  @@index([email])
 }
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1114,8 @@ model SecuritySettings {
   loginLockoutThreshold       Int       @default(5)
   loginLockoutWindowMinutes   Int       @default(15)
   loginLockoutDurationMinutes Int       @default(15)
+  /// How long a new password must be, for this customer. 6 to 128 (CHECK).
+  minPasswordLength           Int       @default(8)
   updatedAt                   DateTime  @updatedAt
   /// The customer this row belongs to (SAAS_PLATFORM_PLAN.md §12). NULL = the original installation
   /// (the founding customer, Customer #1): every row that existed before multi-customer stays NULL.

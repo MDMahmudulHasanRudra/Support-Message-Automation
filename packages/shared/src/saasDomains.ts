@@ -106,6 +106,29 @@ export interface DomainRow {
 }
 
 /** The statuses in which a hostname opens its customer's workspace. */
+/**
+ * Which address to hand out for one customer: its widget code, chat links, webhooks. Never another customer's.
+ *  - Routing off: every address serves everything, so the installation's address, as before.
+ *  - The address they are on, when it is an ACTIVE one of theirs. A customer can have several.
+ *  - Otherwise their first address (the caller orders them).
+ *  - No address: the installation's for the original installation, which is who that address belongs to; nothing
+ *    for anybody else, so the page says so rather than offering a link that another customer's address would refuse.
+ */
+export function pickCustomerOrigin(input: {
+  routingOn: boolean;
+  fallback: string | null;
+  scheme: "http" | "https";
+  visitedHost: string | null;
+  domains: ReadonlyArray<{ hostname: string; status: string }>;
+  isOriginalInstallation: boolean;
+}): string | null {
+  if (!input.routingOn) return input.fallback;
+  const active = input.domains.filter((d) => d.status === "ACTIVE");
+  const chosen = active.find((d) => d.hostname === input.visitedHost) ?? active[0] ?? input.domains[0];
+  if (chosen) return `${input.scheme}://${chosen.hostname}`;
+  return input.isOriginalInstallation ? input.fallback : null;
+}
+
 export const ROUTABLE_DOMAIN_STATUSES: readonly DomainStatus[] = ["VERIFIED", "ACTIVE"];
 
 /**

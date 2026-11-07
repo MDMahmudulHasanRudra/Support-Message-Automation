@@ -805,6 +805,29 @@ const RELEASES: HistoricalRelease[] = [
     ],
     bugFixes: []
   },
+  {
+    version: "0.33.0",
+    title: "Every customer completely separate",
+    summary: "Each customer has its own web address and its own logins.",
+    releaseDate: "2026-11-07",
+    releaseType: "SECURITY",
+    affectedModules: [
+      "Website Chat",
+      "Users & Permissions",
+      "Security",
+      "Platform"
+    ],
+    whatsNew: [
+      "Each customer can use the same usernames, such as admin, without affecting any other customer",
+      "Choose how long passwords must be, from 6 to 128 characters: Main Admins for the company, project Leads for their project"
+    ],
+    improvements: [
+      "Widget code, chat links, webhook addresses and integrations now use the customer's own web address"
+    ],
+    bugFixes: [
+      "A customer no longer sees another customer's web address in its install code and links"
+    ]
+  },
 ];
 
 async function main() {

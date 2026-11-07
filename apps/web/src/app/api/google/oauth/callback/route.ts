@@ -7,7 +7,8 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import { completeGoogleConnection, GoogleConnectionError } from "@/server/google/accounts";
 import { syncAccountSpreadsheets } from "@/server/google/spreadsheets";
 import { completeIdentityLink, GoogleIdentityError } from "@/server/google/identity";
-import { openOAuthState, publicOrigin, STATE_COOKIE, stateCookieOptions } from "@/server/google/oauth";
+import { requestOrigin } from "@/server/customerAddress";
+import { openOAuthState, STATE_COOKIE, stateCookieOptions } from "@/server/google/oauth";
 import { resolveProjectGoogleClient } from "@/server/google/clientConfig";
 
 /**
@@ -35,7 +36,7 @@ const CLIENT_REFUSAL_CODE = { DISABLED: "disabled", NOT_CONFIGURED: "not_configu
 const IDENTITY_PATH = "/google-sheets/identity";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const origin = publicOrigin() ?? new URL(request.url).origin;
+  const origin = requestOrigin(request);
   const params = request.nextUrl.searchParams;
   const state = openOAuthState(request.cookies.get(STATE_COOKIE)?.value);
 
