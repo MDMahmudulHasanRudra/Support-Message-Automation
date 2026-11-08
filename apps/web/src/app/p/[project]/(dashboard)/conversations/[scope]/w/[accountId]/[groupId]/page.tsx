@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { isInboxScope } from "@support-automation/shared";
+import { isInboxRouteScope } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
 import { GroupConversationView } from "../../../../../chat/GroupConversationView";
 
@@ -19,7 +19,7 @@ export default async function InboxWhatsAppGroupPage({
 }) {
   const { session, canManage: canReply } = await pageAccess("messages.view", "messages.reply", { feature: "WHATSAPP_CHAT", sections: ["/chat"] });
   const { scope, accountId, groupId } = await params;
-  if (!isInboxScope(scope)) notFound();
+  if (!isInboxRouteScope(scope)) notFound();
   const { info, contact } = await searchParams;
   return (
     <GroupConversationView

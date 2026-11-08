@@ -14,13 +14,13 @@ const RECONNECT_MS = 60_000;
  * back to the old fixed refresh whenever the live connection is not up. Like AutoRefresh it stops completely
  * while the tab is hidden, and catches up on the way back.
  */
-export function LiveRefresh({ intervalMs = 4000 }: { intervalMs?: number }) {
+export function LiveRefresh({ intervalMs = 4000, allProjects = false }: { intervalMs?: number; allProjects?: boolean }) {
   const router = useProjectRouter();
   const routerRef = useRef(router);
   useEffect(() => {
     routerRef.current = router;
   });
-  const url = useProjectHref()("/api/inbox/live");
+  const url = `${useProjectHref()("/api/inbox/live")}${allProjects ? "?projects=all" : ""}`;
 
   useEffect(() => {
     let source: EventSource | null = null;

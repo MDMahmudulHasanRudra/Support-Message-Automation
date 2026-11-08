@@ -157,6 +157,17 @@ export const UNAVAILABLE_CHANNELS = [
 export const INBOX_SCOPES = ["all", "whatsapp", ...CHANNEL_TYPES.map((t) => CHANNELS[t].slug)] as const;
 export type InboxScope = "all" | "whatsapp" | "messenger" | "instagram" | "telegram" | "website";
 
+/**
+ * The address of the All projects inbox (ALL_PROJECTS_INBOX.md): every project's conversations in one list. Not a channel,
+ * so it is never an InboxScope that a query could be given.
+ */
+export const ALL_PROJECTS_SCOPE = "all-projects";
+export type InboxRouteScope = InboxScope | typeof ALL_PROJECTS_SCOPE;
+
+export function isInboxRouteScope(value: unknown): value is InboxRouteScope {
+  return value === ALL_PROJECTS_SCOPE || isInboxScope(value);
+}
+
 export function isInboxScope(value: unknown): value is InboxScope {
   return typeof value === "string" && (INBOX_SCOPES as readonly string[]).includes(value);
 }

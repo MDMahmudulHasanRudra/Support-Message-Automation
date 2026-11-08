@@ -799,7 +799,9 @@ export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: Rea
   })).filter((group) => group.links.length > 0);
 }
 
-export function isNavActive(pathname: string, search: URLSearchParams, href: string, label?: string) {
+export function isNavActive(rawPathname: string, search: URLSearchParams, href: string, label?: string) {
+  // The All projects inbox is a view of All Conversations, so that entry stays lit for it.
+  const pathname = rawPathname === "/conversations/all-projects" || rawPathname.startsWith("/conversations/all-projects/") ? "/conversations/all" : rawPathname;
   // The one Settings entry stands for the whole module, so it stays lit on every settings page.
   if (label === SETTINGS_LINK.label && isSettingsPath(href.split("?")[0]!)) return isSettingsPath(pathname);
   if (href === REPORTS_LINK.href) {

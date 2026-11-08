@@ -869,6 +869,22 @@ const RELEASES: HistoricalRelease[] = [
     ],
     bugFixes: [],
   },
+  {
+    version: "0.36.0",
+    title: "All projects in one inbox",
+    summary: "See and answer every project's conversations from a single list.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["All Conversations"],
+    whatsNew: [
+      "A new All tab in All Conversations lists every project's conversations together, each marked with its project",
+      "An overview shows what is open and waiting in each project, and a press narrows the list to one",
+      "Open and reply to any conversation without leaving the list, and act on conversations from several projects at once",
+      "Anyone with access to more than one project gets the same view, limited to what they may already read",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

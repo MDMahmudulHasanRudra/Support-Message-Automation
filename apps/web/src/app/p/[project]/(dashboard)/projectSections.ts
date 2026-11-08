@@ -84,7 +84,7 @@ interface SectionRule {
  */
 const SECTION_RULES: Record<string, SectionRule> = {
   // Support
-  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/whatsapp", "/api/channels/attachment", "/api/channels/webchat-photo"] },
+  "/conversations/all": { write: ["conversations.reply"], also: ["/conversations", "/conversations/all-projects", "/conversations/whatsapp", "/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/chat": { write: ["messages.reply"], also: ["/api/whatsapp/media", "/api/whatsapp/avatar", "/api/whatsapp/send-file"] },
   "/conversations/messenger": { write: ["conversations.reply"] },
   "/conversations/instagram": { write: ["conversations.reply"] },

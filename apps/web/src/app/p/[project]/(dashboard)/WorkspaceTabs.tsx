@@ -1,7 +1,8 @@
 "use client";
 
 import NextLink from "next/link";
-import { ExternalLink, Globe } from "lucide-react";
+import { ExternalLink, Globe, Layers } from "lucide-react";
+import { ALL_PROJECTS_SCOPE } from "@support-automation/shared";
 import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { isGlobalPage, workspaceHref, workspaceTabsFor, type WorkspaceProject } from "@/lib/workspace";
 import { resolveNavLocation } from "./navigation";
@@ -42,12 +43,27 @@ export function WorkspaceTabs({
 
   const tabs = workspaceTabsFor(projects, pathname);
   const section = resolveNavLocation(pathname, search)?.href.split("?")[0] ?? "/overview";
+  // The inbox alone has a view over every project (ALL_PROJECTS_INBOX.md), so only it offers an All tab.
+  const allProjectsPath = `/conversations/${ALL_PROJECTS_SCOPE}`;
+  const onAllProjects = pathname === allProjectsPath || pathname.startsWith(`${allProjectsPath}/`);
+  const offerAll = tabs.length > 1 && (pathname === "/conversations" || pathname.startsWith("/conversations/"));
+  const tabClass = (active: boolean) =>
+    `relative flex shrink-0 items-center gap-2 px-3 pt-1.5 pb-2.5 text-[13px] whitespace-nowrap transition-colors duration-[var(--duration-fast)] ${
+      active ? "font-medium text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+    }`;
 
   return (
     <div className="mb-4 flex h-10 items-end gap-3 border-b border-[var(--color-border)]">
       <nav aria-label="Projects" className="-mb-px flex min-w-0 flex-1 gap-1 overflow-x-auto">
+        {offerAll ? (
+          <NextLink href={workspaceHref(allProjectsPath, current.slug)} aria-current={onAllProjects ? "page" : undefined} data-project-tab="all" title="Every project in one list" className={tabClass(onAllProjects)}>
+            <span aria-hidden className={`absolute inset-x-0 bottom-0 h-[2px] rounded-full ${onAllProjects ? "bg-[var(--color-accent)]" : "bg-transparent"}`} />
+            <Layers className="size-3.5" aria-hidden />
+            All
+          </NextLink>
+        ) : null}
         {tabs.map((tab) => {
-          const active = tab.slug === current.slug;
+          const active = !onAllProjects && tab.slug === current.slug;
           return (
             <NextLink
               key={tab.slug}
@@ -73,6 +89,7 @@ export function WorkspaceTabs({
           );
         })}
       </nav>
+      {onAllProjects ? null : (
       <NextLink
         href={openInProject}
         data-open-in-project
@@ -81,6 +98,7 @@ export function WorkspaceTabs({
         Open in {current.name}
         <ExternalLink className="size-3.5" aria-hidden />
       </NextLink>
+      )}
     </div>
   );
 }

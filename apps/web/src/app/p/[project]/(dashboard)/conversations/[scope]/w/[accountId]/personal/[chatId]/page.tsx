@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { isInboxScope } from "@support-automation/shared";
+import { isInboxRouteScope } from "@support-automation/shared";
 import { pageAccess } from "@/server/authorize";
 import { PersonalConversationView } from "../../../../../../chat/PersonalConversationView";
 
@@ -15,7 +15,7 @@ export default async function InboxWhatsAppPersonalPage({
 }) {
   const { session, canManage: canReply } = await pageAccess("messages.view", "messages.reply", { feature: "WHATSAPP_CHAT", sections: ["/chat"] });
   const { scope, accountId, chatId } = await params;
-  if (!isInboxScope(scope)) notFound();
+  if (!isInboxRouteScope(scope)) notFound();
   const { contact } = await searchParams;
   return (
     <PersonalConversationView
