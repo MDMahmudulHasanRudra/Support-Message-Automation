@@ -212,6 +212,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CsatSurvey", "CsatSettings",
   // Follow-ups (FOLLOW_UPS.md).
   "FollowUp", "FollowUpEvent",
+  // Contacts (CONTACTS.md).
+  "Contact", "ContactIdentifier", "ContactConversationLink", "ContactEvent", "ContactSettings", "ContactCampaign", "ContactCampaignRecipient",
   // Support tickets (TICKETS.md).
   "Ticket", "TicketEvent", "TicketSettings",
   // Automatic routing (AUTO_ROUTING.md).
@@ -2700,4 +2702,111 @@ export async function fillRosterFromPattern(db: any, now = new Date(), days = RO
     }
   }
   return created;
+}
+
+// ── Contacts (CONTACTS.md) ──────────────────────────────────────────────────────────────────────
+
+/** Reserves `count` serial numbers for a project and returns the first. Atomic, so two people adding at once never share one. */
+export async function reserveContactSerials(tx: any, projectId: string, count: number): Promise<number> {
+  const [row] = await tx.$queryRaw`
+    INSERT INTO "ContactSettings" ("id", "projectId", "lastSerial", "updatedAt") VALUES (gen_random_uuid()::text, ${projectId}, ${count}, now())
+    ON CONFLICT ("projectId") DO UPDATE SET "lastSerial" = "ContactSettings"."lastSerial" + ${count}
+    RETURNING "lastSerial" AS n`;
+  return Number(row.n) - count + 1;
+}
+
+export interface CollectContactValue {
+  kind: string;
+  value: string;
+  normalized: string;
+  isWhatsApp?: boolean;
+}
+
+export interface CollectContactInput {
+  projectId: string;
+  chat: { accountId: string | null; chatId: string } | { channelConversationId: string };
+  chatTitle: string | null;
+  source: string;
+  sourceDetail: string | null;
+  name: string | null;
+  values: CollectContactValue[];
+  collectedByAi: boolean;
+  actor: { userId: string | null; name: string };
+}
+
+export interface CollectContactResult {
+  contactId: string;
+  serial: number;
+  created: boolean;
+  added: CollectContactValue[];
+  /** Values already held by a DIFFERENT contact: never copied, so a number stays on one contact. */
+  heldElsewhere: Array<CollectContactValue & { contactId: string }>;
+}
+
+/**
+ * The one way a chat becomes a contact: the Contact tab beside a chat and the worker's collector both call it. The chat's
+ * own contact if it has one, otherwise the contact already holding one of these values, otherwise a new one. A value
+ * already on the contact is left alone, and a value on somebody else stays there.
+ */
+export async function collectContactFromChat(db: any, input: CollectContactInput): Promise<CollectContactResult> {
+  return db.$transaction(async (tx: any) => {
+    const chatWhere = "chatId" in input.chat ? { chatId: input.chat.chatId } : { channelConversationId: input.chat.channelConversationId };
+    const link = await tx.contactConversationLink.findFirst({ where: chatWhere, select: { contactId: true } });
+    const known = input.values.length
+      ? ((await tx.contactIdentifier.findMany({
+          where: { OR: input.values.map((v) => ({ kind: v.kind, normalized: v.normalized })) },
+          select: { kind: true, normalized: true, contactId: true },
+        })) as Array<{ kind: string; normalized: string; contactId: string }>)
+      : [];
+
+    let contactId: string | null = link?.contactId ?? known[0]?.contactId ?? null;
+    let serial = 0;
+    let created = false;
+    if (contactId) {
+      const row = await tx.contact.findFirst({ where: { id: contactId }, select: { serial: true, name: true } });
+      serial = row.serial;
+      if (input.name && !row.name) await tx.contact.updateMany({ where: { id: contactId, name: null }, data: { name: input.name } });
+    } else {
+      serial = await reserveContactSerials(tx, input.projectId, 1);
+      const row = await tx.contact.create({
+        data: { serial, name: input.name, source: input.source, sourceDetail: input.sourceDetail, collectedByAi: input.collectedByAi, createdById: input.actor.userId },
+        select: { id: true },
+      });
+      contactId = row.id as string;
+      created = true;
+    }
+
+    if (!link) {
+      await tx.contactConversationLink.createMany({
+        data: [{ contactId, source: input.source, title: input.chatTitle, ...("chatId" in input.chat ? { accountId: input.chat.accountId, chatId: input.chat.chatId } : { channelConversationId: input.chat.channelConversationId }) }],
+        skipDuplicates: true,
+      });
+    }
+
+    const key = (v: { kind: string; normalized: string }) => `${v.kind}:${v.normalized}`;
+    const holders = new Map(known.map((k) => [key(k), k.contactId]));
+    const seen = new Set<string>();
+    const fresh = input.values.filter((v) => {
+      const k = key(v);
+      if (holders.has(k) || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    if (fresh.length) {
+      await tx.contactIdentifier.createMany({
+        data: fresh.map((v) => ({ contactId, kind: v.kind, value: v.value, normalized: v.normalized, isWhatsApp: v.isWhatsApp ?? false, source: input.source, collectedByAi: input.collectedByAi })),
+        skipDuplicates: true,
+      });
+    }
+
+    const events: Array<{ contactId: string; kind: string; detail: string | null; actorUserId: string | null; actorName: string }> = [];
+    const event = (kind: string, detail: string | null) => events.push({ contactId: contactId!, kind, detail: detail?.slice(0, 1000) ?? null, actorUserId: input.actor.userId, actorName: input.actor.name });
+    if (created) event("CREATED", input.sourceDetail);
+    if (!link) event("CHAT_LINKED", input.chatTitle);
+    for (const v of fresh) event("VALUE_ADDED", v.value);
+    if (events.length) await tx.contactEvent.createMany({ data: events });
+
+    const heldElsewhere = input.values.filter((v) => holders.has(key(v)) && holders.get(key(v)) !== contactId).map((v) => ({ ...v, contactId: holders.get(key(v))! }));
+    return { contactId, serial, created, added: fresh, heldElsewhere };
+  });
 }

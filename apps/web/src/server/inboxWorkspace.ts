@@ -16,6 +16,7 @@ import {
 import { loadLifecycle } from "@/server/conversationLifecycle";
 import { loadConversationFollowUps, type ConversationFollowUp } from "@/server/followUps";
 import { loadConversationTickets, loadTicketConfig, type TicketSummary } from "@/server/tickets";
+import { loadConversationContact, type ConversationContact } from "@/server/contacts";
 
 /**
  * The inbox workspace side panel (INBOX_WORKSPACE.md): internal notes, priority / tags, Team
@@ -70,7 +71,8 @@ export async function resolveWorkspaceAccess(session: Session, ref: Conversation
   const lifecycle = !disabled.has("UNIFIED_INBOX_V3");
   const followUps = !disabled.has("FOLLOW_UPS");
   const tickets = !disabled.has("TICKETS");
-  if (!collaboration && !copilot && !lifecycle && !followUps && !tickets) return null;
+  const contacts = !disabled.has("CONTACTS");
+  if (!collaboration && !copilot && !lifecycle && !followUps && !tickets && !contacts) return null;
 
   if (!(await conversationInProject(ref, disabled))) return null;
   if (!(await hasPermission(session, "messages.view"))) return null;
@@ -139,6 +141,8 @@ export interface WorkspaceData {
   groupOwner: { name: string; groupName: string } | null;
   /** This conversation's open follow-ups (FOLLOW_UPS). Null while the feature is off. */
   followUps: ConversationFollowUp[] | null;
+  /** This conversation's contact and what the chat itself proves (CONTACTS). Null when off or not allowed. */
+  contactCard: ConversationContact | null;
   /** This conversation's tickets (TICKETS). Null while the feature is off. */
   tickets: TicketSummary[] | null;
   /** What the New ticket form offers. Null while the feature is off. */
@@ -265,7 +269,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     access.lifecycle && !access.collaboration ? mentionablePeople(session) : null,
     loadConversationCsat(ref, access.canRead),
   ]);
-  const followUps = access.followUps ? await loadConversationFollowUps(ref) : null;
+  const [followUps, contactCard] = await Promise.all([access.followUps ? loadConversationFollowUps(ref) : null, loadConversationContact(session, ref)]);
   const [tickets, ticketConfig, ticketTeams] = access.tickets
     ? await Promise.all([loadConversationTickets(ref), loadTicketConfig(), prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } })])
     : [null, null, null];
@@ -299,6 +303,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, auto: isAutoRoutingContext(e.context), at: e.createdAt.toISOString() })),
     groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
     followUps,
+    contactCard,
     tickets,
     ticketOptions: ticketConfig && ticketTeams ? { teams: ticketTeams, categories: ticketConfig.categories } : null,
     lifecycle: lifecycle

@@ -144,6 +144,14 @@ export async function sendNextQueued(now: Date = new Date(), send: SmtpSender = 
     }
   }
 
+  if (message.purpose === "CONTACT_CAMPAIGN") {
+    const refusal = await contactCampaignRefusal(message.id, message.toAddress, settings);
+    if (refusal) {
+      await fail(refusal);
+      return true;
+    }
+  }
+
   let password: string;
   try {
     password = decryptSecret(settings.passwordCiphertext);
@@ -219,8 +227,39 @@ export async function clientMessageRefusal(outboxId: string, toAddress: string, 
   return null;
 }
 
+/** The same re-check for one recipient of a Contacts campaign (CONTACTS.md): an opt-out since it was queued wins. */
+export async function contactCampaignRefusal(outboxId: string, toAddress: string, settings: { enabled: boolean; settingsVersion: number; verifiedVersion: number | null }): Promise<string | null> {
+  if (!settings.enabled) return "Not sent: email is switched off for this project.";
+  if (settings.verifiedVersion !== settings.settingsVersion) return "Not sent: the email settings changed and have not been tested again.";
+  const recipient = await prisma.contactCampaignRecipient.findFirst({ where: { emailOutboxId: outboxId }, select: { contact: { select: { status: true, consent: true, identifiers: { where: { kind: "EMAIL" }, select: { value: true } } } } } });
+  if (!recipient) return "Not sent: the campaign this email belongs to no longer has this person.";
+  if (recipient.contact.status !== "ACTIVE") return "Not sent: this contact was archived.";
+  if (recipient.contact.consent === "OPTED_OUT") return "Not sent: this contact said no to offers.";
+  if (!recipient.contact.identifiers.some((i) => i.value.toLowerCase() === toAddress.toLowerCase())) return "Not sent: this address is no longer on the contact.";
+  return null;
+}
+
 async function finish(id: string, data:Parameters<typeof prisma.emailOutbox.update>[0]["data"]): Promise<void> {
   await prisma.emailOutbox.updateMany({ where: { id, status: "SENDING" }, data: data as never });
+  await settleContactRecipient(id, data as { status?: unknown; lastError?: unknown }).catch((err) => console.error("[email] could not settle a campaign recipient", err));
+}
+
+/** A campaign row follows its email. Every ending passes through `finish`, so this is the one place that needs to know. */
+async function settleContactRecipient(outboxId: string, data: { status?: unknown; lastError?: unknown }): Promise<void> {
+  if (data.status !== "ACCEPTED" && data.status !== "FAILED" && data.status !== "UNKNOWN") return;
+  const recipient = await prisma.contactCampaignRecipient.findFirst({ where: { emailOutboxId: outboxId, status: "QUEUED" }, select: { id: true, contactId: true, campaign: { select: { name: true } } } });
+  if (!recipient) return;
+  const now = new Date();
+  if (data.status === "ACCEPTED") {
+    await prisma.$transaction([
+      prisma.contactCampaignRecipient.updateMany({ where: { id: recipient.id, status: "QUEUED" }, data: { status: "DONE", doneAt: now } }),
+      prisma.contact.updateMany({ where: { id: recipient.contactId }, data: { lastContactedAt: now } }),
+      prisma.contactEvent.create({ data: { contactId: recipient.contactId, kind: "CONTACTED", detail: recipient.campaign.name.slice(0, 1000), actorName: "Email campaign" } }),
+    ]);
+    return;
+  }
+  const reason = data.status === "UNKNOWN" ? "The mail server did not confirm this one; it may have gone out." : typeof data.lastError === "string" ? data.lastError.slice(0, 300) : "The email was not sent.";
+  await prisma.contactCampaignRecipient.updateMany({ where: { id: recipient.id, status: "QUEUED" }, data: { status: "SKIPPED", skipReason: reason, doneAt: now } });
 }
 
 /**

@@ -4,6 +4,9 @@ import {
   Activity,
   AlarmClock,
   Ticket,
+  BookUser,
+  Megaphone as ContactCampaignIcon,
+  FileUp as ContactImportIcon,
   AlertCircle,
   AlertTriangle,
   BarChart3,
@@ -215,6 +218,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
       { href: "/settings/inbox-status", label: "Inbox status", icon: CircleDot },
       { href: "/settings/tickets", label: "Tickets", icon: Ticket },
+      { href: "/settings/contacts", label: "Contacts", icon: BookUser },
       { href: "/settings/csat", label: "Satisfaction surveys", icon: Star },
       { href: "/settings/auto-routing", label: "Automatic routing", icon: Shuffle },
       { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
@@ -436,6 +440,16 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
       // Numbered support cases (TICKETS.md).
       { href: "/tickets", label: "Tickets", icon: Ticket },
+    ],
+  },
+  {
+    // Contacts (CONTACTS.md): everyone met in the chats, apart from Clients and Billing.
+    label: "Contacts",
+    icon: BookUser,
+    links: [
+      { href: "/contacts", label: "All contacts", icon: BookUser },
+      { href: "/contacts/campaigns", label: "Campaigns", icon: ContactCampaignIcon },
+      { href: "/contacts/import", label: "Import", icon: ContactImportIcon },
     ],
   },
   {
@@ -722,6 +736,10 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/support-escalation", "escalations.view"],
   ["/follow-ups", "messages.view"],
   ["/tickets", "messages.view"],
+  ["/contacts/campaigns", "contacts.campaign"],
+  ["/contacts/import", "contacts.import"],
+  ["/contacts", "contacts.view"],
+  ["/settings/contacts", "settings.view"],
   ["/support-activity", "support_activity.view"],
   ["/support-assignment", "support_assignment.view"],
   ["/team-report", "support_activity.view"],

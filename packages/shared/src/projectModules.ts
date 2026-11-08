@@ -453,6 +453,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  CONTACTS: {
+    category: "Support",
+    benefits: ["Every customer's numbers, emails and social accounts in one profile", "Filled from any chat, by paste, by file or by AI, never the same number twice", "Offers and wake-up campaigns to the people you choose"],
+    defaultForTypes: ["DEFAULT", "ECOMMERCE"],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "Most contacts are collected beside a conversation." }],
+    conflicts: [],
+    aiCapabilities: ["Reads customers' messages for their own numbers and addresses, when switched on in Settings → Contacts."],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Contacts, their history and campaigns are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "CONTACTS.md",
+  },
   TICKETS: {
     category: "Support",
     benefits: ["A numbered case for every problem, with an owner and a due time", "Created from any conversation in two clicks", "Internal notes the customer never sees"],

@@ -128,6 +128,14 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   //   delete  — permanently delete an ARCHIVED client
   //   import  — import clients from a file
   //   export  — export clients to a file (personal data leaves the system)
+  // Contacts (CONTACTS.md). Apart from Clients on purpose: a person who answers chats can note a number here without
+  // being able to see billing, and exporting or campaigning to the whole list is its own decision.
+  { key: "contacts.view", label: "View Contacts", category: "Contacts" },
+  { key: "contacts.edit", label: "Add and Edit Contacts", category: "Contacts" },
+  { key: "contacts.delete", label: "Permanently Delete Contacts", category: "Contacts" },
+  { key: "contacts.import", label: "Import Contacts", category: "Contacts" },
+  { key: "contacts.export", label: "Export Contacts", category: "Contacts" },
+  { key: "contacts.campaign", label: "Run Contact Campaigns", category: "Contacts" },
   { key: "clients.view", label: "View Clients", category: "Clients" },
   { key: "clients.create", label: "Create Clients", category: "Clients" },
   { key: "clients.update", label: "Edit Clients", category: "Clients" },
@@ -244,6 +252,11 @@ export const ADMIN_GRANTED_KEYS: readonly string[] = ["clients.delete"];
 export const VENDOR_PERMISSION_KEYS: readonly string[] = ["release_notes.manage"];
 
 export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
+  "contacts.view",
+  "contacts.edit",
+  "contacts.import",
+  "contacts.export",
+  "contacts.campaign",
   "messages.view",
   "messages.reply",
   "conversations.reply",
@@ -258,6 +271,8 @@ export const SUPPORT_MANAGER_PERMISSION_KEYS: readonly string[] = [
 
 /** Matches the spec's own illustrative example for this default module verbatim. */
 export const SUPPORT_AGENT_PERMISSION_KEYS: readonly string[] = [
+  "contacts.view",
+  "contacts.edit",
   "messages.view",
   "messages.reply",
   "conversations.reply",

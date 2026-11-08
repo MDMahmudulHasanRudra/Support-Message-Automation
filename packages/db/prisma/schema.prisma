@@ -744,6 +744,13 @@ model Project {
   csatSurveys                          CsatSurvey[]
   csatSettings                         CsatSettings?
   followUps                            FollowUp[]
+  contacts                             Contact[]
+  contactIdentifiers                   ContactIdentifier[]
+  contactConversationLinks             ContactConversationLink[]
+  contactEvents                        ContactEvent[]
+  contactSettings                      ContactSettings?
+  contactCampaigns                     ContactCampaign[]
+  contactCampaignRecipients            ContactCampaignRecipient[]
   tickets                              Ticket[]
   ticketEvents                         TicketEvent[]
   ticketSettings                       TicketSettings?
@@ -1017,6 +1024,8 @@ model User {
   followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
   followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
   followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
+  contactsCreated               Contact[]                   @relation("ContactCreator")
+  contactCampaignsCreated       ContactCampaign[]           @relation("ContactCampaignCreator")
   ticketsAssigned               Ticket[]                    @relation("TicketAssignee")
   ticketsCreated                Ticket[]                    @relation("TicketCreator")
 
@@ -1130,6 +1139,7 @@ model SecuritySettings {
 }
 
 model WhatsAppAccount {
+  contactConversationLinks ContactConversationLink[]
   id              String                   @id @default(cuid())
   numberOperators WhatsAppNumberOperator[]
   /// The project this row belongs to. Every write must name it: the default raises (no default
@@ -6600,6 +6610,7 @@ model ChannelConnection {
 
 /// One conversation: a customer's thread with a Page / Instagram account, or one Telegram chat.
 model ChannelConversation {
+  contactLinks ContactConversationLink[]
   id                   String                    @id @default(cuid())
   projectId            String                    @default(dbgenerated("project_id_required()"))
   project              Project                   @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -6816,6 +6827,7 @@ enum ClientDuplicatePolicy {
 }
 
 model Client {
+  contacts Contact[]
   id                    String              @id @default(cuid())
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
@@ -7221,6 +7233,8 @@ enum EmailPurpose {
   /// A message to a client (CLIENT_CRM_V7.md §6), written by a person or approved in a batch. Sent only while the
   /// channel is switched on and verified, and re-checked against the client's opt-out when it is sent.
   CLIENT_MESSAGE
+  /// One recipient of a Contacts email campaign (CONTACTS.md); re-checked for opt-out when sending.
+  CONTACT_CAMPAIGN
 }
 
 /// SMTP only says the server ACCEPTED the message, so the state is ACCEPTED, never "delivered".
@@ -7295,6 +7309,7 @@ model EmailOutbox {
   updatedAt         DateTime          @updatedAt
 
   clientMessage ClientMessage?
+  contactCampaignRecipient ContactCampaignRecipient?
 
   @@unique([projectId, idempotencyKey])
   @@index([projectId, status, nextAttemptAt])
@@ -10054,4 +10069,227 @@ model PushDevice {
 
   @@index([userId])
   @@index([sessionId])
+}
+
+// Contacts (CONTACTS.md, feature CONTACTS): the people a business has met in its chats. Apart from Clients and Billing;
+// the only tie is an optional linkedClientId chosen by a person.
+enum ContactStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ContactConsent {
+  UNKNOWN
+  OPTED_IN
+  OPTED_OUT
+}
+
+enum ContactSource {
+  WHATSAPP
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+  WEBSITE
+  MANUAL
+  IMPORT
+  CLIENT_LIST
+}
+
+enum ContactIdentifierKind {
+  PHONE
+  EMAIL
+  FACEBOOK
+  INSTAGRAM
+  TELEGRAM
+  TIKTOK
+  LINKEDIN
+  X
+  YOUTUBE
+  WEBSITE
+  OTHER
+}
+
+enum ContactCampaignChannel {
+  EMAIL
+  WHATSAPP
+  MESSENGER
+  INSTAGRAM
+  TELEGRAM
+  SMS
+  CALL
+}
+
+enum ContactCampaignStatus {
+  DRAFT
+  RUNNING
+  FINISHED
+}
+
+enum ContactRecipientStatus {
+  PENDING
+  QUEUED
+  DONE
+  SKIPPED
+}
+
+/// One person or business a project has met. `serial` is counted per project by ContactSettings.lastSerial and never
+/// reused; `code` is optional and free-form (unique per project, case-insensitively, by a partial index in the migration).
+model Contact {
+  id              String                     @id @default(cuid())
+  projectId       String                     @default(dbgenerated("project_id_required()"))
+  project         Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  serial          Int
+  code            String?
+  name            String?
+  company         String?
+  jobTitle        String?
+  address         String?
+  city            String?
+  country         String?
+  mapUrl          String?
+  latitude        Float?
+  longitude       Float?
+  /// YYYY-MM-DD as typed: a birthday has no time zone.
+  birthday        String?
+  notes           String?
+  tags            String[]                   @default([])
+  source          ContactSource              @default(MANUAL)
+  sourceDetail    String?
+  collectedByAi   Boolean                    @default(false)
+  status          ContactStatus              @default(ACTIVE)
+  consent         ContactConsent             @default(UNKNOWN)
+  linkedClientId  String?
+  linkedClient    Client?                    @relation(fields: [linkedClientId], references: [id], onDelete: SetNull)
+  lastContactedAt DateTime?
+  createdById     String?
+  createdBy       User?                      @relation("ContactCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  identifiers     ContactIdentifier[]
+  conversations   ContactConversationLink[]
+  events          ContactEvent[]
+  recipients      ContactCampaignRecipient[]
+
+  @@unique([projectId, serial])
+  @@index([projectId, status, createdAt])
+  @@index([projectId, source])
+  @@index([linkedClientId])
+}
+
+/// A number, address or account. Unique per (project, kind, normalized value): the same number is held once, by one contact.
+model ContactIdentifier {
+  id            String                @id @default(cuid())
+  projectId     String                @default(dbgenerated("project_id_required()"))
+  project       Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  contactId     String
+  contact       Contact               @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind          ContactIdentifierKind
+  value         String
+  normalized    String
+  label         String?
+  isWhatsApp    Boolean               @default(false)
+  source        ContactSource         @default(MANUAL)
+  collectedByAi Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+
+  @@unique([projectId, kind, normalized])
+  @@index([contactId])
+  @@index([projectId, normalized])
+}
+
+/// One chat belongs to one contact. A WhatsApp chat id is the same on all our numbers, so it is unique without the account.
+model ContactConversationLink {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  contactId             String
+  contact               Contact              @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: Cascade)
+  source                ContactSource
+  title                 String?
+  createdAt             DateTime             @default(now())
+
+  @@unique([projectId, chatId])
+  @@unique([projectId, channelConversationId])
+  @@index([contactId])
+}
+
+/// Append-only history of a contact (trigger in the migration).
+model ContactEvent {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  contactId   String
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  kind        String
+  detail      String?
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime @default(now())
+
+  @@index([contactId, createdAt])
+}
+
+model ContactSettings {
+  id                  String    @id @default(cuid())
+  projectId           String    @unique @default(dbgenerated("project_id_required()"))
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  lastSerial          Int       @default(0)
+  aiCollectionEnabled Boolean   @default(false)
+  autoCreateFromChats Boolean   @default(false)
+  /// When collecting was switched on: nothing older is read, so switching it on never reprocesses history.
+  collectionStartedAt DateTime?
+  whatsappCursorAt    DateTime?
+  whatsappCursorId    String?
+  channelCursorAt     DateTime?
+  updatedAt           DateTime  @default(now()) @updatedAt
+}
+
+model ContactCampaign {
+  id            String                     @id @default(cuid())
+  projectId     String                     @default(dbgenerated("project_id_required()"))
+  project       Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  name          String
+  channel       ContactCampaignChannel
+  status        ContactCampaignStatus      @default(DRAFT)
+  subject       String?
+  body          String
+  createdById   String?
+  createdBy     User?                      @relation("ContactCampaignCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdByName String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+  recipients    ContactCampaignRecipient[]
+
+  @@index([projectId, createdAt])
+}
+
+model ContactCampaignRecipient {
+  id            String                 @id @default(cuid())
+  projectId     String                 @default(dbgenerated("project_id_required()"))
+  project       Project                @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  campaignId    String
+  campaign      ContactCampaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact                @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  /// The number or address this campaign reaches them on, fixed when the audience was chosen.
+  toValue       String?
+  status        ContactRecipientStatus @default(PENDING)
+  skipReason    String?
+  emailOutboxId String?                @unique
+  emailOutbox   EmailOutbox?           @relation(fields: [emailOutboxId], references: [id], onDelete: SetNull)
+  doneById      String?
+  doneByName    String?
+  doneAt        DateTime?
+  createdAt     DateTime               @default(now())
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+  @@index([contactId])
 }

@@ -10,7 +10,7 @@ import type { WorkspaceData } from "@/server/inboxWorkspace";
  * header's toggle and the composer's extra tabs simply do not appear.
  */
 
-export type PanelTab = "details" | "notes" | "copilot" | "followups" | "tickets" | "files";
+export type PanelTab = "details" | "contact" | "notes" | "copilot" | "followups" | "tickets" | "files";
 
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());

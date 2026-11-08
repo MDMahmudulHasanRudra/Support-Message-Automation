@@ -885,6 +885,24 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.37.0",
+    title: "Contacts",
+    summary: "One profile for every customer you meet in a chat, kept apart from Clients and Billing, with campaigns.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["Contacts", "All Conversations", "WhatsApp Chat"],
+    whatsNew: [
+      "A new Contacts module with a profile for each person: names, numbers, emails, social accounts, location, notes and where they came from",
+      "A Contact tab beside every chat: paste what a customer sent and it is saved to their profile",
+      "The same number is never saved twice, and two records of one person can be merged",
+      "Import from Excel or CSV, or copy your client list in without changing it",
+      "Campaigns by email, or a ready list to work through on WhatsApp, Messenger, Instagram, Telegram, SMS and calls",
+      "Optional: AI collects customers' details from their messages, and new personal chats become contacts by themselves",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {
