@@ -1,3 +1,4 @@
+import { handleChannelMenu } from "../menuBot/menuBot.js";
 import { decryptSecret } from "@support-automation/db";
 import {
   advanceDeliveryStatus,
@@ -219,6 +220,8 @@ async function storeMessage(connection: Connection, event: Extract<NormalizedCha
   });
   // Automatic routing (routing/autoRouting.ts): a no-op unless AUTO_ROUTING and UNIFIED_INBOX_V3 are on. Never throws.
   await routeChannelConversationOnMessage(conversation.id, event.occurredAt);
+  // Menu bots (MENU_BOTS.md): a no-op with no bot on. When a menu answers, the message is marked so AI does not. Never throws.
+  if (!event.senderIsBot) await handleChannelMenu({ messageId: stored.id, conversationId: conversation.id, text: event.text, occurredAt: event.occurredAt, isFirstMessage: conversation.lastMessageAt === null });
 }
 
 async function findOrOpenConversation(connection: Connection, event: Extract<NormalizedChannelEvent, { type: "MESSAGE" }>, fetchImpl: FetchImpl) {

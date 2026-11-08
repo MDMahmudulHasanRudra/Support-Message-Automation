@@ -177,6 +177,8 @@ const SECTION_RULES: Record<string, SectionRule> = {
     write: ["automation_rules.create", "automation_rules.edit", "automation_rules.delete", "automation_rules.activate", "automation_rules.bulk_import"],
     also: ["/api/automation-rules"],
   },
+  "/rules/templates": { write: ["automation_rules.create"] },
+  "/menu-bots": { write: ["automation_rules.create", "automation_rules.edit", "automation_rules.delete", "automation_rules.activate"] },
   "/automation-control": { write: ["settings.edit"] },
   // AI Learning
   "/ai-learning": { write: ["ai_learning.manage"] },

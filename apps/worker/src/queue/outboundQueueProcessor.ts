@@ -13,6 +13,7 @@ import {
   validateOutgoingFileContent,
   MOOD_CUSTOMER_MESSAGE_VARIANT,
   CSAT_SURVEY_VARIANT,
+  MENU_BOT_VARIANT,
   STICKER_MAX_BYTES,
   validateLocation,
   validatePoll,
@@ -401,7 +402,8 @@ async function processClaimedMessage(message: OutboundMessage, provider: WhatsAp
         ?.cooldownSeconds ?? null
     : message.actionType === "AUTO_REPLY" &&
         !message.idempotencyKey.endsWith(`:${MOOD_CUSTOMER_MESSAGE_VARIANT}`) &&
-        !message.idempotencyKey.endsWith(`:${CSAT_SURVEY_VARIANT}`)
+        !message.idempotencyKey.endsWith(`:${CSAT_SURVEY_VARIANT}`) &&
+        !message.idempotencyKey.endsWith(`:${MENU_BOT_VARIANT}`)
       ? (await getAiSettings()).aiReplyCooldownSeconds
       : null;
   // (Mood Detection's message to an upset customer is excluded: it is sent once per mood alert

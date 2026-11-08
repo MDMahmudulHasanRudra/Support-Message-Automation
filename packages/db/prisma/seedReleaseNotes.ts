@@ -903,6 +903,23 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.38.0",
+    title: "Menu bots and automation templates",
+    summary: "A numbered menu customers answer by typing a number, and ready-made replies to start from.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["Menu Bots", "Automation Rules"],
+    whatsNew: [
+      "Menu Bots: customers type a number to get answers, go back, or reach a person, on WhatsApp, Messenger, Instagram, Telegram and website chat",
+      "Build a menu on one screen and try it right there before switching it on",
+      "Ready-made menus in English and Bangla for customer support, online shops and internet providers",
+      "Ready-made automatic replies under Automation Rules → Templates, added as drafts for you to finish",
+      "The menu stops when a person replies, and stays quiet after handing a customer to your team",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

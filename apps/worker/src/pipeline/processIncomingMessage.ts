@@ -1,3 +1,5 @@
+import type { AutomationSettings } from "@prisma/client";
+import { continueMenuOnWhatsApp, startMenuOnWhatsApp, type WhatsAppMenuInput } from "../menuBot/menuBot.js";
 import { countMetric } from "../health/metrics.js";
 import { resolveWhatsAppAccount, isResolutionError } from "@support-automation/db";
 import { prisma } from "../db.js";
@@ -353,6 +355,23 @@ async function runAutomationStageInProject(
       return;
     }
 
+    // Menu bots (MENU_BOTS.md). A customer inside a running menu is answered before the rules: "1" means nothing to a rule.
+    // A no-op with no bot switched on. Never throws.
+    if (!isFromTeamMember) {
+      const menuHandled = await continueMenuOnWhatsApp(menuInput(raw, stored, await getAutomationSettings(), traceId));
+      if (menuHandled) {
+        await prisma.message.update({ where: { id: message.id }, data: { processingStatus: "PROCESSED" } });
+        countMetric("processed");
+        await prisma.processingCheckpoint.upsert({
+          where: { accountId: raw.accountId },
+          update: { lastProcessedMessageId: message.id, lastProcessedTimestampWa: raw.timestampWa },
+          create: { accountId: raw.accountId, lastProcessedMessageId: message.id, lastProcessedTimestampWa: raw.timestampWa },
+        });
+        traceStage(traceId, "ACTION_DECISION", { finalDecision: "MENU_BOT" });
+        return;
+      }
+    }
+
     const activeRuleRows = await prisma.automationRule.findMany({ where: { status: "ACTIVE" } });
     const rules: EngineRule[] = activeRuleRows.map(toEngineRule);
     const ruleRowById = new Map(activeRuleRows.map((r) => [r.id, r]));
@@ -399,7 +418,9 @@ async function runAutomationStageInProject(
     // filter IGNORE, which is a different synthetic decision). Own try/catch, same fire-and-forget-
     // but-logged philosophy as the escalation/support-activity hooks above: a failure here must
     // never break message processing. See apps/worker/src/aiFallback/runAiFallback.ts.
-    if (result.finalDecision === "NO_MATCH") {
+    // A new menu opens only when no rule answered, so anything already automated behaves as it did.
+    const menuStarted = result.finalDecision === "NO_MATCH" && !isFromTeamMember ? await startMenuOnWhatsApp(menuInput(raw, stored, settings, traceId)) : false;
+    if (result.finalDecision === "NO_MATCH" && !menuStarted) {
       try {
         await runAiFallback({
           message: { id: message.id, body: raw.body, timestampWa: raw.timestampWa },
@@ -524,6 +545,22 @@ async function runAutomationStageInProject(
       lastProcessedTimestampWa: raw.timestampWa,
     },
   });
+}
+
+function menuInput(raw: RawIncomingMessage, stored: StoredIncomingMessage, settings: AutomationSettings, traceId: string): WhatsAppMenuInput {
+  return {
+    messageId: stored.message.id,
+    accountId: raw.accountId,
+    chatId: raw.chatId,
+    senderPhone: raw.senderPhone,
+    senderJid: raw.senderJid ?? null,
+    senderName: raw.senderName ?? null,
+    body: raw.body,
+    isFirstMessage: stored.previous === null,
+    group: stored.group ? { id: stored.group.id, name: stored.group.name, testModeEnabled: stored.group.testModeEnabled, isMonitored: stored.group.isMonitored } : null,
+    settings,
+    traceId,
+  };
 }
 
 export interface StoredIncomingMessage {
