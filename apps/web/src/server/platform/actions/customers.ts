@@ -197,9 +197,6 @@ export async function createCustomer(_prev: CustomerFormState, formData: FormDat
     const slugError = validateProjectSlug(slug);
     if (nameError) fieldErrors.projectName = nameError;
     if (slugError) fieldErrors.projectSlug = slugError;
-    if (!slugError && (await globalPrisma.project.findUnique({ where: { slug }, select: { id: true } }))) {
-      fieldErrors.projectSlug = `The address "${slug}" is already used by another workspace.`;
-    }
     project = { name, slug };
     const ownerMode = String(formData.get("ownerMode") ?? "invite");
     if (ownerMode !== "later" && !text(formData, "ownerName", 120)) fieldErrors.ownerName = "Enter the owner's name.";

@@ -1,9 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import {
+  describeGroupSyncBasis,
   isOperationCleared,
   sortOperations,
   summariseAddJob,
   summariseAdminJob,
+  summariseGroupSync,
   type WhatsAppOperation,
   type WhatsAppOperationKind,
 } from "@support-automation/shared";
@@ -122,6 +124,48 @@ async function listAdminMakerOperations(now: Date): Promise<WhatsAppOperation[]>
   );
 }
 
+/** A sync that went well is shown for an hour, one that needs a look for the usual twelve. */
+const GROUP_SYNC_DONE_HOURS = 1;
+
+async function listGroupSyncOperations(now: Date): Promise<WhatsAppOperation[]> {
+  const since = new Date(now.getTime() - RECENT_OPERATION_HOURS * 3_600_000);
+  const rows = await prisma.whatsAppAccount.findMany({
+    where: { OR: [{ groupSyncStatus: "RUNNING" }, { groupSyncStatus: { in: ["COMPLETED", "PARTIAL", "FAILED"] }, groupSyncCompletedAt: { gte: since } }] },
+    select: {
+      id: true,
+      label: true,
+      groupSyncStatus: true,
+      groupSyncStage: true,
+      groupSyncStartedAt: true,
+      groupSyncCompletedAt: true,
+      groupSyncDiscovered: true,
+      groupSyncNew: true,
+      groupSyncFailed: true,
+      groupSyncError: true,
+      groupSyncBasis: true,
+    },
+  });
+  const doneSince = now.getTime() - GROUP_SYNC_DONE_HOURS * 3_600_000;
+  return rows
+    .filter((r) => r.groupSyncStatus !== "COMPLETED" || (r.groupSyncCompletedAt?.getTime() ?? 0) >= doneSince)
+    .map((r) =>
+      summariseGroupSync({
+        accountId: r.id,
+        accountLabel: r.label,
+        status: r.groupSyncStatus ?? "",
+        stage: r.groupSyncStage,
+        startedAt: r.groupSyncStartedAt,
+        completedAt: r.groupSyncCompletedAt,
+        discovered: r.groupSyncDiscovered,
+        added: r.groupSyncNew,
+        failed: r.groupSyncFailed,
+        error: r.groupSyncError,
+        basis: describeGroupSyncBasis(r.groupSyncBasis),
+      }),
+    )
+    .filter((op): op is WhatsAppOperation => op !== null);
+}
+
 /**
  * Every operation of the given kind (or all kinds): running ones first, then those finished recently.
  *
@@ -134,13 +178,14 @@ export async function listWhatsAppOperations(
   options: { kind?: WhatsAppOperationKind; now?: Date; viewerId?: string } = {},
 ): Promise<WhatsAppOperation[]> {
   const now = options.now ?? new Date();
-  const [adds, admins, dismissals] = await Promise.all([
+  const [adds, admins, syncs, dismissals] = await Promise.all([
     options.kind && options.kind !== "ADD_NUMBER_TO_GROUPS" ? Promise.resolve([]) : listAddNumberOperations(now),
     options.kind && options.kind !== "ADMIN_MAKER" ? Promise.resolve([]) : listAdminMakerOperations(now),
+    options.kind && options.kind !== "GROUP_SYNC" ? Promise.resolve([]) : listGroupSyncOperations(now),
     options.viewerId
       ? prisma.whatsAppOperationDismissal.findMany({ where: { userId: options.viewerId }, select: { kind: true, jobId: true, stateAtDismissal: true } })
       : Promise.resolve([]),
   ]);
   const cleared = new Map(dismissals.map((d) => [`${d.kind}:${d.jobId}`, d]));
-  return sortOperations([...adds, ...admins].filter((op) => !isOperationCleared(op, cleared.get(`${op.kind}:${op.id}`))));
+  return sortOperations([...adds, ...admins, ...syncs].filter((op) => !isOperationCleared(op, cleared.get(`${op.kind}:${op.id}`))));
 }

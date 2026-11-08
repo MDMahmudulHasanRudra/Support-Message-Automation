@@ -242,8 +242,18 @@ export function linkKindOf(row: { accountId: string | null; channelConversationI
   return row.accountId ? "whatsapp" : row.channelConversationId ? "channel" : "none";
 }
 
-async function toRows(session: Session, raw: RawRow[], now: Date): Promise<FollowUpRow[]> {
-  if (raw.length === 0) return [];
+interface LinkColumns {
+  accountId: string | null;
+  chatId: string | null;
+  channelConversationId: string | null;
+  clientId: string | null;
+}
+
+/** What each record is about, with where to open it: only conversations and clients this viewer may see. */
+export async function resolveConversationLinks(
+  session: Session,
+  raw: readonly LinkColumns[],
+): Promise<(row: LinkColumns) => { conversation: FollowUpRow["conversation"]; client: FollowUpRow["client"] }> {
   const disabled = await activeDisabledFeatures();
   const showClients = !disabled.has("CLIENT_CENTER") && (await hasPermission(session, "clients.view"));
   const groupChats = raw.filter((r) => r.accountId && r.chatId?.endsWith("@g.us"));
@@ -278,7 +288,7 @@ async function toRows(session: Session, raw: RawRow[], now: Date): Promise<Follo
   const channelBy = new Map(channels.map((c) => [c.id, c]));
   const clientBy = new Map(clients.map((c) => [c.id, c]));
 
-  return raw.map((r) => {
+  return (r) => {
     let conversation: FollowUpRow["conversation"] = null;
     if (r.accountId && r.chatId && !disabled.has("WHATSAPP_CHAT")) {
       if (r.chatId.endsWith("@g.us")) {
@@ -293,6 +303,15 @@ async function toRows(session: Session, raw: RawRow[], now: Date): Promise<Follo
       if (c) conversation = { kind: "channel", label: c.customerName ?? c.title ?? c.customerUsername ?? "Conversation", href: `/conversations/all/c/${c.id}` };
     }
     const client = r.clientId ? (clientBy.get(r.clientId) ?? null) : null;
+    return { conversation, client };
+  };
+}
+
+async function toRows(session: Session, raw: RawRow[], now: Date): Promise<FollowUpRow[]> {
+  if (raw.length === 0) return [];
+  const linksOf = await resolveConversationLinks(session, raw);
+  return raw.map((r) => {
+    const { conversation, client } = linksOf(r);
     return {
       id: r.id,
       title: r.title,

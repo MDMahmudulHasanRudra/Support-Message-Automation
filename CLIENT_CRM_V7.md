@@ -75,6 +75,8 @@ is unchanged.
 
 ## 4. Renewal offers
 
+**To remind today (7 Nov 2026).** A view worked out on every read, nothing stored or scheduled (`needsRenewalReminder`, packages/shared). A reminder is owed when the renewal window opens, 3 days and 1 day before the end, on the day, and once 3 days after; contact since the latest point clears the client until the next one (a prepared or queued message, or a contact recorded on an offer). A paused term, or an accepted or declined offer, is left alone. It never sends: each person messages from the row, and "Email all" prepares the ordinary batch a different person approves (CLIENT_CENTER_PLAN.md decision 10).
+
 - `ClientRenewalOffer` + append-only `ClientRenewalOfferEvent`. One OPEN offer per term (partial unique index).
 - **An offer is never money owed**: prepared, sent, accepted or declined, no `ClientDue` is created. A price is
   optional (amount + currency together, CHECK) and needs `clients.view_billing` to propose.

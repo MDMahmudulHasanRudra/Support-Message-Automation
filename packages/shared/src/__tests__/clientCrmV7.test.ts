@@ -1,3 +1,4 @@
+import { needsRenewalReminder, renewalReminderPoints } from "../clientRenewalOffers.js";
 import { describe, expect, it } from "vitest";
 import {
   batchApprovalRefusal,
@@ -175,5 +176,45 @@ describe("documents", () => {
     expect(documentFileName("INVOICE", "INV-000123", "abc")).toBe("Invoice-INV-000123.pdf");
     expect(documentFileName("RECEIPT", "../../etc/passwd", "abc")).toBe("Receipt-..-..-etc-passwd.pdf");
     expect(documentFileName("INVOICE", null, "cuid123")).toBe("Invoice-cuid123.pdf");
+  });
+});
+
+describe("renewal reminders: who is owed one today", () => {
+  const term = (daysLeft: number, lastContact: string | null = null, over: Partial<{ paused: boolean; answered: boolean }> = {}) => {
+    const today = "2026-11-10";
+    const endDate = new Date(Date.parse("2026-11-10T00:00:00Z") + daysLeft * 86_400_000).toISOString().slice(0, 10);
+    return needsRenewalReminder({ endDate, today, windowDays: 7, lastContact, paused: false, answered: false, ...over });
+  };
+
+  it("nobody before the window opens, and nobody long after the end", () => {
+    expect(term(8)).toBe(false);
+    expect(term(7)).toBe(true);
+    expect(term(-7)).toBe(true);
+    expect(term(-8)).toBe(false);
+  });
+
+  it("being contacted clears a client until the next point, and the next point brings them back", () => {
+    // 5 days left: the point began when 7 days were left, on 8 Nov.
+    expect(term(5, "2026-11-08")).toBe(false);
+    expect(term(5, "2026-11-07")).toBe(true);
+    // 3 days left: a contact at the 7-day point no longer covers it.
+    expect(term(3, "2026-11-08")).toBe(true);
+    expect(term(3, "2026-11-10")).toBe(false);
+  });
+
+  it("on the day and after it", () => {
+    expect(term(0, "2026-11-09")).toBe(true);
+    expect(term(-1, "2026-11-09")).toBe(false); // the end date was 9 Nov and they were told that day
+    expect(term(-3, "2026-11-07")).toBe(true); // the last reminder
+  });
+
+  it("a paused term and a customer who already answered are left alone", () => {
+    expect(term(1, null, { paused: true })).toBe(false);
+    expect(term(1, null, { answered: true })).toBe(false);
+  });
+
+  it("a short window has no points outside it", () => {
+    expect(renewalReminderPoints(2)).toEqual([2, 1, 0, -3]);
+    expect(renewalReminderPoints(7)).toEqual([7, 3, 1, 0, -3]);
   });
 });

@@ -7,7 +7,9 @@ import {
   dhakaToday,
   describeDuration,
   followUpDue,
+  formatDhakaDateKey,
   formatMinor,
+  needsRenewalReminder,
   offerLapsed,
   OPEN_RENEWAL_OFFER_STATUSES,
   RENEWAL_OFFER_STATUS_LABELS,
@@ -52,6 +54,8 @@ export interface RenewalRow {
     renewedSubscriptionId: string | null;
     invoiceDueId: string | null;
   } | null;
+  /** Only on the "To remind today" list: the last day anybody contacted them about it. */
+  lastContact?: string | null;
 }
 
 const day = (d: Date) => d.toISOString().slice(0, 10);
@@ -127,9 +131,85 @@ function offerWhere(view: RenewalView, today: string, q: string): Prisma.ClientR
   return and.length ? { AND: and } : {};
 }
 
+/**
+ * Who is owed a renewal reminder today (needsRenewalReminder). Worked out on every read from the terms and from who
+ * has been contacted, so there is nothing to schedule and nothing that can go stale. It never sends anything.
+ */
+async function loadReminderTerms(opts: { q: string; windowDays: number }, today: string) {
+  const and: Prisma.ClientSubscriptionWhereInput[] = [
+    { cancelledAt: null, pausedAt: null },
+    { currentFor: { some: { status: { not: "ARCHIVED" } } } },
+    { endDate: { gte: asDate(addCalendarDays(today, -7)), lte: asDate(addCalendarDays(today, opts.windowDays)) } },
+  ];
+  if (opts.q) and.push({ client: { OR: [{ name: { contains: opts.q, mode: "insensitive" } }, { code: { contains: opts.q, mode: "insensitive" } }, { companyName: { contains: opts.q, mode: "insensitive" } }] } });
+  const terms = await prisma.clientSubscription.findMany({
+    where: { AND: and },
+    orderBy: [{ endDate: "asc" }, { id: "asc" }],
+    take: 1000,
+    select: {
+      id: true,
+      clientId: true,
+      service: true,
+      endDate: true,
+      pausedAt: true,
+      durationValue: true,
+      durationUnit: true,
+      client: { select: { id: true, code: true, name: true, companyName: true, status: true } },
+      renewalOffers: { select: { ...OFFER_SELECT, updatedAt: true }, orderBy: { updatedAt: "desc" }, take: 5 },
+    },
+  });
+  // A message counts when it was really prepared or sent about renewing, not when it was skipped or cancelled.
+  const messages = terms.length
+    ? await prisma.clientMessage.groupBy({
+        by: ["clientId"],
+        where: {
+          clientId: { in: terms.map((t) => t.clientId) },
+          status: { in: ["PREPARED", "WAITING_APPROVAL", "QUEUED"] },
+          OR: [{ relatedSubscriptionId: { in: terms.map((t) => t.id) } }, { category: { in: ["RENEWAL_REMINDER", "RENEWAL_OFFER"] } }],
+        },
+        _max: { createdAt: true },
+      })
+    : [];
+  const messagedAt = new Map(messages.map((m) => [m.clientId, m._max.createdAt]));
+  return terms.flatMap((t) => {
+    const contacts = [messagedAt.get(t.clientId), ...t.renewalOffers.map((o) => o.lastContactAt)].filter((d): d is Date => d instanceof Date);
+    const last = contacts.length ? formatDhakaDateKey(new Date(Math.max(...contacts.map((d) => d.getTime())))) : null;
+    const answered = t.renewalOffers.some((o) => o.status === "ACCEPTED" || o.status === "DECLINED");
+    return needsRenewalReminder({ endDate: day(t.endDate), today, windowDays: opts.windowDays, lastContact: last, paused: t.pausedAt !== null, answered }) ? [{ term: t, last }] : [];
+  });
+}
+
+/** Everybody on today's list, for preparing the one approval batch. */
+export async function reminderRecipients(windowDays: number): Promise<Array<{ clientId: string; subscriptionId: string; offerId: string | null }>> {
+  const due = await loadReminderTerms({ q: "", windowDays }, dhakaToday(new Date()));
+  return due
+    .filter(({ term }) => term.client.status !== "ARCHIVED")
+    .map(({ term }) => ({
+      clientId: term.clientId,
+      subscriptionId: term.id,
+      offerId: term.renewalOffers.find((o) => (OPEN_RENEWAL_OFFER_STATUSES as readonly string[]).includes(o.status))?.id ?? null,
+    }));
+}
+
 export async function listRenewals(opts: { view: RenewalView; q: string; page: number; windowDays: number; billing: boolean }): Promise<{ rows: RenewalRow[]; total: number; today: string }> {
   const today = dhakaToday(new Date());
   const skip = (opts.page - 1) * RENEWAL_PAGE_SIZE;
+  if (opts.view === "remind") {
+    const due = await loadReminderTerms(opts, today);
+    return {
+      today,
+      total: due.length,
+      rows: due.slice(skip, skip + RENEWAL_PAGE_SIZE).map(({ term: t, last }) => {
+        const open = t.renewalOffers.find((o) => (OPEN_RENEWAL_OFFER_STATUSES as readonly string[]).includes(o.status));
+        return {
+          client: { id: t.client.id, code: t.client.code, name: clientDisplayName(t.client.name, t.client.companyName), archived: t.client.status === "ARCHIVED" },
+          term: { id: t.id, service: t.service, endDate: day(t.endDate), daysLeft: calendarDaysBetween(today, day(t.endDate)), paused: t.pausedAt !== null, durationValue: t.durationValue, durationUnit: t.durationUnit },
+          offer: open ? offerView(open, today, opts.billing) : null,
+          lastContact: last,
+        };
+      }),
+    };
+  }
   if (opts.view === "renewing" || opts.view === "expired") {
     const where = termWhere(opts.view, today, opts.windowDays, opts.q);
     const [terms, total] = await Promise.all([
@@ -191,7 +271,7 @@ export async function listRenewals(opts: { view: RenewalView; q: string; page: n
 export async function renewalCounts(windowDays: number, q = ""): Promise<Record<RenewalView, number>> {
   const today = dhakaToday(new Date());
   const entries = await Promise.all(
-    RENEWAL_VIEWS.map(async (v) => [v, v === "renewing" || v === "expired" ? await prisma.clientSubscription.count({ where: termWhere(v, today, windowDays, q) }) : await prisma.clientRenewalOffer.count({ where: offerWhere(v, today, q) })] as const),
+    RENEWAL_VIEWS.map(async (v) => [v, v === "remind" ? (await loadReminderTerms({ q, windowDays }, today)).length : v === "renewing" || v === "expired" ? await prisma.clientSubscription.count({ where: termWhere(v, today, windowDays, q) }) : await prisma.clientRenewalOffer.count({ where: offerWhere(v, today, q) })] as const),
   );
   return Object.fromEntries(entries) as Record<RenewalView, number>;
 }

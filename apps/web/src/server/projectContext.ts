@@ -131,7 +131,15 @@ async function decideAccess(userId: string, slug: string, scope: HostScope): Pro
   const cached = accessCache.get(key);
   if (cached && Date.now() - cached.at < ACCESS_TTL_MS) return cached;
 
-  const row = await platformPrisma.project.findUnique({ where: { slug }, select: PROJECT_WITH_CUSTOMER });
+  // An address is unique inside a customer, so this person's own customer decides which project it means. This
+  // client is not customer-scoped, so the filter is here. The original installation's projects may carry no customer.
+  const userTenant = await tenantOfUser(userId);
+  const founding = userTenant === null ? await foundingCustomerId() : null;
+  const row = await platformPrisma.project.findFirst({
+    where: { slug, ...(userTenant === null ? { OR: [{ customerId: null }, ...(founding ? [{ customerId: founding }] : [])] } : { customerId: userTenant }) },
+    select: PROJECT_WITH_CUSTOMER,
+    orderBy: { createdAt: "asc" },
+  });
   const projectTenant = row ? await tenantOfCustomer(row.customerId) : null;
   const project = row ? effectiveProject(row, projectTenant) : null;
   let decision: { project: ActiveProject | null; reason?: ProjectAccessFailure };
@@ -139,7 +147,7 @@ async function decideAccess(userId: string, slug: string, scope: HostScope): Pro
   // person or this address should confirm (SAAS_PLATFORM_PLAN.md §12). A project belongs to one
   // customer's software; it opens only for that customer's people, on that customer's address or an
   // open one, and never on the platform address.
-  const sameCustomer = row ? projectTenant === (await tenantOfUser(userId)) : false;
+  const sameCustomer = row ? projectTenant === userTenant : false;
   const projectCustomer = row ? row.customerId ?? (await foundingCustomerId()) : null;
   if (row && (!sameCustomer || (scope.kind !== "OPEN" && !hostAllowsProject(scope, projectCustomer)))) {
     decision = { project: null, reason: "UNKNOWN_PROJECT" };

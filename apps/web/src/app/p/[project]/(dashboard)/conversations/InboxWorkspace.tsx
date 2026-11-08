@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname } from "next/navigation";
 import {
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Clock,
   Flag,
   Inbox,
+  Layers,
   ListFilter,
   MoreHorizontal,
   Rows3,
@@ -24,9 +25,12 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import Link from "@/components/ProjectLink";
+import Link, { useInWorkspace, useProjectRouter, useProjectSlug } from "@/components/ProjectLink";
+import { projectHref } from "@/lib/projectPaths";
 import { Button, Dialog, useToast } from "@/components/ui";
 import { listInboxAction, moreMessageMatchesAction } from "@/server/actions/channelInbox";
+import { bulkUpdateAcrossProjects, listUniversalInboxAction } from "@/server/actions/universalInbox";
+import type { UniversalProjectView } from "@/server/universalInbox";
 import {
   bulkUpdateConversations,
   deleteInboxView,
@@ -48,6 +52,7 @@ import {
   EMPTY_INBOX_FILTERS,
   inboxFilterKey,
   isDefaultInboxFilters,
+  ALL_PROJECTS_SCOPE,
   type ConversationPriorityValue,
   type InboxFilterSet,
   type InboxScope,
@@ -56,6 +61,7 @@ import {
 } from "@support-automation/shared";
 import { conversationAvatar } from "../chat/avatar";
 import { ChannelMark, CHANNEL_PRESENTATION } from "./ChannelMark";
+import { projectColor, UniversalBoard } from "./UniversalBoard";
 
 /**
  * The unified inbox's list pane (OMNICHANNEL.md §4, INBOX_WORKSPACE.md § Inbox): channel tabs, views,
@@ -166,26 +172,51 @@ function relativeTime(iso: string | null): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Dhaka", month: "short", day: "numeric" }).format(new Date(iso));
 }
 
+/**
+ * What the All projects inbox remembers while a person moves between conversations. Opening a conversation in another
+ * project is a new address, so the page is rebuilt; this keeps their place. Per browser tab, and only ever narrows a list.
+ */
+const universalMemory: { filters: InboxFilterSet; channel: InboxScope; project: string | null; scrollTop: number } = {
+  filters: EMPTY_INBOX_FILTERS,
+  channel: "all",
+  project: null,
+  scrollTop: 0,
+};
+
+type InboxRowData = InboxItem & { projectSlug?: string };
+
 export function InboxWorkspace({
   scope,
   items,
   counts,
   truncated,
   options,
+  universal = null,
+  canSeeAllProjects = false,
   children,
 }: {
   scope: InboxScope;
-  items: InboxItem[];
+  items: InboxRowData[];
   counts: InboxCounts;
   truncated: boolean;
   options: InboxOptions;
+  /** The All projects inbox (ALL_PROJECTS_INBOX.md); null in one project's own inbox. */
+  universal?: { projects: UniversalProjectView[]; unavailable: string[] } | null;
+  canSeeAllProjects?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useProjectRouter();
+  const workspace = useInWorkspace();
+  const currentSlug = useProjectSlug();
   const { showToast } = useToast();
   const threadOpen = /\/conversations\/[^/]+\/(c|w)\//.test(pathname);
-  const [filters, setFilters] = useState<InboxFilterSet>(EMPTY_INBOX_FILTERS);
-  const [result, setResult] = useState<{ key: string; items: InboxItem[]; truncated: boolean; messageSearch: MessageSearchInfo | null } | null>(null);
+  const [filters, setFilters] = useState<InboxFilterSet>(universal ? universalMemory.filters : EMPTY_INBOX_FILTERS);
+  const [channel, setChannel] = useState<InboxScope>(universal ? universalMemory.channel : scope);
+  const [projectFilter, setProjectFilter] = useState<string | null>(universal ? universalMemory.project : null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const listScope: InboxScope = universal ? channel : scope;
+  const [result, setResult] = useState<{ key: string; items: InboxRowData[]; truncated: boolean; messageSearch: MessageSearchInfo | null } | null>(null);
   // Inbox V3 "More message matches": further pages of text matches for the query in `key`.
   const [more, setMore] = useState<{ key: string; items: InboxItem[]; nextCursor: string | null; loading: boolean; limitReached?: boolean } | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -210,12 +241,27 @@ export function InboxWorkspace({
   const searchRef = useRef<HTMLInputElement>(null);
 
   // With the scope: moving between channels keeps the filters, and an answer for the last channel is never shown under this one.
-  const key = `${scope}|${inboxFilterKey(filters)}`;
-  const filtered = !isDefaultInboxFilters(filters);
+  const key = `${universal ? "every|" : ""}${listScope}|${inboxFilterKey(filters)}`;
+  const filtered = !isDefaultInboxFilters(filters) || (Boolean(universal) && channel !== "all");
+  const isUniversal = Boolean(universal);
+
+  useEffect(() => {
+    if (!isUniversal) return;
+    universalMemory.filters = filters;
+    universalMemory.channel = channel;
+    universalMemory.project = projectFilter;
+  }, [isUniversal, filters, channel, projectFilter]);
+
+  // Back where they were in the list after opening a conversation in another project.
+  useLayoutEffect(() => {
+    if (isUniversal && listRef.current) listRef.current.scrollTop = universalMemory.scrollTop;
+  }, [isUniversal]);
 
   // Saved views and mentions once on arrival (and after each change); the default view applies once.
   const appliedDefault = useRef(false);
   useEffect(() => {
+    // Saved views and mentions belong to one project, and this list is not in one.
+    if (isUniversal) return;
     let live = true;
     void listSavedInboxViews().then((v) => {
       if (!live) return;
@@ -231,7 +277,7 @@ export function InboxWorkspace({
     return () => {
       live = false;
     };
-  }, [scope, options.collaboration, refreshTick]);
+  }, [isUniversal, scope, options.collaboration, refreshTick]);
 
   // Ask the server whenever the query changes, and again whenever the layout's own refresh brings new
   // data (the `items` identity changes), so a filtered list stays as live as the default one.
@@ -240,13 +286,18 @@ export function InboxWorkspace({
     const handle = setTimeout(
       () =>
         startTransition(async () => {
+          if (isUniversal) {
+            const answer = await listUniversalInboxAction({ channel: listScope, filters });
+            if (answer) setResult({ key, items: answer.items, truncated: answer.truncated, messageSearch: null });
+            return;
+          }
           const answer = await listInboxAction({ scope, filters });
           if (answer) setResult({ key, items: answer.items, truncated: answer.truncated, messageSearch: answer.messageSearch });
         }),
       filters.search ? 300 : 0,
     );
     return () => clearTimeout(handle);
-  }, [filtered, key, scope, filters, items, refreshTick]);
+  }, [filtered, key, isUniversal, listScope, scope, filters, items, refreshTick]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -285,11 +336,23 @@ export function InboxWorkspace({
   const extraFilters = [filters.teamId, filters.assigneeId, filters.tag, filters.account].filter(Boolean).length;
   const moreViews = MORE_VIEWS.filter((v) => (!v.collaboration || options.collaboration) && (!v.lifecycle || options.lifecycle));
 
+  const projectOf = (slug: string | undefined) => universal?.projects.find((p) => p.slug === slug) ?? null;
+  const chosenProject = projectOf(projectFilter ?? undefined);
+  const viewCounts = chosenProject ? chosenProject.counts : counts;
+  const rows: InboxRowData[] = (shown?.items ?? []).filter((i: InboxRowData) => !projectFilter || i.projectSlug === projectFilter);
+  const selectedRows = rows.filter((i) => selected.has(i.key));
+  const selectedProjects = [...new Set(selectedRows.map((i) => i.projectSlug))];
+  // Assigning needs a person and a Team of one project, so across projects those two are not offered.
+  const bulkOptions: InboxOptions = !universal ? options : selectedProjects.length === 1 ? (projectOf(selectedProjects[0])?.options ?? options) : { ...options, people: [], teams: [], autoRouting: false };
+  const openProject = universal && threadOpen ? projectOf(currentSlug ?? undefined) : null;
+
   const runBulk = (op: BulkOp) => {
-    const refs = (shown?.items ?? []).filter((i) => selected.has(i.key)).map((i) => i.ref);
+    const refs = selectedRows.map((i) => i.ref);
     if (refs.length === 0) return;
     startTransition(async () => {
-      const r = await bulkUpdateConversations(refs, op);
+      const r = universal
+        ? await bulkUpdateAcrossProjects(selectedProjects.map((slug) => ({ projectSlug: slug!, refs: selectedRows.filter((i) => i.projectSlug === slug).map((i) => i.ref) })), op)
+        : await bulkUpdateConversations(refs, op);
       if ("error" in r) {
         showToast({ tone: "danger", title: r.error });
         return;
@@ -297,6 +360,7 @@ export function InboxWorkspace({
       const parts = [`${r.changed} changed`, r.unchanged ? `${r.unchanged} already so` : null, r.skipped ? `${r.skipped} skipped` : null, r.failed ? `${r.failed} failed` : null].filter(Boolean);
       showToast({ tone: r.failed ? "danger" : "success", title: parts.join(", "), description: r.notes.join(" ") || undefined });
       setRefreshTick((t) => t + 1);
+      if (universal) router.refresh();
     });
   };
 
@@ -326,11 +390,22 @@ export function InboxWorkspace({
         className={`flex w-full min-w-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:w-[20rem] md:shrink-0 lg:w-[21.5rem] ${threadOpen ? "max-md:hidden" : ""}`}
         aria-label="Conversations"
       >
+        {!workspace && (universal || canSeeAllProjects) ? (
+          <div className="flex shrink-0 items-center gap-1 border-b border-[var(--color-border)] px-2 py-1.5" aria-label="Which projects">
+            <Link href="/conversations/all" aria-current={universal ? undefined : "page"} className={`flex-1 rounded-[var(--radius-md)] px-2 py-1 text-center text-[12px] font-medium ${universal ? "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]" : "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)]"}`}>
+              This project
+            </Link>
+            <Link href={`/conversations/${ALL_PROJECTS_SCOPE}`} aria-current={universal ? "page" : undefined} className={`flex flex-1 items-center justify-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1 text-[12px] font-medium ${universal ? "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)]" : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)]"}`}>
+              <Layers className="size-3.5" aria-hidden />
+              All projects
+            </Link>
+          </div>
+        ) : null}
         <div className="relative shrink-0 border-b border-[var(--color-border)]">
           <div role="tablist" aria-label="Views" className="flex items-stretch px-1.5 pt-1.5">
             {MAIN_VIEWS.map((v) => {
               const active = v.view === filters.view;
-              const n = v.count ? counts[v.count] : 0;
+              const n = v.count ? viewCounts[v.count] : 0;
               return (
                 <button
                   key={v.view}
@@ -350,7 +425,7 @@ export function InboxWorkspace({
                 </button>
               );
             })}
-            <MoreViewsMenu views={moreViews} current={filters.view} counts={counts} onPick={(view) => set({ view })} />
+            <MoreViewsMenu views={moreViews} current={filters.view} counts={viewCounts} onPick={(view) => set({ view })} />
           </div>
         </div>
 
@@ -387,11 +462,29 @@ export function InboxWorkspace({
           <div className="flex items-center gap-1">
             <nav className="flex min-w-0 flex-1 items-center gap-0.5" aria-label="Channels">
               {SCOPES.map((s) => {
-                const active = s.scope === scope;
-                const count = s.channel ? counts.byChannel[s.channel] : null;
+                const active = s.scope === listScope;
+                const count = s.channel ? viewCounts.byChannel[s.channel] : null;
                 const title = s.channel ? `${CHANNEL_PRESENTATION[s.channel].label}${count ? ` (${count})` : ""}` : "All channels";
                 const tint = s.channel ? CHANNEL_PRESENTATION[s.channel].tint : null;
                 const Icon = s.channel ? CHANNEL_PRESENTATION[s.channel].icon : null;
+                if (universal) {
+                  return (
+                    <button
+                      key={s.scope}
+                      type="button"
+                      onClick={() => setChannel(s.scope)}
+                      aria-pressed={active}
+                      aria-label={title}
+                      title={title}
+                      style={tint && active ? { background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint } : undefined}
+                      className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? "w-8" : "px-2.5"} ${
+                        active ? (s.channel ? "" : "bg-[var(--color-primary)] text-[var(--color-on-primary)]") : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
+                      }`}
+                    >
+                      {Icon ? <Icon className="size-3.5" strokeWidth={2.2} aria-hidden /> : "All"}
+                    </button>
+                  );
+                }
                 return (
                   <Link
                     key={s.scope}
@@ -409,7 +502,7 @@ export function InboxWorkspace({
                 );
               })}
             </nav>
-            {options.collaboration ? (
+            {options.collaboration && !universal ? (
               <div className="relative shrink-0">
                 <button
                   type="button"
@@ -438,6 +531,28 @@ export function InboxWorkspace({
               {density === "compact" ? <Rows3 className="size-4" aria-hidden /> : <Rows4 className="size-4" aria-hidden />}
             </IconToggle>
           </div>
+
+          {universal ? (
+            <div className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none]!" role="group" aria-label="Projects">
+              <button type="button" onClick={() => setProjectFilter(null)} aria-pressed={!projectFilter} className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11.5px] font-medium ring-1 transition-colors ${!projectFilter ? "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)] ring-[var(--color-border-strong)]" : "text-[color:var(--color-muted-foreground)] ring-[var(--color-border)] hover:text-[color:var(--color-foreground)]"}`}>
+                All projects
+              </button>
+              {universal.projects.map((p) => (
+                <button
+                  key={p.slug}
+                  type="button"
+                  onClick={() => setProjectFilter(projectFilter === p.slug ? null : p.slug)}
+                  aria-pressed={projectFilter === p.slug}
+                  title={`${p.counts.needsReply} waiting in ${p.name}`}
+                  className={`inline-flex max-w-[11rem] shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium ring-1 transition-colors ${projectFilter === p.slug ? "bg-[var(--color-neutral-bg)] text-[color:var(--color-foreground)] ring-[var(--color-border-strong)]" : "text-[color:var(--color-muted-foreground)] ring-[var(--color-border)] hover:text-[color:var(--color-foreground)]"}`}
+                >
+                  <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: projectColor(p.colorIndex) }} />
+                  <span className="truncate">{p.name}</span>
+                  {p.counts.needsReply > 0 ? <span className="tabular font-normal text-[color:var(--color-warning-fg)]">{p.counts.needsReply > 999 ? "999+" : p.counts.needsReply}</span> : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           {views && views.length > 0 ? (
             <div className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none]" aria-label="Saved views">
@@ -519,9 +634,11 @@ export function InboxWorkspace({
                 </label>
               ) : null}
               <div className="col-span-2 flex flex-wrap items-center gap-1.5 pt-1">
+                {universal ? null : (
                 <button type="button" onClick={() => setViewDialog({ asNew: true })} disabled={!filtered || pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] font-medium ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)] disabled:opacity-50">
                   Save as view…
                 </button>
+                )}
                 {currentView && (currentView.mine || (currentView.shared && options.canShare)) ? (
                   <>
                     <button type="button" onClick={() => setViewDialog({ asNew: false })} disabled={pending} className="rounded-[var(--radius-sm)] px-2 py-1 text-[11.5px] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-neutral-bg)]">
@@ -541,7 +658,7 @@ export function InboxWorkspace({
                 ) : null}
                 <span className="flex-1" />
                 {filtered ? (
-                  <button type="button" onClick={() => (setFilters(EMPTY_INBOX_FILTERS), setActiveViewId(null))} className="text-[11.5px] text-[color:var(--color-muted-foreground)] underline-offset-2 hover:underline">
+                  <button type="button" onClick={() => (setFilters(EMPTY_INBOX_FILTERS), setChannel("all"), setActiveViewId(null))} className="text-[11.5px] text-[color:var(--color-muted-foreground)] underline-offset-2 hover:underline">
                     Clear all
                   </button>
                 ) : null}
@@ -552,18 +669,23 @@ export function InboxWorkspace({
           {selecting ? (
             <BulkBar
               count={selected.size}
-              total={shown?.items.length ?? 0}
-              onAll={() => setSelected(new Set((shown?.items ?? []).map((i) => i.key)))}
+              total={rows.length}
+              onAll={() => setSelected(new Set(rows.map((i) => i.key)))}
               onNone={() => setSelected(new Set())}
               onRun={runBulk}
               onAddTag={() => setTagDialog(true)}
-              options={options}
+              options={bulkOptions}
               disabled={pending}
             />
           ) : null}
         </div>
 
-        <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto" aria-busy={pending || !shown}>
+        <div
+          ref={listRef}
+          onScroll={universal ? (e) => (universalMemory.scrollTop = e.currentTarget.scrollTop) : undefined}
+          className="scroll-quiet min-h-0 flex-1 overflow-y-auto"
+          aria-busy={pending || !shown}
+        >
           {!shown ? (
             <ul aria-hidden>
               {Array.from({ length: 6 }, (_, i) => (
@@ -576,20 +698,24 @@ export function InboxWorkspace({
                 </li>
               ))}
             </ul>
-          ) : shown.items.length === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="px-6 py-12 text-center text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
               {filters.search ? `Nothing matches “${filters.search}”.` : !filtered ? "No conversations yet. They appear here as soon as a customer writes." : "Nothing matches these filters right now."}
             </p>
           ) : (
             <ul className="space-y-px p-1.5">
-              {shown.items.map((item) => (
+              {rows.map((item) => {
+                const project = projectOf(item.projectSlug);
+                const href = project ? projectHref(item.href, project.slug, workspace) : inboxHref(item.href, scope);
+                return (
                 <InboxRow
                   key={item.key}
                   item={item}
+                  project={project ? { name: project.name, color: projectColor(project.colorIndex) } : null}
                   term={filters.search}
                   compact={density === "compact"}
-                  href={inboxHref(item.href, scope)}
-                  active={samePath(pathname, inboxHref(item.href, scope))}
+                  href={href}
+                  active={samePath(pathname, href)}
                   selecting={selecting}
                   selected={selected.has(item.key)}
                   onToggle={() =>
@@ -601,15 +727,28 @@ export function InboxWorkspace({
                     })
                   }
                 />
-              ))}
+                );
+              })}
             </ul>
           )}
           {shown && messageSearch ? <MessageSearchNotice info={extra?.limitReached ? { ...messageSearch, limitReached: true } : messageSearch} more={nextCursor ? loadMoreMatches : null} loading={extra?.loading ?? false} /> : null}
-          {shown?.truncated ? <p className="px-4 py-3 text-center text-[11px] text-[color:var(--color-subtle-foreground)]">Showing the 300 most recent matches. Narrow the filters or search to reach the rest.</p> : null}
+          {shown?.truncated ? <p className="px-4 py-3 text-center text-[11px] text-[color:var(--color-subtle-foreground)]">{universal ? "Showing the most recent conversations of each project." : "Showing the 300 most recent matches."} Narrow the filters or search to reach the rest.</p> : null}
         </div>
       </aside>
 
-      <section className={`flex min-w-0 flex-1 flex-col bg-[var(--color-surface)] ${threadOpen ? "" : "max-md:hidden"}`}>{children}</section>
+      <section className={`flex min-w-0 flex-1 flex-col bg-[var(--color-surface)] ${threadOpen ? "" : "max-md:hidden"}`}>
+        {openProject ? (
+          <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 text-[12px] text-[color:var(--color-muted-foreground)]">
+            <span aria-hidden className="size-2 rounded-full" style={{ background: projectColor(openProject.colorIndex) }} />
+            In <span className="font-medium text-[color:var(--color-foreground)]">{openProject.name}</span>
+          </div>
+        ) : null}
+        {universal && !threadOpen ? (
+          <UniversalBoard counts={counts} projects={universal.projects} unavailable={universal.unavailable} onPick={(slug) => setProjectFilter(slug)} />
+        ) : (
+          children
+        )}
+      </section>
 
       {viewDialog ? (
         <SaveViewDialog
@@ -924,7 +1063,7 @@ function BulkBar({
             + Tag
           </button>
         ) : null}
-        {options.collaboration || options.lifecycle ? (
+        {(options.collaboration || options.lifecycle) && options.people.length ? (
           <select disabled={none} value="" onChange={(e) => pick(e.target.value, (v) => onRun({ op: "assignee", userId: v === "__none" ? null : v }))} className="h-7 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 disabled:opacity-50" aria-label="Assign to">
             <option value="">Assign…</option>
             <option value="__none">Nobody</option>
@@ -1033,7 +1172,7 @@ function MentionsPopover({ data, onClose, onRead }: { data: { unread: number; it
   );
 }
 
-function InboxRow({ item, href, term, active, compact, selecting, selected, onToggle }: { item: InboxItem; href: string; term: string; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
+function InboxRow({ item, project, href, term, active, compact, selecting, selected, onToggle }: { item: InboxItem; project: { name: string; color: string } | null; href: string; term: string; active: boolean; compact: boolean; selecting: boolean; selected: boolean; onToggle: () => void }) {
   const avatar = conversationAvatar(item.key, item.title);
   const rowClass = `group/row relative flex w-full gap-2.5 rounded-[var(--radius-lg)] px-2.5 ${compact ? "py-1.5" : "py-2.5"} text-left transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-focus-ring)] ${
     active || selected ? "bg-[var(--color-accent-bg)]" : "hover:bg-[var(--color-neutral-bg)]"
@@ -1110,23 +1249,29 @@ function InboxRow({ item, href, term, active, compact, selecting, selected, onTo
             </>
           ) : null}
         </span>
-        {hasMeta ? (
+        {hasMeta || project ? (
           <span className="mt-1 flex items-center gap-1 overflow-hidden whitespace-nowrap">
-            {meta.status ? <Chip>{meta.status}</Chip> : null}
-            {meta.assignee ? (
+            {project ? (
+              <span className="inline-flex min-w-0 max-w-[10rem] shrink-0 items-center gap-1 rounded-[var(--radius-xs)] px-1.5 py-px text-[10.5px] font-medium text-[color:var(--color-foreground)]" style={{ background: `color-mix(in srgb, ${project.color} 16%, transparent)` }}>
+                <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ background: project.color }} />
+                <span className="truncate">{project.name}</span>
+              </span>
+            ) : null}
+            {meta?.status ? <Chip>{meta.status}</Chip> : null}
+            {meta?.assignee ? (
               <Chip>
                 <UserRound className="size-2.5" aria-hidden />
                 {meta.assignee}
               </Chip>
             ) : null}
-            {item.teamName ? <Chip>{item.teamName}</Chip> : null}
-            {item.tags.slice(0, 2).map((t) => (
+            {meta && item.teamName ? <Chip>{item.teamName}</Chip> : null}
+            {(meta ? item.tags.slice(0, 2) : []).map((t) => (
               <span key={t} className="rounded-[var(--radius-xs)] bg-[var(--color-info-bg)] px-1.5 py-px text-[10.5px] text-[color:var(--color-info-fg)]">
                 #{t}
               </span>
             ))}
-            {item.tags.length > 2 ? <span className="text-[10.5px] text-[color:var(--color-subtle-foreground)]">+{item.tags.length - 2}</span> : null}
-            {item.connectionProblem ? (
+            {meta && item.tags.length > 2 ? <span className="text-[10.5px] text-[color:var(--color-subtle-foreground)]">+{item.tags.length - 2}</span> : null}
+            {meta && item.connectionProblem ? (
               <span className="inline-flex items-center gap-0.5 text-[10.5px] font-medium text-[color:var(--color-danger-fg)]" title={item.connectionProblem}>
                 <AlertTriangle className="size-2.5" aria-hidden />
                 Can&apos;t reply

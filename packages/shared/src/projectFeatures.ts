@@ -368,6 +368,17 @@ export const PROJECT_FEATURES = [
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
   {
+    key: "TICKETS",
+    label: "Support tickets",
+    description: "Numbered support cases with an owner, a priority, a due time and a history, created from any conversation or on their own.",
+    // Reading uses messages.view; changing one uses the reply key of the conversation it is about, as follow-ups do.
+    // On by default: nothing here sends anything or changes how any conversation behaves.
+    defaultEnabled: true,
+    routes: ["/tickets", "/settings/tickets"],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Tickets and their history are kept and the Tickets page is hidden.",
+  },
+  {
     key: "FOLLOW_UPS",
     label: "Follow-ups",
     description:
@@ -426,6 +437,13 @@ export function resolveProjectFeatures(
 }
 
 /** The keys switched off, from a project's stored rows — what the web and the worker read. */
+/**
+ * Features that use something belonging to the software owner rather than the customer, available only in the
+ * original installation whatever any switch says. Forge reads the owner's private repositories with the
+ * installation's own key, so a customer's project must never reach it.
+ */
+export const ORIGINAL_INSTALLATION_FEATURES: ReadonlySet<ProjectFeatureKey> = new Set<ProjectFeatureKey>(["PRODUCT_KNOWLEDGE_FORGE"]);
+
 export function disabledProjectFeatures(rows: ReadonlyArray<{ key: string; enabled: boolean }>): Set<ProjectFeatureKey> {
   return new Set(resolveProjectFeatures(rows).filter((f) => !f.enabled).map((f) => f.key as ProjectFeatureKey));
 }

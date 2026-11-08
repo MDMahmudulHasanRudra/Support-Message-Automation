@@ -453,6 +453,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  TICKETS: {
+    category: "Support",
+    benefits: ["A numbered case for every problem, with an owner and a due time", "Created from any conversation in two clicks", "Internal notes the customer never sees"],
+    defaultForTypes: ["DEFAULT", "ECOMMERCE"],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "A ticket usually starts from a conversation." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Tickets and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "TICKETS.md",
+  },
   FOLLOW_UPS: {
     category: "Support",
     benefits: ["Call-backs, visits and promised replies with a due date and an owner", "Overdue and due-today reminders inside the app", "Created from a conversation or a client, and kept when the chat is resolved"],

@@ -2,7 +2,8 @@
 
 import { ArrowRight, AtSign, CornerUpLeft, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useContext, useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { InsideComposerShell } from "../../inbox/ComposerShell";
 import type { MentionCandidate } from "@support-automation/shared";
 import { Alert, Button, Textarea } from "@/components/ui";
 import { registerComposer } from "@/lib/composerBridge";
@@ -84,6 +85,7 @@ export function ComposerV2({
   /** Told after a send was queued, so the thread can follow it. */
   onSent: () => void;
 }) {
+  const inShell = useContext(InsideComposerShell);
   const send = conversation.personalChatId
     ? sendPersonalChatMessage.bind(null, conversation.accountId, conversation.personalChatId)
     : sendChatMessage.bind(null, conversation.accountId, conversation.groupId ?? "");
@@ -268,18 +270,25 @@ export function ComposerV2({
   }
 
   return (
-    <div className="relative bg-[var(--color-surface)] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:px-2.5 sm:px-6 sm:py-3.5">
+    <div className="relative bg-[var(--color-surface)] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:px-2.5 sm:px-5 sm:py-2.5">
       {state.error ? (
         <div className="mb-3">
           <Alert tone="danger">{state.error}</Alert>
         </div>
       ) : null}
 
-      <p className="mb-2 flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-[color:var(--color-muted-foreground)]">
+      <p
+        title={accountPhone ? `Sending from ${accountLabel} · +${accountPhone.replace(/^\+/, "")}` : `Sending from ${accountLabel}`}
+        className={
+          inShell
+            ? "absolute -top-8 right-4 flex h-8 max-w-[42%] min-w-0 items-center justify-end gap-1.5 text-[11px] text-[color:var(--color-muted-foreground)] sm:right-5"
+            : "mb-2 flex min-w-0 items-center gap-1.5 px-1 text-[11px] text-[color:var(--color-muted-foreground)]"
+        }
+      >
         <Smartphone className="size-3 shrink-0" aria-hidden />
-        <span className="shrink-0">Sending from</span>
+        <span className={inShell ? "shrink-0 max-md:hidden" : "shrink-0"}>Sending from</span>
         <strong className="min-w-0 truncate font-semibold text-[color:var(--color-foreground)]">{accountLabel}</strong>
-        {accountPhone ? <span className="tabular max-sm:hidden">· +{accountPhone.replace(/^\+/, "")}</span> : null}
+        {accountPhone ? <span className={inShell ? "tabular hidden 2xl:inline" : "tabular max-sm:hidden"}>· +{accountPhone.replace(/^\+/, "")}</span> : null}
       </p>
 
       {replyTarget ? (
@@ -393,7 +402,8 @@ export function ComposerV2({
             rows={1}
             required
             maxLength={4096}
-            placeholder={phone ? "Message" : isGroup ? "Type a message…  (@ to tag, Shift+Enter for a new line)" : "Type a message…  (Shift+Enter for a new line)"}
+            placeholder={phone ? "Message" : isGroup ? "Type a message…  @ to tag" : "Type a message…"}
+            title="Enter sends. Shift+Enter starts a new line."
             enterKeyHint={phone ? "enter" : "send"}
             className="min-h-10 w-full resize-none py-2.5 transition-[height] duration-[var(--duration-fast)] ease-[var(--ease-out)] max-sm:min-h-11 max-sm:rounded-[22px] max-sm:px-4 max-sm:py-3 max-sm:text-base sm:min-h-12 sm:rounded-[var(--radius-lg)] sm:px-4 sm:py-3 sm:text-[14px] focus-visible:border-[var(--wa-green)] focus-visible:ring-[var(--wa-green)]/15"
             onChange={(event) => {

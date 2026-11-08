@@ -158,9 +158,10 @@ export function validateRenewalOffer(input: RenewalOfferInput, enabledCurrencies
 }
 
 /** The Renewal workspace's views. Each is a plain filter over stored offers and terms — no stored "pending debt". */
-export const RENEWAL_VIEWS = ["renewing", "expired", "prepared", "sent", "awaiting", "accepted", "renewed", "declined", "follow-up"] as const;
+export const RENEWAL_VIEWS = ["remind", "renewing", "expired", "prepared", "sent", "awaiting", "accepted", "renewed", "declined", "follow-up"] as const;
 export type RenewalView = (typeof RENEWAL_VIEWS)[number];
 export const RENEWAL_VIEW_LABELS: Record<RenewalView, string> = {
+  remind: "To remind today",
   renewing: "Renewing soon",
   expired: "Expired",
   prepared: "Offer prepared",
@@ -180,6 +181,49 @@ export const RENEWAL_VIEW_STATUS: Partial<Record<RenewalView, RenewalOfferStatus
   renewed: "RENEWED",
   declined: "DECLINED",
 };
+
+/**
+ * When a client should hear about a term ending: when the renewal window opens, then 3 days, 1 day and the day it
+ * ends, and one last time 3 days after. A person sends each one; this only says who is owed one today. Having been
+ * contacted since the latest point clears them until the next point, so nobody is chased twice for one point.
+ */
+const REMINDER_LAST_POINT = -3;
+const REMINDER_STOPS_AFTER_DAYS = 7;
+
+const shiftDay = (date: string, days: number): string => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+const daysBetween = (from: string, to: string): number => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+
+export function renewalReminderPoints(windowDays: number): number[] {
+  const inWindow = [3, 1, 0].filter((point) => point < windowDays);
+  return [windowDays, ...inWindow, REMINDER_LAST_POINT];
+}
+
+/** The day the latest reminder point began, or null when no reminder is owed at this distance from the end date. */
+export function renewalReminderDueSince(endDate: string, today: string, windowDays: number): string | null {
+  const daysLeft = daysBetween(today, endDate);
+  if (daysLeft > windowDays || daysLeft < -REMINDER_STOPS_AFTER_DAYS) return null;
+  const point = renewalReminderPoints(windowDays)
+    .filter((p) => p >= daysLeft)
+    .at(-1);
+  // Between the end date and the last point, the end date's own reminder is the one still owed.
+  return point === undefined ? null : shiftDay(endDate, -point);
+}
+
+export function needsRenewalReminder(term: {
+  endDate: string;
+  today: string;
+  windowDays: number;
+  /** The last day anybody contacted this client about it, YYYY-MM-DD. */
+  lastContact: string | null;
+  paused: boolean;
+  /** The customer already answered: an accepted or declined offer on this term. */
+  answered: boolean;
+}): boolean {
+  if (term.paused || term.answered) return false;
+  const dueSince = renewalReminderDueSince(term.endDate, term.today, term.windowDays);
+  if (dueSince === null) return false;
+  return term.lastContact === null || term.lastContact < dueSince;
+}
 
 /** "Valid until" has passed while the offer is still open: shown as a warning, never acted on by itself. */
 export function offerLapsed(offer: { status: string; validUntil: string | null }, today: string): boolean {

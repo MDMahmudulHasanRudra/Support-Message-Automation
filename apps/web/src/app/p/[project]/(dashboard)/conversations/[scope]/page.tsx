@@ -1,5 +1,5 @@
 import { MessagesSquare, PlugZap } from "lucide-react";
-import { channelBySlug, CHANNELS, isInboxScope } from "@support-automation/shared";
+import { ALL_PROJECTS_SCOPE, channelBySlug, CHANNELS, isInboxScope } from "@support-automation/shared";
 import { notFound } from "next/navigation";
 import { ButtonLink } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
@@ -16,6 +16,8 @@ export const metadata = { title: "Conversations" };
 export default async function InboxEmptyPane({ params }: { params: Promise<{ scope: string }> }) {
   const session = await requireAccess("messages.view", "OMNICHANNEL");
   const { scope } = await params;
+  // The All projects inbox draws its own overview here, from the list it already holds.
+  if (scope === ALL_PROJECTS_SCOPE) return null;
   if (!isInboxScope(scope)) notFound();
   const type = channelBySlug(scope);
   const connections = await connectionSummary();

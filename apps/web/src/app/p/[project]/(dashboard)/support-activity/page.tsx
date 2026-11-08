@@ -77,10 +77,10 @@ export default async function SupportActivityPage() {
   return (
     <div>
       <PageHeader
-        title="Support Activity"
-        description="Monitor support activity, resolution performance, and team availability."
+        title="Activity Feed"
+        description="Every piece of support your team gave, as it was detected in your groups."
         actions={
-          <HelpButton moduleTitle="Support Activity">
+          <HelpButton moduleTitle="Activity Feed">
             <HelpSection title="What this page is for">
               <p>
                 A summary of support activity detected automatically from real conversations — a
@@ -93,8 +93,7 @@ export default async function SupportActivityPage() {
               <p>
                 The difference between total activities and unique supported groups in the current
                 period — a positive number means at least one group received more than one support
-                action. This distinction matters because the "Counted Support" total depends on
-                which Counting Mode is configured in Settings.
+                action.
               </p>
             </HelpSection>
             <HelpSection title="Period">
@@ -117,15 +116,6 @@ export default async function SupportActivityPage() {
         activeMemberCount={activeSupportMembers}
       />
 
-      {!settings.enabled ? (
-        <div className="mb-6">
-          <EmptyState>
-            Support Activity Tracking is currently disabled — enable it on the Settings page to
-            start detecting activity.
-          </EmptyState>
-        </div>
-      ) : null}
-
       {staleSessionCount > 0 ? (
         <div className="mb-6">
           <Alert
@@ -141,7 +131,10 @@ export default async function SupportActivityPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Before anything is counted the banner above says what to do; a wall of zeros adds nothing to it. */}
+      {settings.enabled && activeRuleCount > 0 || totalSupportedGroupsEver > 0 ? (
+      <>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7">
         <StatTile label={`${periodLabel} Support Groups`} value={periodSupportedGroups} />
         <StatTile label={`${periodLabel} Support Activities`} value={periodActivities} />
         <StatTile label="Active Support Members" value={activeSupportMembers} />
@@ -226,6 +219,8 @@ export default async function SupportActivityPage() {
           </Table>
         )}
       </Card>
+      </>
+      ) : null}
     </div>
   );
 }

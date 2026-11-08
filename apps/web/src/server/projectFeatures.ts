@@ -3,12 +3,14 @@ import {
   disabledProjectFeatures,
   featureForPath,
   featureForPermissionKey,
+  ORIGINAL_INSTALLATION_FEATURES,
   projectFeatureDefinition,
   type ProjectFeatureKey,
 } from "@support-automation/shared";
-import { platformPrisma } from "@/server/db";
+import { globalPrisma, platformPrisma } from "@/server/db";
 import { PROJECT_PATH_HEADER } from "@/lib/projectPaths";
 import { requireActiveProject } from "@/server/projectContext";
+import { tenantOfCustomer } from "@/server/tenant";
 
 /**
  * Project features in the web app (MULTI_PROJECT_PLAN.md §9): which modules the active project is
@@ -30,6 +32,8 @@ export async function disabledFeaturesFor(projectId: string): Promise<Set<Projec
   if (cached && Date.now() - cached.at < FEATURE_TTL_MS) return cached.disabled;
   const rows = await platformPrisma.projectFeature.findMany({ where: { projectId }, select: { key: true, enabled: true } });
   const disabled = disabledProjectFeatures(rows);
+  const project = await globalPrisma.project.findUnique({ where: { id: projectId }, select: { customerId: true } });
+  if ((await tenantOfCustomer(project?.customerId ?? null)) !== null) for (const key of ORIGINAL_INSTALLATION_FEATURES) disabled.add(key);
   if (cache.size > 1_000) cache.clear();
   cache.set(projectId, { at: Date.now(), disabled });
   return disabled;

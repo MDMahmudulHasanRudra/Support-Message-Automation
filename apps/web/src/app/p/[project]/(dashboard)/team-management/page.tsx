@@ -77,7 +77,7 @@ export default async function TeamManagementPage() {
         </div>
       ) : null}
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-8 grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatTile label="Active in messages" value={overview.working} tone="success" hint="Sent at least one group message today" />
         <StatTile
           label="No activity recorded"
@@ -103,7 +103,7 @@ export default async function TeamManagementPage() {
           label="Not scheduled"
           value={overview.unassigned}
           tone={overview.unassigned > 0 ? "warning" : "neutral"}
-          hint="Nobody has decided their day — different from an assigned day off. Until it is, overtime is measured against their weekly pattern or default shift, or else the default duty length."
+          hint="Nobody has decided their day yet"
           href={overview.unassigned > 0 ? "/team-management/roster" : undefined}
         />
       </div>

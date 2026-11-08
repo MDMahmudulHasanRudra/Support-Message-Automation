@@ -5,7 +5,7 @@ import { getSavedReplies } from "@/server/chatInbox";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, Globe, Paperclip, Settings2, ShieldCheck, Users } from "lucide-react";
-import { CHANNELS, channelContentLabel, DELIVERY_STATUS_LABEL, isInboxScope } from "@support-automation/shared";
+import { CHANNELS, channelContentLabel, DELIVERY_STATUS_LABEL, isInboxRouteScope } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
 import { pageAccess, requireProjectPage } from "@/server/authorize";
 import { runWithProject } from "@/server/projectContext";
@@ -33,7 +33,7 @@ const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Dhaka", ho
 export default async function ChannelConversationPage({ params }: { params: Promise<{ scope: string; conversationId: string }> }) {
   const { session, canManage: canReply } = await pageAccess("messages.view", "conversations.reply", "OMNICHANNEL");
   const { scope, conversationId } = await params;
-  if (!isInboxScope(scope)) notFound();
+  if (!isInboxRouteScope(scope)) notFound();
   const thread = await getChannelThread(conversationId);
   if (!thread) notFound();
   const { conversation, connection, messages, hasMore } = thread;

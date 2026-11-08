@@ -828,6 +828,63 @@ const RELEASES: HistoricalRelease[] = [
       "A customer no longer sees another customer's web address in its install code and links"
     ]
   },
+  {
+    version: "0.34.0",
+    title: "Renewal reminders, faster reports and a roomier chat",
+    summary: "See who to remind today, open reports at once and read more of each conversation.",
+    releaseDate: "2026-11-07",
+    releaseType: "FEATURE",
+    affectedModules: ["Clients", "Reports", "WhatsApp Chat", "Team", "WhatsApp", "Security"],
+    whatsNew: [
+      "Renewals now lists who to remind today, worked out from each end date and the last contact, with one email for everybody that another person approves first",
+      "Leave adds Annual, Sick and Casual in one press and shows who is away today",
+      "A running group sync now shows in the job indicator on every page",
+    ],
+    improvements: [
+      "Reports open at once and reuse recent figures, so moving between reports for the same period does not read every message again",
+      "WhatsApp Chat keeps its search and filters in the list, so the open conversation uses the full height, and tablets show one pane at a time",
+      "Today and Team Performance fit a phone, and the Activity Feed shows one clear message until counting is on",
+    ],
+    bugFixes: [
+      "A project address, an employee number or a linked Google account at one customer no longer blocks or reveals anything to another",
+      "Product knowledge from the software owner's repository is available only in the original installation",
+    ],
+  },
+  {
+    version: "0.35.0",
+    title: "Support tickets",
+    summary: "Turn any problem into a numbered ticket with an owner and a due time.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["Tickets", "WhatsApp Chat", "All Conversations", "Clients", "Settings"],
+    whatsNew: [
+      "A Tickets page with Mine, Unassigned, All open, Waiting on customer, Overdue and Resolved lists",
+      "Open a ticket from the Tickets tab beside any conversation, and drop its number into your reply",
+      "Each ticket has a number, an owner, a priority, a due time, internal notes and a full history",
+      "Choose how many hours each priority gets, and your categories, in Settings",
+    ],
+    improvements: [
+      "While a ticket waits on the customer its clock stops, and the time waited is added back",
+      "A client's profile lists their tickets",
+    ],
+    bugFixes: [],
+  },
+  {
+    version: "0.36.0",
+    title: "All projects in one inbox",
+    summary: "See and answer every project's conversations from a single list.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["All Conversations"],
+    whatsNew: [
+      "A new All tab in All Conversations lists every project's conversations together, each marked with its project",
+      "An overview shows what is open and waiting in each project, and a press narrows the list to one",
+      "Open and reply to any conversation without leaving the list, and act on conversations from several projects at once",
+      "Anyone with access to more than one project gets the same view, limited to what they may already read",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

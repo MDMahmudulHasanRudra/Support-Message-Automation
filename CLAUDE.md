@@ -341,6 +341,7 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   (expression indexes), never across the server. Read a login with `findFirst` inside its customer, never by name alone.
   Sign-in is decided by the address (`findSignInUser`). Password length is the customer's (`SecuritySettings.minPasswordLength`,
   default 8, 6-128) or a Lead's for one project (`Project.minPasswordLength`): `server/passwordPolicy.ts`. Platform operators keep 12.
+- **Nothing is unique across customers unless it must be (7 Nov 2026, `customerSeparation.integration.test.ts`).** A username, email, project address (`Project_customer_slug_key`), employee number (`EmployeeCodeCounter`, one per customer) and linked Google account (`customerKey`) are unique inside a customer. `decideAccess` finds a project by address inside the person's own customer. `ORIGINAL_INSTALLATION_FEATURES` (Forge, which reads the software owner's private repositories with the installation's key) work only in the original installation, on web and worker.
 - A customer has ITS OWN standard roles (`ensureDefaultRoles`, also run by the seed for every customer) — role, department
   and job-title names are unique per customer (partial indexes). Plan limits count per customer
   (`lockAndCheckCustomerLimit`: users on login creation only, WhatsApp numbers across its workspaces). A new project
@@ -1635,8 +1636,7 @@ country and company, and a seeded guess quietly becomes policy because nobody ch
 decided request. Cancelling approved leave does **not** restore the duty rows: cover was very likely
 arranged, and silently un-cancelling would double-staff the day.
 
-Its pages (Today, Roster, Leave) sit in the sidebar's **Team** module. `/team-members` stays under WhatsApp and
-is linked to, never duplicated. This module does **not** duplicate `/support-activity/team`, which
+Its pages (Today, Roster, Leave) sit in the sidebar's **Team** module. `/team-members` is in the same module. This module does **not** duplicate `/support-activity/team`, which
 owns who is online, engaged time and first-response stats; this one owns **schedule versus reality**.
 
 ### Hybrid AI Automation / AI Fallback (`apps/worker/src/aiFallback/`)
@@ -2951,6 +2951,14 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 - A refusal is SKIPPED with its reason. Nothing is retried, and nothing goes out more than 30 minutes after the resolution.
 - The customer's next message is read once within 24 hours; only a message that is nothing but a rating counts (`parseCsatRating`). The message itself stays ordinary and the hooks never throw. An answer is final (trigger).
 - Channels use the automated window only, never the HUMAN_AGENT tag. A survey is not an AI answer, so the AI reply cooldown ignores its variant.
+
+### All projects inbox (`ALL_PROJECTS_INBOX.md`, 8 Nov 2026)
+
+`/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
+
+### Support tickets (`TICKETS.md`, 8 Nov 2026)
+
+Feature `TICKETS`, **on by default** (it sends nothing). A ticket is its own record linking to a conversation and a client, because `SupportAssignment` and `SupportEscalationCase` each follow one wait. Rules worth not undoing: it never sends anything to a customer (the number only fills the reply box); no key of its own (`messages.view`, then the conversation's reply key); every change is a conditional update with its append-only `TicketEvent` in the same transaction; numbers come from the atomic counter on `TicketSettings`; waiting on the customer stops the clock and is never overdue; a ticket outlives the account, conversation or client it links to.
 
 ### Follow-ups (`FOLLOW_UPS.md`, 7 Nov 2026)
 

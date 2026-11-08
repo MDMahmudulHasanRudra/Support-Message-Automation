@@ -48,6 +48,7 @@ import { setConversationAssignee, setConversationTeam } from "@/server/actions/i
 import { ConversationStatusSection } from "./ConversationStatusSection";
 import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
 import { FollowUpsSection } from "./FollowUpsSection";
+import { TicketsSection } from "./TicketsSection";
 import { ContactOverview } from "./ContactOverview";
 import {
   clearPanelTabRequest,
@@ -112,7 +113,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const sheetOpen = usePanelSheetOpen();
   const requestedTab = usePanelTabRequest();
   const hasDetails = data.access.collaboration || data.access.lifecycle;
-  const firstTab: TabKey = hasDetails ? "details" : data.access.copilot ? "copilot" : "followups";
+  const firstTab: TabKey = hasDetails ? "details" : data.access.copilot ? "copilot" : data.access.tickets ? "tickets" : "followups";
   const [tab, setTab] = useState<TabKey>(firstTab);
   const width = useSyncExternalStore(subscribe, readWidth, () => 320);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -136,6 +137,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
     hasDetails ? { key: "details" as const, label: "Overview" } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "AI" } : null,
+    data.access.tickets ? { key: "tickets" as const, label: "Tickets", count: data.tickets?.length ?? 0 } : null,
     data.access.followUps ? { key: "followups" as const, label: "Follow-ups", count: data.followUps?.length ?? 0 } : null,
     data.access.lifecycle ? { key: "files" as const, label: "Files" } : null,
   ].filter((t): t is NonNullable<typeof t> => t !== null);
@@ -180,7 +182,9 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
       <PresenceBanner peers={peers} />
-      <div role="tablist" aria-label="Conversation workspace" className="flex h-11 shrink-0 items-stretch gap-3 border-b border-[var(--color-border)] pl-4 pr-2">
+      <div className="flex h-11 shrink-0 items-stretch gap-2 border-b border-[var(--color-border)] pl-4 pr-2">
+        {/* The tabs scroll inside their own strip, so however many a project has the close button stays in reach. */}
+        <div role="tablist" aria-label="Conversation workspace" className="flex min-w-0 flex-1 items-stretch gap-2 overflow-x-auto [scrollbar-width:none]!">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -190,7 +194,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
             aria-keyshortcuts={`Alt+${tabs.indexOf(t) + 1}`}
             title={`${t.label} (Alt+${tabs.indexOf(t) + 1})`}
             onClick={() => setTab(t.key)}
-            className={`-mb-px inline-flex items-center gap-1 whitespace-nowrap border-b-2 text-[12.5px] font-medium transition-colors ${
+            className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 text-[12.5px] font-medium transition-colors ${
               tab === t.key ? "border-[var(--color-accent)] text-[color:var(--color-foreground)]" : "border-transparent text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
             }`}
           >
@@ -198,12 +202,12 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
             {"count" in t && t.count ? <span className="tabular text-[11px] text-[color:var(--color-subtle-foreground)]">{t.count}</span> : null}
           </button>
         ))}
-        <span className="flex-1" />
+        </div>
         <button
           type="button"
           onClick={togglePanel}
           aria-label="Close panel"
-          className="my-auto flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] xl:hidden"
+          className="my-auto flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] xl:hidden"
         >
           <X className="size-4" aria-hidden />
         </button>
@@ -212,6 +216,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
         {tab === "details" && hasDetails ? <DetailsTab data={data} /> : null}
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
+        {tab === "tickets" && data.access.tickets ? <TicketsSection data={data} /> : null}
         {tab === "followups" && data.access.followUps ? <FollowUpsSection data={data} /> : null}
         {tab === "files" && data.access.lifecycle ? <FilesTab conversation={data.ref} /> : null}
       </div>

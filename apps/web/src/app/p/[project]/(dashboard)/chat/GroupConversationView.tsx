@@ -116,7 +116,7 @@ export async function GroupConversationView({
         <Link
           href={backPath(group.accountId)}
           aria-label="Back to conversations"
-          className={`flex shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] md:hidden ${withSearch ? "size-10 active:bg-[var(--color-neutral-bg)]" : "size-8"}`}
+          className={`flex shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[color:var(--color-muted-foreground)] transition-colors hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)] lg:hidden ${withSearch ? "size-10 active:bg-[var(--color-neutral-bg)]" : "size-8"}`}
         >
           <ArrowLeft className={withSearch ? "size-5" : "size-4.5"} aria-hidden />
         </Link>

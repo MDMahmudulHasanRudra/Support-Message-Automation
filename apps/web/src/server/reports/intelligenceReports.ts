@@ -812,7 +812,7 @@ async function previousPeriod(ctx: ReportContext): Promise<{ ctx: ReportContext;
   const length = ctx.rangeEnd - ctx.rangeStart;
   const from = formatDhakaDateKey(new Date(ctx.rangeStart - length));
   const to = formatDhakaDateKey(new Date(ctx.rangeStart - 1));
-  const prevCtx = await loadReportContext({ ...ctx.params, period: "custom", from, to }, ctx.now);
+  const prevCtx = await loadReportContext({ ...ctx.params, period: "custom", from, to }, ctx.now, { shared: ctx.shared });
   return { ctx: prevCtx, intel: await loadIntelligence(prevCtx), label: prevCtx.data.range.label };
 }
 

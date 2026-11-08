@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import {
   Activity,
   AlarmClock,
+  Ticket as TicketIcon,
   BadgeCheck,
   BookUser,
   CalendarClock,
@@ -78,6 +79,8 @@ import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { mentionablePeople } from "@/server/inboxWorkspace";
 import { loadClientFollowUps } from "@/server/followUps";
 import { ClientFollowUps } from "@/components/followUps/ClientFollowUps";
+import { ClientTickets } from "@/components/tickets/ClientTickets";
+import { loadClientTickets, loadTicketConfig } from "@/server/tickets";
 import { ActivityItem, CardLink, currencyName, FactCard, flagOf, InfoRow, muted, panel, ProfileTabs, SectionCard, Timeline, type TabSpec } from "./ProfileParts";
 
 const STATUS_COLOR: Record<string, "green" | "gray" | "yellow" | "red"> = { ACTIVE: "green", INACTIVE: "gray", PENDING: "yellow", ARCHIVED: "gray", BLOCKED: "red" };
@@ -134,6 +137,16 @@ export default async function ClientDetailPage({ params, searchParams }: { param
 
   // Follow-ups about this client (FOLLOW_UPS.md): shown with the feature on and the key that reads them.
   const featuresOff = await activeDisabledFeatures();
+  const tickets =
+    !featuresOff.has("TICKETS") && (await hasPermission(session, "messages.view"))
+      ? await Promise.all([
+          loadClientTickets(client.id),
+          !featuresOff.has("WHATSAPP_CHAT") && (await hasPermission(session, "messages.reply")) ? true : !featuresOff.has("OMNICHANNEL") && (await hasPermission(session, "conversations.reply")),
+          mentionablePeople(session),
+          prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+          loadTicketConfig(),
+        ]).then(([items, canCreate, people, teams, config]) => ({ items, canCreate, options: { people, teams, categories: config.categories, viewerId: session.userId } }))
+      : null;
   const followUps =
     !featuresOff.has("FOLLOW_UPS") && (await hasPermission(session, "messages.view"))
       ? await Promise.all([
@@ -521,6 +534,12 @@ export default async function ClientDetailPage({ params, searchParams }: { param
                 ) : null}
                 {client.businessType ? <InfoRow icon={Shapes} label="Business type">{client.businessType}</InfoRow> : null}
               </SectionCard>
+
+              {tickets ? (
+                <SectionCard icon={TicketIcon} title="Tickets">
+                  <ClientTickets clientId={client.id} items={tickets.items} canCreate={tickets.canCreate && !archived} options={tickets.options} />
+                </SectionCard>
+              ) : null}
 
               {followUps ? (
                 <SectionCard icon={AlarmClock} title="Follow-ups">

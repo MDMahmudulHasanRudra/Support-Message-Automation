@@ -5,6 +5,7 @@ import {
   sortOperations,
   summariseAddJob,
   summariseAdminJob,
+  summariseGroupSync,
   type AddJobInput,
   type AdminJobInput,
 } from "../whatsappOperations.js";
@@ -149,5 +150,38 @@ describe("clearing an operation from one person's tracker", () => {
     expect(isOperationCleared({ state: "RUNNING" }, { stateAtDismissal: "REVIEW" })).toBe(false);
     expect(isOperationCleared({ state: "COMPLETED" }, { stateAtDismissal: "RUNNING" })).toBe(false);
     expect(isOperationCleared({ state: "COMPLETED" }, undefined)).toBe(false);
+  });
+});
+
+describe("summariseGroupSync", () => {
+  const sync = (status: string) =>
+    summariseGroupSync({
+      accountId: "acc",
+      accountLabel: "Primary",
+      status,
+      stage: "Reading the group list from WhatsApp",
+      startedAt: NOW,
+      completedAt: status === "RUNNING" ? null : NOW,
+      discovered: 498,
+      added: 12,
+      failed: 0,
+      error: null,
+      basis: "Stable reads",
+    });
+
+  it("a running sync shows what it is doing and claims no percentage: WhatsApp never says how many groups there are", () => {
+    const op = sync("RUNNING")!;
+    expect(op).toMatchObject({ state: "RUNNING", current: "Reading the group list from WhatsApp", total: 0 });
+    expect(op.counts[0]).toMatchObject({ label: "Groups found", value: 498 });
+  });
+
+  it("finished results keep what they rest on", () => {
+    expect(sync("COMPLETED")).toMatchObject({ state: "COMPLETED", detail: "Stable reads" });
+    expect(sync("PARTIAL")?.state).toBe("PARTIAL");
+    expect(sync("FAILED")?.state).toBe("FAILED");
+  });
+
+  it("a sync stopped on purpose is not news", () => {
+    expect(sync("CANCELLED")).toBeNull();
   });
 });

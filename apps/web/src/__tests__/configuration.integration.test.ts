@@ -2,9 +2,10 @@ import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma as rawPrisma } from "@support-automation/db";
+import { runWithTenant } from "@/server/tenant";
 import {
   createDepartment,
-  createEmployee,
+  createEmployee as createEmployeeInContext,
   createJobTitle,
   deleteDepartment,
   deleteJobTitle,
@@ -29,6 +30,9 @@ async function dept(name: string, code?: string) {
   ids.departments.push(r.id);
   return r.id;
 }
+// Employee numbers are counted per customer, so creating one needs to know whose: here, the original installation.
+const createEmployee = (...args: Parameters<typeof createEmployeeInContext>) => runWithTenant(null, () => createEmployeeInContext(...args));
+
 async function employee(fullName: string, extra: Record<string, unknown> = {}) {
   const r = await createEmployee(rawPrisma, { fullName: `${fullName} ${tag}`, ...extra });
   if (!r.ok) throw new Error(r.error);
@@ -96,7 +100,7 @@ describe("departments and job titles", () => {
 });
 
 describe("employees", () => {
-  it("get an ID from the sequence: EMP- and six digits, each one new", async () => {
+  it("get an ID from their customer's counter: EMP- and six digits, each one new", async () => {
     const a = await employee("Anika");
     const b = await employee("Bipul");
     expect(a.employeeCode).toMatch(/^EMP-\d{6}$/);

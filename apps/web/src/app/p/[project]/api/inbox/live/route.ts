@@ -3,6 +3,7 @@ import { getSession } from "@/server/auth";
 import { checkPermission } from "@/server/authorize";
 import { subscribeInboxChanges } from "@/server/inboxLive";
 import { activeProjectId } from "@/server/projectContext";
+import { universalInboxProjects } from "@/server/universalInbox";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,8 @@ export async function GET(request: NextRequest) {
   if (!(await getSession())) return new NextResponse(null, { status: 401 });
   const access = await checkPermission("messages.view");
   if ("denied" in access) return new NextResponse(null, { status: 403 });
-  const projectId = await activeProjectId();
+  // The All projects inbox hears from every project this person may read there, decided here and not by the request.
+  const projectIds = request.nextUrl.searchParams.get("projects") === "all" ? (await universalInboxProjects(access.session)).map((p) => p.id) : [await activeProjectId()];
 
   const encoder = new TextEncoder();
   let stop = () => {};
@@ -30,12 +32,12 @@ export async function GET(request: NextRequest) {
       const send = (text: string) => {
         if (open) controller.enqueue(encoder.encode(text));
       };
-      const unsubscribe = subscribeInboxChanges(projectId, () => send("event: change\ndata: 1\n\n"));
+      const unsubscribes = projectIds.map((projectId) => subscribeInboxChanges(projectId, () => send("event: change\ndata: 1\n\n")));
       const keepAlive = setInterval(() => send(": ping\n\n"), KEEP_ALIVE_MS);
       stop = () => {
         if (!open) return;
         open = false;
-        unsubscribe();
+        for (const unsubscribe of unsubscribes) unsubscribe();
         clearInterval(keepAlive);
         clearTimeout(limit);
         try {

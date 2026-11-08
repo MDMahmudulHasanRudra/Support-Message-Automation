@@ -4,7 +4,7 @@ import { platformPrisma, prisma } from "../db.js";
 import { recordLoopTick, registerLoop } from "../health/loopLiveness.js";
 import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { forEachProject } from "../project/context.js";
-import { projectHasFeature } from "../project/features.js";
+import { projectCustomerKey, projectHasFeature } from "../project/features.js";
 import { DRIVE_ACTIVITY_SCOPE, GoogleApiError, MAX_ACTIVITY_PAGES, queryDriveActivity, refreshAccessToken, type FetchImpl } from "./api.js";
 import {
   bridgeEvidence,
@@ -223,7 +223,7 @@ export async function readSheetActivity(sheet: Sheet, ctx: Context): Promise<{ a
 
   const personIds = [...new Set(records.flatMap((r) => r.actors.map((a) => (a.kind === "KNOWN_USER" ? a.personId : null)).filter((id): id is string => Boolean(id))))];
   const [identityRows, accounts, links, periods] = await Promise.all([
-    personIds.length ? platformPrisma.userGoogleIdentity.findMany({ where: { googleSubject: { in: personIds } }, select: { googleSubject: true, userId: true } }) : Promise.resolve([]),
+    personIds.length ? platformPrisma.userGoogleIdentity.findMany({ where: { customerKey: await projectCustomerKey(), googleSubject: { in: personIds } }, select: { googleSubject: true, userId: true } }) : Promise.resolve([]),
     prisma.googleIntegrationAccount.findMany({ select: { id: true, googleSubject: true } }),
     prisma.internalTeamMember.findMany({ where: { userId: { not: null } }, select: { id: true, userId: true } }),
     prisma.googleSpreadsheetMember.findMany({ where: { spreadsheetId: sheet.id }, select: { userId: true, role: true, startedAt: true, endedAt: true } }),

@@ -28,6 +28,7 @@ import { applyProjectModules, restoreProjectModules } from "@/server/actions/pro
 import type { ModuleTemplateOption, ProjectModuleChangeView } from "@/server/projectModules";
 
 interface Props {
+  hidden: string[];
   projectId: string;
   projectType: ProjectType;
   projectBaseType: ProjectBaseType | null;
@@ -86,7 +87,7 @@ export function ModuleBuilder(props: Props) {
   const template = props.templates.find((t) => t.key === templateKey) ?? null;
   // Recorded only when what is applied IS the template; edited afterwards, it is a plain selection.
   const appliesTemplate = template !== null && [...template.modules].sort().join(",") === resolved.selected.join(",");
-  const visible = PROJECT_MODULES.filter((m) => category === "All" || m.category === category);
+  const visible = PROJECT_MODULES.filter((m) => !props.hidden.includes(m.key) && (category === "All" || m.category === category));
   const planned = base ? plannedModulesFor(base) : [];
 
   function chooseSavedTemplate(key: string) {
@@ -296,7 +297,7 @@ export function ModuleBuilder(props: Props) {
           </Select>
           <ul className="hidden space-y-0.5 lg:block">
             {["All", ...MODULE_CATEGORIES].map((c) => {
-              const count = c === "All" ? resolved.selected.length : PROJECT_MODULES.filter((m) => m.category === c && selected.has(m.key)).length;
+              const count = c === "All" ? resolved.selected.length : PROJECT_MODULES.filter((m) => !props.hidden.includes(m.key) && m.category === c && selected.has(m.key)).length;
               return (
                 <li key={c}>
                   <button

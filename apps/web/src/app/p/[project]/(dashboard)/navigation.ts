@@ -3,6 +3,7 @@ import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type Re
 import {
   Activity,
   AlarmClock,
+  Ticket,
   AlertCircle,
   AlertTriangle,
   BarChart3,
@@ -213,6 +214,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/support-activity/settings", label: "Support Activity Setup", icon: Activity },
       { href: "/settings/mood-detection", label: "Mood Detection", icon: Smile },
       { href: "/settings/inbox-status", label: "Inbox status", icon: CircleDot },
+      { href: "/settings/tickets", label: "Tickets", icon: Ticket },
       { href: "/settings/csat", label: "Satisfaction surveys", icon: Star },
       { href: "/settings/auto-routing", label: "Automatic routing", icon: Shuffle },
       { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
@@ -432,6 +434,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
       // Call-backs, visits and promised replies (FOLLOW_UPS.md). A project feature that ships off.
       { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
+      // Numbered support cases (TICKETS.md).
+      { href: "/tickets", label: "Tickets", icon: Ticket },
     ],
   },
   {
@@ -717,6 +721,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/messages", "messages.view"],
   ["/support-escalation", "escalations.view"],
   ["/follow-ups", "messages.view"],
+  ["/tickets", "messages.view"],
   ["/support-activity", "support_activity.view"],
   ["/support-assignment", "support_assignment.view"],
   ["/team-report", "support_activity.view"],
@@ -794,7 +799,9 @@ export function navGroupsFor(granted: ReadonlySet<string>, disabledFeatures: Rea
   })).filter((group) => group.links.length > 0);
 }
 
-export function isNavActive(pathname: string, search: URLSearchParams, href: string, label?: string) {
+export function isNavActive(rawPathname: string, search: URLSearchParams, href: string, label?: string) {
+  // The All projects inbox is a view of All Conversations, so that entry stays lit for it.
+  const pathname = rawPathname === "/conversations/all-projects" || rawPathname.startsWith("/conversations/all-projects/") ? "/conversations/all" : rawPathname;
   // The one Settings entry stands for the whole module, so it stays lit on every settings page.
   if (label === SETTINGS_LINK.label && isSettingsPath(href.split("?")[0]!)) return isSettingsPath(pathname);
   if (href === REPORTS_LINK.href) {
