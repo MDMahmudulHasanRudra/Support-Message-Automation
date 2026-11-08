@@ -107,4 +107,5 @@ export * from "./conversationLifecycle.js";
 export * from "./csat.js";
 export * from "./followUps.js";
 export * from "./tickets.js";
+export * from "./contacts.js";
 export * from "./autoRouting.js";

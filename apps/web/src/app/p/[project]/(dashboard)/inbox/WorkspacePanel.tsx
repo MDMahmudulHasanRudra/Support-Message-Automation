@@ -49,6 +49,7 @@ import { ConversationStatusSection } from "./ConversationStatusSection";
 import { PresenceBanner, useConversationPresence } from "./ConversationPresence";
 import { FollowUpsSection } from "./FollowUpsSection";
 import { TicketsSection } from "./TicketsSection";
+import { ContactTab } from "./ContactTab";
 import { ContactOverview } from "./ContactOverview";
 import {
   clearPanelTabRequest,
@@ -113,7 +114,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const sheetOpen = usePanelSheetOpen();
   const requestedTab = usePanelTabRequest();
   const hasDetails = data.access.collaboration || data.access.lifecycle;
-  const firstTab: TabKey = hasDetails ? "details" : data.access.copilot ? "copilot" : data.access.tickets ? "tickets" : "followups";
+  const firstTab: TabKey = hasDetails ? "details" : data.contactCard ? "contact" : data.access.copilot ? "copilot" : data.access.tickets ? "tickets" : "followups";
   const [tab, setTab] = useState<TabKey>(firstTab);
   const width = useSyncExternalStore(subscribe, readWidth, () => 320);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -135,6 +136,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
 
   const tabs = [
     hasDetails ? { key: "details" as const, label: "Overview" } : null,
+    data.contactCard ? { key: "contact" as const, label: "Contact" } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "AI" } : null,
     data.access.tickets ? { key: "tickets" as const, label: "Tickets", count: data.tickets?.length ?? 0 } : null,
@@ -214,6 +216,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
       </div>
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
         {tab === "details" && hasDetails ? <DetailsTab data={data} /> : null}
+        {tab === "contact" && data.contactCard ? <ContactTab key={data.ref.kind === "channel" ? data.ref.conversationId : `${data.ref.accountId}|${data.ref.chatId}`} conversation={data.ref} card={data.contactCard} /> : null}
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
         {tab === "tickets" && data.access.tickets ? <TicketsSection data={data} /> : null}

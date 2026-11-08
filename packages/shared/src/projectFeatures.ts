@@ -368,6 +368,16 @@ export const PROJECT_FEATURES = [
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
   {
+    key: "CONTACTS",
+    label: "Contacts",
+    description: "Everyone you have met in your chats: names, numbers, emails, social accounts, location and notes, kept apart from Clients and Billing, with campaigns.",
+    // On by default: it is a list of people. Collecting from chats by itself and every campaign stay off until someone starts them.
+    defaultEnabled: true,
+    routes: ["/contacts", "/settings/contacts"],
+    permissionKeys: ["contacts.view", "contacts.edit", "contacts.delete", "contacts.import", "contacts.export", "contacts.campaign"],
+    workerEffect: "Collecting contacts from chats stops. Contacts, their history and campaigns are kept and the pages are hidden.",
+  },
+  {
     key: "TICKETS",
     label: "Support tickets",
     description: "Numbered support cases with an owner, a priority, a due time and a history, created from any conversation or on their own.",

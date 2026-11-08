@@ -2956,6 +2956,14 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 
 `/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
 
+### Contacts (`CONTACTS.md`, 8 Nov 2026)
+
+Feature `CONTACTS`, **on by default**; collecting from chats and campaigns are off until started. Apart from Clients and Billing: its own `CT-0001` serial, and the only tie is a `linkedClientId` a person chooses. Rules worth not undoing:
+- **A value is held once per project** (unique on project, kind, normalized value), and one chat belongs to one contact, keyed by the chat id alone so two of our numbers in one group are one contact. `collectContactFromChat` (packages/db) is the only way a chat becomes a contact.
+- **A LID is never a phone number**; only a `@c.us` chat id proves one. An import fills blanks only.
+- **The collector is its own loop over stored messages**, never on the message path, and starts when switched on, never reading older messages. Not a team member, our own number, or an unmonitored group. The AI can only point at numbered values found in the text; never let it return a value.
+- **Someone marked No offers is never in a campaign**, re-checked when an email sends. Only email is sent in bulk. WhatsApp and the channels stay a one-person-at-a-time worklist through the ordinary reply path: a personal chat is answered, never started.
+
 ### Support tickets (`TICKETS.md`, 8 Nov 2026)
 
 Feature `TICKETS`, **on by default** (it sends nothing). A ticket is its own record linking to a conversation and a client, because `SupportAssignment` and `SupportEscalationCase` each follow one wait. Rules worth not undoing: it never sends anything to a customer (the number only fills the reply box); no key of its own (`messages.view`, then the conversation's reply key); every change is a conditional update with its append-only `TicketEvent` in the same transaction; numbers come from the atomic counter on `TicketSettings`; waiting on the customer stops the clock and is never overdue; a ticket outlives the account, conversation or client it links to.

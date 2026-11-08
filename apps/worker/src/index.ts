@@ -47,6 +47,7 @@ import { startKnowledgeImportProcessor } from "./knowledge/knowledgeImportProces
 import { startCommunicationStyleProcessor } from "./knowledge/communicationStyleProcessor.js";
 import { startSandboxProcessor } from "./sandbox/sandboxProcessor.js";
 import { startCopilotProcessor } from "./copilot/copilotProcessor.js";
+import { startContactCollector } from "./contacts/contactCollector.js";
 import { startSocialAiProcessor } from "./social/socialAiProcessor.js";
 import { startConversationAnalysisProcessor } from "./knowledge/conversationAnalysisProcessor.js";
 import {
@@ -213,6 +214,8 @@ async function main() {
     // Satisfaction surveys (CSAT.md): asks the PENDING surveys a resolution recorded, through each channel's
     // one send queue. A no-op unless CSAT_SURVEYS is on and a channel is switched on in Settings.
     startCsatSurveyProcessor(),
+    // Contacts (CONTACTS.md): collects from stored messages after a cursor. A no-op unless a project switches it on.
+    startContactCollector(),
     // Automatic routing: gives still-unassigned open conversations to an eligible person (a no-op unless
     // AUTO_ROUTING and UNIFIED_INBOX_V3 are on and the project switched routing on).
     startAutoRoutingProcessor(),
