@@ -368,6 +368,17 @@ export const PROJECT_FEATURES = [
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
   {
+    key: "TICKETS",
+    label: "Support tickets",
+    description: "Numbered support cases with an owner, a priority, a due time and a history, created from any conversation or on their own.",
+    // Reading uses messages.view; changing one uses the reply key of the conversation it is about, as follow-ups do.
+    // On by default: nothing here sends anything or changes how any conversation behaves.
+    defaultEnabled: true,
+    routes: ["/tickets", "/settings/tickets"],
+    permissionKeys: [],
+    workerEffect: "Nothing runs in the background for it. Tickets and their history are kept and the Tickets page is hidden.",
+  },
+  {
     key: "FOLLOW_UPS",
     label: "Follow-ups",
     description:

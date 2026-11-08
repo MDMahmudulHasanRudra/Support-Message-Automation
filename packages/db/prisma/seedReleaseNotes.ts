@@ -850,6 +850,25 @@ const RELEASES: HistoricalRelease[] = [
       "Product knowledge from the software owner's repository is available only in the original installation",
     ],
   },
+  {
+    version: "0.35.0",
+    title: "Support tickets",
+    summary: "Turn any problem into a numbered ticket with an owner and a due time.",
+    releaseDate: "2026-11-08",
+    releaseType: "FEATURE",
+    affectedModules: ["Tickets", "WhatsApp Chat", "All Conversations", "Clients", "Settings"],
+    whatsNew: [
+      "A Tickets page with Mine, Unassigned, All open, Waiting on customer, Overdue and Resolved lists",
+      "Open a ticket from the Tickets tab beside any conversation, and drop its number into your reply",
+      "Each ticket has a number, an owner, a priority, a due time, internal notes and a full history",
+      "Choose how many hours each priority gets, and your categories, in Settings",
+    ],
+    improvements: [
+      "While a ticket waits on the customer its clock stops, and the time waited is added back",
+      "A client's profile lists their tickets",
+    ],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

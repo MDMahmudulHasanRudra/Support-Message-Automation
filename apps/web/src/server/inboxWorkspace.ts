@@ -15,6 +15,7 @@ import {
 } from "@support-automation/shared";
 import { loadLifecycle } from "@/server/conversationLifecycle";
 import { loadConversationFollowUps, type ConversationFollowUp } from "@/server/followUps";
+import { loadConversationTickets, loadTicketConfig, type TicketSummary } from "@/server/tickets";
 
 /**
  * The inbox workspace side panel (INBOX_WORKSPACE.md): internal notes, priority / tags, Team
@@ -38,6 +39,8 @@ export interface WorkspaceAccess {
   lifecycle: boolean;
   /** This conversation's follow-ups (FOLLOW_UPS.md). */
   followUps: boolean;
+  /** This conversation's tickets (TICKETS.md). */
+  tickets: boolean;
 }
 
 /**
@@ -66,12 +69,13 @@ export async function resolveWorkspaceAccess(session: Session, ref: Conversation
   const copilot = !disabled.has("AI_COPILOT");
   const lifecycle = !disabled.has("UNIFIED_INBOX_V3");
   const followUps = !disabled.has("FOLLOW_UPS");
-  if (!collaboration && !copilot && !lifecycle && !followUps) return null;
+  const tickets = !disabled.has("TICKETS");
+  if (!collaboration && !copilot && !lifecycle && !followUps && !tickets) return null;
 
   if (!(await conversationInProject(ref, disabled))) return null;
   if (!(await hasPermission(session, "messages.view"))) return null;
   const canWrite = await hasPermission(session, ref.kind === "whatsapp" ? "messages.reply" : "conversations.reply");
-  return { ref, canRead: true, canWrite, collaboration, copilot, lifecycle, followUps };
+  return { ref, canRead: true, canWrite, collaboration, copilot, lifecycle, followUps, tickets };
 }
 
 /** The `where` that selects rows about exactly this conversation. */
@@ -135,6 +139,10 @@ export interface WorkspaceData {
   groupOwner: { name: string; groupName: string } | null;
   /** This conversation's open follow-ups (FOLLOW_UPS). Null while the feature is off. */
   followUps: ConversationFollowUp[] | null;
+  /** This conversation's tickets (TICKETS). Null while the feature is off. */
+  tickets: TicketSummary[] | null;
+  /** What the New ticket form offers. Null while the feature is off. */
+  ticketOptions: { teams: { id: string; name: string }[]; categories: string[] } | null;
   /** Inbox V3 (UNIFIED_INBOX_V3): the conversation status. Null while the feature is off. */
   lifecycle: { status: ConversationStatus; snoozedUntil: string | null; statusChangedAt: string | null } | null;
   /** Satisfaction surveys of this conversation, newest first (CSAT.md). Empty while CSAT_SURVEYS is off. */
@@ -258,6 +266,9 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     loadConversationCsat(ref, access.canRead),
   ]);
   const followUps = access.followUps ? await loadConversationFollowUps(ref) : null;
+  const [tickets, ticketConfig, ticketTeams] = access.tickets
+    ? await Promise.all([loadConversationTickets(ref), loadTicketConfig(), prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } })])
+    : [null, null, null];
   const assignable = lifecyclePeople ?? people;
   // Names for the ids history refers to (people and Teams of this project).
   const names = new Map<string, string>([...assignable.map((p) => [p.id, p.name] as const), ...(teams ?? []).map((t) => [t.id, t.name] as const)]);
@@ -267,7 +278,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
   const nameOf = (kind: string, v: string | null) => (v === null ? null : STATUS_KINDS.has(kind) ? statusName(v) : (names.get(v) ?? "someone no longer here"));
 
   return {
-    access: { canRead: access.canRead, canWrite: access.canWrite, collaboration: access.collaboration, copilot: access.copilot, lifecycle: access.lifecycle, followUps: access.followUps },
+    access: { canRead: access.canRead, canWrite: access.canWrite, collaboration: access.collaboration, copilot: access.copilot, lifecycle: access.lifecycle, followUps: access.followUps, tickets: access.tickets },
     ref,
     priority: label?.priority ?? "NONE",
     tags: label?.tags ?? [],
@@ -288,6 +299,8 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     history: events.map((e) => ({ id: e.id, kind: e.kind, from: nameOf(e.kind, e.fromValue), to: nameOf(e.kind, e.toValue), actorName: e.actor?.name ?? null, auto: isAutoRoutingContext(e.context), at: e.createdAt.toISOString() })),
     groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
     followUps,
+    tickets,
+    ticketOptions: ticketConfig && ticketTeams ? { teams: ticketTeams, categories: ticketConfig.categories } : null,
     lifecycle: lifecycle
       ? { status: lifecycle.status, snoozedUntil: lifecycle.snoozedUntil?.toISOString() ?? null, statusChangedAt: lifecycle.statusChangedAt?.toISOString() ?? null }
       : null,

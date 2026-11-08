@@ -651,7 +651,7 @@ export function ChatWorkspace({
             {/* One row of filters, scrolled sideways rather than wrapped, so the header never grows
                 downward into the conversation's space however many categories the team keeps. */}
             <div
-              className={`-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:[&>button]:px-2 lg:[&>button>svg]:hidden lg:[&>span[aria-hidden]]:hidden xl:[&>button]:px-2.5 ${v2 && mobilePanel !== "filters" ? "max-sm:hidden" : ""}`}
+              className={`-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]! lg:[&>button]:px-2 lg:[&>button>svg]:hidden lg:[&>span[aria-hidden]]:hidden xl:[&>button]:px-2.5 ${v2 && mobilePanel !== "filters" ? "max-sm:hidden" : ""}`}
               role="group"
               aria-label="Filter conversations"
             >

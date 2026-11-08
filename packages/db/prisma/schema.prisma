@@ -557,37 +557,37 @@ enum ProjectStatus {
 /// `proj_isp_digital`) and any created later. Everything project-scoped carries its `projectId`.
 /// See MULTI_PROJECT_PLAN.md. A status change never deletes data.
 model Project {
-  id                  String           @id @default(cuid())
+  id                       String                     @id @default(cuid())
   /// A Lead's own password length for this project; null = the customer's. 6 to 128 (CHECK).
-  minPasswordLength Int?
+  minPasswordLength        Int?
   whatsAppIdentityEvidence WhatsAppIdentityEvidence[]
   whatsAppNumberOperators  WhatsAppNumberOperator[]
   /// Platform approvals naming this project (MODULE_APPROVALS.md). Not project-owned data: see ModuleApproval.
-  moduleApprovals     ModuleApproval[]
-  name                String
+  moduleApprovals          ModuleApproval[]
+  name                     String
   /// Unique inside one customer (index "Project_customer_slug_key", on COALESCE(customerId, '')): one customer's address never blocks another's.
-  slug                String
-  description         String?
-  status              ProjectStatus    @default(SETUP)
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  slug                     String
+  description              String?
+  status                   ProjectStatus              @default(SETUP)
+  createdAt                DateTime                   @default(now())
+  updatedAt                DateTime                   @updatedAt
   /// The SaaS customer this project belongs to (SAAS_PLATFORM_PLAN.md). NULL = the original
   /// installation (the founding customer). A customer has as many projects as its Main Admin creates.
-  customerId          String?
-  customer            Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId               String?
+  customer                 Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   /// Set while the customer's SaaS subscription holds this project (suspended or cancelled -
   /// SAAS_PLATFORM_PLAN.md section 10). Held = treated exactly like a SUSPENDED project: read-only,
   /// no automation or outbound, incoming messages still stored. Never set for a project with no
   /// subscription, and never by anything but recomputeCustomerBilling (packages/db).
-  billingHoldAt       DateTime?
+  billingHoldAt            DateTime?
   /// The business profile (PROJECT_MODULES.md): a label and the template it started from. It never
   /// grants anything by itself — the modules are the `ProjectFeature` rows, which every check reads.
-  projectType         ProjectType      @default(DEFAULT)
+  projectType              ProjectType                @default(DEFAULT)
   /// The template a CUSTOM_MIX started from ("Custom Mix (E-commerce base)"); null = none.
-  projectBaseType     ProjectType?
+  projectBaseType          ProjectType?
   /// Bumped by every module configuration change; a change names the version it was made from, so
   /// two admins cannot overwrite each other unseen.
-  moduleConfigVersion Int              @default(0)
+  moduleConfigVersion      Int                        @default(0)
 
   access              ProjectAccess[]
   moduleConfigChanges ProjectModuleConfigChange[]
@@ -744,6 +744,9 @@ model Project {
   csatSurveys                          CsatSurvey[]
   csatSettings                         CsatSettings?
   followUps                            FollowUp[]
+  tickets                              Ticket[]
+  ticketEvents                         TicketEvent[]
+  ticketSettings                       TicketSettings?
   followUpEvents                       FollowUpEvent[]
   routingSettings                      RoutingSettings?
   conversationEvents                   ConversationEvent[]
@@ -1014,9 +1017,10 @@ model User {
   followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
   followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
   followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
+  ticketsAssigned               Ticket[]                    @relation("TicketAssignee")
+  ticketsCreated                Ticket[]                    @relation("TicketCreator")
 
   @@index([customerId])
-
   @@index([username])
   @@index([email])
 }
@@ -1126,15 +1130,15 @@ model SecuritySettings {
 }
 
 model WhatsAppAccount {
-  id              String                @id @default(cuid())
+  id              String                   @id @default(cuid())
   numberOperators WhatsAppNumberOperator[]
   /// The project this row belongs to. Every write must name it: the default raises (no default
   /// project since MULTI_PROJECT_PLAN.md Phase 3).
-  projectId       String                @default(dbgenerated("project_id_required()"))
-  project         Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  projectId       String                   @default(dbgenerated("project_id_required()"))
+  project         Project                  @relation(fields: [projectId], references: [id], onDelete: Restrict)
   label           String
   phoneNumber     String?
-  status          WhatsAppAccountStatus @default(DISCONNECTED)
+  status          WhatsAppAccountStatus    @default(DISCONNECTED)
   /// Where the current connection attempt has got to, one of `OPENWA_CONNECTION_STATES`
   /// (apps/worker/src/provider/openwa/connectionState.ts). Reported to the operator, never
   /// branched on — `status` above is the coarse column every loop, queue and health check reads,
@@ -1257,6 +1261,7 @@ model WhatsAppAccount {
   conversationEvents   ConversationEvent[]         @relation("ConversationEventAccount")
   csatSurveys          CsatSurvey[]
   followUps            FollowUp[]
+  tickets              Ticket[]
   conversationLabels   ConversationLabel[]
   conversationNotes    ConversationNote[]
   aiDrafts             AiDraft[]
@@ -1602,10 +1607,10 @@ model InternalTeamMember {
   /// How the WhatsApp ID was found when nobody typed it: AUTO_PHONE (WhatsApp itself paired it with this
   /// phone number) or AUTO_NAME (their WhatsApp name equals this member's, writing in several groups). Null
   /// = a person entered it. Shown on Team Members with an Undo.
-  identityLinkSource     String?
+  identityLinkSource String?
   /// A person cleared or changed this member's WhatsApp ID: automatic matching leaves them alone from now on.
-  autoLinkOff            Boolean @default(false)
-  numberOperatorFor      WhatsAppNumberOperator[]
+  autoLinkOff        Boolean                  @default(false)
+  numberOperatorFor  WhatsAppNumberOperator[]
 
   weeklySchedule        WeeklyScheduleEntry[]
   dutyAssignments       DutyAssignment[]
@@ -1645,6 +1650,7 @@ model Team {
   soldSubscriptions             ClientSubscription[]
   assignedWhatsAppConversations WhatsAppConversationState[] @relation("WhatsAppConversationTeam")
   followUps                     FollowUp[]
+  tickets                       Ticket[]
   assignedChannelConversations  ChannelConversation[]       @relation("ChannelConversationTeam")
 
   @@unique([projectId, name])
@@ -4993,9 +4999,9 @@ model TeamManagementSettings {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Restrict)
 
   /// Team members are matched to their WhatsApp IDs by themselves (TEAM_AUTOMATION.md). On by default.
-  autoLinkMembers Boolean @default(true)
+  autoLinkMembers  Boolean   @default(true)
   /// The roster fills itself from the weekly pattern, two weeks ahead. On by default.
-  autoRoster      Boolean @default(true)
+  autoRoster       Boolean   @default(true)
   /// "Match now" was pressed: the worker's next tick reads the contact list and matches at once.
   matchRequestedAt DateTime?
 
@@ -6643,6 +6649,7 @@ model ChannelConversation {
   events            ConversationEvent[]
   csatSurveys       CsatSurvey[]
   followUps         FollowUp[]
+  tickets           Ticket[]
 
   @@unique([projectId, connectionId, externalThreadId])
   @@index([projectId, lastMessageAt])
@@ -6889,6 +6896,7 @@ model Client {
   renewalOfferEvents ClientRenewalOfferEvent[]
   messages           ClientMessage[]
   followUps          FollowUp[]
+  tickets            Ticket[]
 
   @@unique([projectId, code])
   @@index([projectId, status, name])
@@ -9928,6 +9936,99 @@ model FollowUpEvent {
 
   @@index([followUpId, createdAt])
   @@index([projectId, createdAt])
+}
+
+// ───────────────────────────────────────
+// Support tickets (TICKETS.md, feature TICKETS): a numbered case with an owner, a due time and a history.
+// Internal work only: nothing here is read by any send path, and nothing is ever sent to a customer.
+// ───────────────────────────────────────
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+/// One ticket. The conversation is the ConversationRef shape: a WhatsApp chat (accountId + chatId) OR a channel
+/// conversation, never both (CHECK). Every change is a conditional update with its TicketEvent in the same transaction.
+model Ticket {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// Counted per project by TicketSettings.lastNumber; never reused.
+  number                Int
+  subject               String
+  description           String?
+  status                TicketStatus         @default(OPEN)
+  priority              ConversationPriority @default(NORMAL)
+  category              String?
+  assignedUserId        String?
+  assignedUser          User?                @relation("TicketAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  assignedTeamId        String?
+  assignedTeam          Team?                @relation(fields: [assignedTeamId], references: [id], onDelete: SetNull)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: SetNull)
+  clientId              String?
+  client                Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  dueAt                 DateTime?
+  /// When it began waiting on the customer; the wait is added to dueAt when it comes back.
+  pausedAt              DateTime?
+  resolvedAt            DateTime?
+  closedAt              DateTime?
+  createdById           String?
+  createdBy             User?                @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  events                TicketEvent[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, dueAt])
+  @@index([projectId, assignedUserId, status])
+  @@index([projectId, assignedTeamId, status])
+  @@index([projectId, accountId, chatId])
+  @@index([channelConversationId])
+  @@index([clientId])
+}
+
+/// Append-only history of one ticket, internal notes included (a trigger refuses UPDATE). Values are the words shown at
+/// that moment, and the actor a plain id plus the name then, so deleting a login never has to rewrite history.
+model TicketEvent {
+  id          String   @id @default(cuid())
+  projectId   String   @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  ticketId    String
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  /// CREATED | STATUS | ASSIGNED | TEAM | PRIORITY | CATEGORY | DUE | EDITED | NOTE (CHECK).
+  kind        String
+  fromValue   String?
+  toValue     String?
+  /// The text of an internal note. Never sent to a customer.
+  body        String?
+  actorUserId String?
+  actorName   String?
+  createdAt   DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([projectId, createdAt])
+}
+
+/// One per project: the ticket counter, the due-time target of each priority and the category list.
+model TicketSettings {
+  id          String   @id @default(cuid())
+  projectId   String   @unique @default(dbgenerated("project_id_required()"))
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  lastNumber  Int      @default(0)
+  urgentHours Int      @default(4)
+  highHours   Int      @default(24)
+  normalHours Int      @default(72)
+  lowHours    Int      @default(168)
+  categories  String[] @default(["General", "Billing", "Technical"])
+  updatedAt   DateTime @default(now()) @updatedAt
 }
 
 /// One browser or phone that said yes to notifications (AGENT_APP.md). Belongs to a sign-in: ended sessions get nothing.

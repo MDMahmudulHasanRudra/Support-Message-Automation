@@ -2952,6 +2952,10 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 - The customer's next message is read once within 24 hours; only a message that is nothing but a rating counts (`parseCsatRating`). The message itself stays ordinary and the hooks never throw. An answer is final (trigger).
 - Channels use the automated window only, never the HUMAN_AGENT tag. A survey is not an AI answer, so the AI reply cooldown ignores its variant.
 
+### Support tickets (`TICKETS.md`, 8 Nov 2026)
+
+Feature `TICKETS`, **on by default** (it sends nothing). A ticket is its own record linking to a conversation and a client, because `SupportAssignment` and `SupportEscalationCase` each follow one wait. Rules worth not undoing: it never sends anything to a customer (the number only fills the reply box); no key of its own (`messages.view`, then the conversation's reply key); every change is a conditional update with its append-only `TicketEvent` in the same transaction; numbers come from the atomic counter on `TicketSettings`; waiting on the customer stops the clock and is never overdue; a ticket outlives the account, conversation or client it links to.
+
 ### Follow-ups (`FOLLOW_UPS.md`, 7 Nov 2026)
 
 Feature `FOLLOW_UPS`, **off by default**: an internal to-do list for call-backs, visits and promised replies. It **never sends anything to a customer**. Rules worth not undoing: reading needs `messages.view`; changing one needs the reply key of the conversation it is about; a linked conversation, client, person or Team must be this project's; every change is a conditional update with its `FollowUpEvent` (append-only) in the same transaction; buckets split at Dhaka midnight by plain instants (`followUpBucketRange`), with no SQL day arithmetic.

@@ -101,6 +101,8 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-escalation": { write: ["escalations.manage"] },
   // Changing a follow-up needs the reply key of the conversation it is about (FOLLOW_UPS.md).
   "/follow-ups": { write: ["messages.reply", "conversations.reply"] },
+  // The same rule for a ticket (TICKETS.md).
+  "/tickets": { write: ["messages.reply", "conversations.reply"] },
   // Clients
   "/clients": {
     write: [
@@ -205,6 +207,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/support-activity/settings": { write: ["support_activity.manage"], also: ["/support-activity/keywords", "/support-activity/rules"] },
   "/settings/mood-detection": { write: ["settings.edit"] },
   "/settings/inbox-status": { write: ["settings.edit"] },
+  "/settings/tickets": { write: ["settings.edit"] },
   "/settings/csat": { write: ["settings.edit"] },
   "/reports/csat": { also: ["/api/reports/csat"] },
   "/settings/auto-routing": { write: ["settings.edit"] },
