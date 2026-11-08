@@ -2956,6 +2956,10 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 
 `/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
 
+### Menu bots (`MENU_BOTS.md`, 8 Nov 2026)
+
+Feature `MENU_BOTS`, **on by default**, every bot a DRAFT until switched on; uses the Automation Rules keys. Numbered menus, because a linked-device number cannot send buttons. Rules worth not undoing: a running menu answers before the rules, a new one only on a genuine NO_MATCH before AI, so existing rules are unaffected; every reply goes through `checkAutoReplySafety` and the one outbound queue; one step per customer message (`MenuEvent` unique on project + message, per-chat advisory lock); a person replying ends the menu and it stays quiet after a hand-over; a sentence is released to the rules and AI, not called a wrong number. `packages/shared/src/menuBots.ts` is pure and serves both the editor's test panel and the worker.
+
 ### Contacts (`CONTACTS.md`, 8 Nov 2026)
 
 Feature `CONTACTS`, **on by default**; collecting from chats and campaigns are off until started. Apart from Clients and Billing: its own `CT-0001` serial, and the only tie is a `linkedClientId` a person chooses. Rules worth not undoing:

@@ -108,4 +108,5 @@ export * from "./csat.js";
 export * from "./followUps.js";
 export * from "./tickets.js";
 export * from "./contacts.js";
+export * from "./menuBots.js";
 export * from "./autoRouting.js";

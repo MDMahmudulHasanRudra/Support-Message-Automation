@@ -453,6 +453,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  MENU_BOTS: {
+    category: "Support",
+    benefits: ["Common questions answered at any hour by a simple numbered menu", "Works on WhatsApp, Messenger, Instagram, Telegram and website chat", "Hands over to a person the moment a customer asks"],
+    defaultForTypes: ["DEFAULT", "ECOMMERCE"],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "A menu answers people who write to you." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Bots and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "MENU_BOTS.md",
+  },
   CONTACTS: {
     category: "Support",
     benefits: ["Every customer's numbers, emails and social accounts in one profile", "Filled from any chat, by paste, by file or by AI, never the same number twice", "Offers and wake-up campaigns to the people you choose"],

@@ -212,6 +212,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CsatSurvey", "CsatSettings",
   // Follow-ups (FOLLOW_UPS.md).
   "FollowUp", "FollowUpEvent",
+  // Menu bots (MENU_BOTS.md).
+  "MenuBot", "MenuSession", "MenuEvent",
   // Contacts (CONTACTS.md).
   "Contact", "ContactIdentifier", "ContactConversationLink", "ContactEvent", "ContactSettings", "ContactCampaign", "ContactCampaignRecipient",
   // Support tickets (TICKETS.md).
