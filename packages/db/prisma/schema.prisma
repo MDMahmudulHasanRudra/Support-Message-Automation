@@ -7751,6 +7751,7 @@ model ListViewPreference {
 
 /// One customer (tenant) of the platform: a company with its own project and its own address.
 model Customer {
+  signupRequests        SignupRequest[]
   /// Platform approvals for the approval-only modules (MODULE_APPROVALS.md).
   moduleApprovals       ModuleApproval[]
   id                    String                 @id @default(cuid())
@@ -7856,6 +7857,8 @@ model PlatformBillingSettings {
   paymentInstructions String?
   /// The plan a new customer is given unless the operator chooses otherwise. Null = none preselected.
   defaultPlanId       String?
+  /// The public pricing and sign-up pages exist only while this is on (SIGNUP.md).
+  signupEnabled       Boolean  @default(false)
   updatedByUsername   String?
   updatedAt           DateTime @updatedAt
 }
@@ -7863,26 +7866,29 @@ model PlatformBillingSettings {
 /// A package a customer can be on. Editing a plan never changes a customer already on it: a
 /// subscription keeps a snapshot of the plan as it was when assigned.
 model Plan {
-  id                  String         @id @default(cuid())
-  name                String         @unique
+  id                  String          @id @default(cuid())
+  name                String          @unique
   description         String?
   priceMinor          BigInt
-  currency            String         @default("BDT")
+  currency            String          @default("BDT")
   /// MONTH or YEAR.
-  interval            String         @default("MONTH")
-  trialDays           Int            @default(0)
+  interval            String          @default("MONTH")
+  trialDays           Int             @default(0)
   /// Null = no limit.
   maxWhatsAppAccounts Int?
   maxUsers            Int?
   /// Feature keys (packages/shared/src/projectFeatures.ts) the plan includes.
-  features            String[]       @default([])
+  features            String[]        @default([])
   /// Every module, including ones added later: `features` is ignored when this is on ("All Access").
-  allModules          Boolean        @default(false)
-  isActive            Boolean        @default(true)
-  sortOrder           Int            @default(0)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  allModules          Boolean         @default(false)
+  isActive            Boolean         @default(true)
+  /// Shown on the public pricing page (SIGNUP.md).
+  isPublic            Boolean         @default(false)
+  sortOrder           Int             @default(0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
   subscriptions       Subscription[]
+  signupRequests      SignupRequest[]
 }
 
 /// A customer's subscription. One CURRENT row per customer (endedAt null, partial unique in the
@@ -10394,4 +10400,43 @@ model MenuEvent {
   @@unique([projectId, messageRef])
   @@index([botId, createdAt])
   @@index([sessionId])
+}
+
+// Public sign-up (SIGNUP.md): a request waiting for a platform operator. Platform data, no projectId.
+enum SignupStatus {
+  EMAIL_PENDING
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model SignupRequest {
+  id              String       @id @default(cuid())
+  status          SignupStatus @default(EMAIL_PENDING)
+  businessName    String
+  ownerName       String
+  email           String
+  phone           String?
+  slug            String
+  planId          String?
+  plan            Plan?        @relation(fields: [planId], references: [id], onDelete: SetNull)
+  verifyTokenHash String       @unique
+  verifyExpiresAt DateTime
+  verifiedAt      DateTime?
+  /// The next email, encrypted so the worker can send it; wiped once sent.
+  emailCiphertext String?
+  emailSentAt     DateTime?
+  emailError      String?
+  addressHash     String?
+  decidedAt       DateTime?
+  decidedBy       String?
+  rejectReason    String?
+  customerId      String?
+  customer        Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([addressHash, createdAt])
 }

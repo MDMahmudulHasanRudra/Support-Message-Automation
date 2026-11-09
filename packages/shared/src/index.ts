@@ -109,4 +109,5 @@ export * from "./followUps.js";
 export * from "./tickets.js";
 export * from "./contacts.js";
 export * from "./menuBots.js";
+export * from "./signups.js";
 export * from "./autoRouting.js";

@@ -112,10 +112,10 @@ export async function savePlan(planId: string | null, _prev: BillingActionResult
   if ("errors" in parsed) return { fieldErrors: parsed.errors as Record<string, string> };
   try {
     if (planId) {
-      const updated = await globalPrisma.plan.updateMany({ where: { id: planId }, data: parsed.plan });
+      const updated = await globalPrisma.plan.updateMany({ where: { id: planId }, data: { ...parsed.plan, isPublic: formData.get("isPublic") === "on" } });
       if (updated.count === 0) return { error: "This plan no longer exists." };
     } else {
-      await globalPrisma.plan.create({ data: parsed.plan });
+      await globalPrisma.plan.create({ data: { ...parsed.plan, isPublic: formData.get("isPublic") === "on" } });
     }
   } catch (err) {
     if (isUniqueViolation(err)) return { fieldErrors: { name: `A plan called "${parsed.plan.name}" already exists.` } };

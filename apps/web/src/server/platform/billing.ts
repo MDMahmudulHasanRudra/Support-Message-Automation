@@ -37,6 +37,7 @@ export async function getBillingSettings(): Promise<BillingSettingsData> {
 }
 
 export interface PlanView {
+  isPublic: boolean;
   id: string;
   name: string;
   description: string | null;
@@ -62,6 +63,7 @@ export async function listPlans(): Promise<PlanView[]> {
     id: p.id,
     name: p.name,
     description: p.description,
+    isPublic: p.isPublic,
     priceMinor: p.priceMinor.toString(),
     currency: p.currency,
     interval: p.interval,

@@ -920,6 +920,21 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.39.0",
+    title: "Public sign-up",
+    summary: "A pricing page and a sign-up form, with every new business approved by a person.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["Platform"],
+    whatsNew: [
+      "A public pricing page that shows the plans you choose, at the prices you set",
+      "A sign-up form with email confirmation and protection against fake requests",
+      "A Sign-ups page on the platform: one press sets up the workspace, plan and owner invitation",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

@@ -59,6 +59,10 @@ function PlanForm({ plan, features, onDone }: { plan: PlanView | null; features:
             <option value="YEAR">Yearly</option>
           </Select>
         </Field>
+        <label className="flex items-center gap-2 self-end pb-2 text-[13px] sm:col-span-2">
+          <input type="checkbox" name="isPublic" defaultChecked={plan?.isPublic ?? false} className="size-4" />
+          Show on the public pricing page
+        </label>
         <Field label="Free trial (days)" htmlFor="pl-trial" error={e.trialDays} hint="0 for no trial.">
           <Input id="pl-trial" name="trialDays" type="number" min={0} max={365} defaultValue={plan?.trialDays ?? 0} />
         </Field>
