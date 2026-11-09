@@ -185,6 +185,7 @@ describe("which feature a page or action belongs to", () => {
         { key: "SHOPIFY", enabled: true },
         { key: "API_ACCESS", enabled: true },
         { key: "SOCIAL_STUDIO", enabled: true },
+        { key: "PAYMENT_LINKS", enabled: true },
         { key: "FOLLOW_UPS", enabled: true },
       ]).size,
     ).toBe(0);
