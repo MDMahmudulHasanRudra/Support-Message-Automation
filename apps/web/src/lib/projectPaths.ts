@@ -67,6 +67,8 @@ const OUTSIDE_PROJECT = [
   /^\/support-access\//,
   // The public pricing and sign-up pages (SIGNUP.md).
   /^\/pricing(\/|$|\?)/,
+  // A customer's payment page (PAYMENT_LINKS.md).
+  /^\/pay\//,
   /^\/signup(\/|$|\?)/,
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,

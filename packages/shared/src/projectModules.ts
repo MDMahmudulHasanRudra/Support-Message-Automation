@@ -453,6 +453,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  PAYMENT_LINKS: {
+    category: "Commerce",
+    benefits: ["Get paid inside the conversation by card, bKash, Nagad or bank", "The money goes to your own merchant account", "A paid link settles the invoice by itself"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "RECOMMENDED", anyOf: ["WHATSAPP_CHAT", "OMNICHANNEL"], why: "A link is usually sent in a conversation." }],
+    conflicts: [],
+    aiCapabilities: [],
+    hasBackgroundJobs: false,
+    dataWhenOff: "Links and their history are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "PAYMENT_LINKS.md",
+  },
   MENU_BOTS: {
     category: "Support",
     benefits: ["Common questions answered at any hour by a simple numbered menu", "Works on WhatsApp, Messenger, Instagram, Telegram and website chat", "Hands over to a person the moment a customer asks"],

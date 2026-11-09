@@ -935,6 +935,22 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.40.0",
+    title: "Payment links",
+    summary: "Ask for payment inside a chat, paid into your own SSLCOMMERZ or bKash account.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["Payment Links", "All Conversations", "WhatsApp Chat"],
+    whatsNew: [
+      "A Payment tab beside every chat: make a link and drop it in your reply",
+      "Customers pay by card, bKash, Nagad or bank on a simple page",
+      "A paid link settles the invoice and records the receipt by itself",
+      "Anything unusual, like a different amount or paying twice, is flagged for you to check",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

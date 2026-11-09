@@ -368,6 +368,15 @@ export const PROJECT_FEATURES = [
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
   {
+    key: "PAYMENT_LINKS",
+    label: "Payment links",
+    description: "Send a link in any chat so a customer can pay on SSLCOMMERZ or bKash, into your own merchant account. A paid link settles the invoice.",
+    defaultEnabled: false,
+    routes: ["/payments", "/settings/payment-gateways"],
+    permissionKeys: ["payments.view", "payments.create", "payments.manage"],
+    workerEffect: "Nothing runs in the background for it. Links stop opening for customers; links and their history are kept.",
+  },
+  {
     key: "MENU_BOTS",
     label: "Menu bots",
     description: "A numbered menu customers answer by typing a number: answers to common questions, and a hand-over to a person when they need one.",

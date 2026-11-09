@@ -5,6 +5,7 @@ import {
   AlarmClock,
   Ticket,
   BookUser,
+  Banknote,
   ListTree,
   LayoutTemplate,
   Megaphone as ContactCampaignIcon,
@@ -221,6 +222,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       { href: "/settings/inbox-status", label: "Inbox status", icon: CircleDot },
       { href: "/settings/tickets", label: "Tickets", icon: Ticket },
       { href: "/settings/contacts", label: "Contacts", icon: BookUser },
+      { href: "/settings/payment-gateways", label: "Payment accounts", icon: Banknote },
       { href: "/settings/csat", label: "Satisfaction surveys", icon: Star },
       { href: "/settings/auto-routing", label: "Automatic routing", icon: Shuffle },
       { href: "/support-assignment/settings", label: "Support Assignment", icon: ListTodo },
@@ -442,6 +444,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
       // Numbered support cases (TICKETS.md).
       { href: "/tickets", label: "Tickets", icon: Ticket },
+      // Links a customer pays in a chat (PAYMENT_LINKS.md).
+      { href: "/payments", label: "Payment Links", icon: Banknote },
     ],
   },
   {
@@ -741,6 +745,8 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/support-escalation", "escalations.view"],
   ["/follow-ups", "messages.view"],
   ["/tickets", "messages.view"],
+  ["/payments", "payments.view"],
+  ["/settings/payment-gateways", "payments.manage"],
   ["/contacts/campaigns", "contacts.campaign"],
   ["/contacts/import", "contacts.import"],
   ["/contacts", "contacts.view"],

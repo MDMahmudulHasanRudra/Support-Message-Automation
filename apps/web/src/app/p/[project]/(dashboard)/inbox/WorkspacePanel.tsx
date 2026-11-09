@@ -50,6 +50,7 @@ import { PresenceBanner, useConversationPresence } from "./ConversationPresence"
 import { FollowUpsSection } from "./FollowUpsSection";
 import { TicketsSection } from "./TicketsSection";
 import { ContactTab } from "./ContactTab";
+import { PaymentTab } from "./PaymentTab";
 import { ContactOverview } from "./ContactOverview";
 import {
   clearPanelTabRequest,
@@ -137,6 +138,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
   const tabs = [
     hasDetails ? { key: "details" as const, label: "Overview" } : null,
     data.contactCard ? { key: "contact" as const, label: "Contact" } : null,
+    data.paymentCard ? { key: "payment" as const, label: "Payment", count: data.paymentCard.links.length } : null,
     data.access.collaboration ? { key: "notes" as const, label: "Notes", count: data.notes.length } : null,
     data.access.copilot ? { key: "copilot" as const, label: "AI" } : null,
     data.access.tickets ? { key: "tickets" as const, label: "Tickets", count: data.tickets?.length ?? 0 } : null,
@@ -217,6 +219,7 @@ export function WorkspacePanel({ data }: { data: WorkspaceData }) {
       <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
         {tab === "details" && hasDetails ? <DetailsTab data={data} /> : null}
         {tab === "contact" && data.contactCard ? <ContactTab key={data.ref.kind === "channel" ? data.ref.conversationId : `${data.ref.accountId}|${data.ref.chatId}`} conversation={data.ref} card={data.contactCard} /> : null}
+        {tab === "payment" && data.paymentCard ? <PaymentTab key={data.ref.kind === "channel" ? data.ref.conversationId : `${data.ref.accountId}|${data.ref.chatId}`} conversation={data.ref} card={data.paymentCard} /> : null}
         {tab === "notes" && data.access.collaboration ? <NotesTab data={data} /> : null}
         {tab === "copilot" && data.access.copilot ? <CopilotTab data={data} /> : null}
         {tab === "tickets" && data.access.tickets ? <TicketsSection data={data} /> : null}

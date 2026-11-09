@@ -24,7 +24,7 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import { isUniqueViolation } from "@/lib/prismaErrors";
 import { recordClientActivity } from "@/server/clientRecords";
 import { subModuleOff } from "@/server/clientModule";
-import { nextDocumentNumber } from "@/server/clientSubscriptionStore";
+import { applyClientPayment, lockDues } from "@/server/clientPaymentApply";
 
 /**
  * Recording money received (CLIENTS_V3.md §4). Every action checks `clients.edit_billing` and that
@@ -66,14 +66,6 @@ async function refresh(clientIds: string[]) {
   for (const id of clientIds.slice(0, 20)) revalidatePath(await projectPath(`/clients/${id}`));
 }
 
-/** Locks the dues for the rest of the transaction, in id order so two batches cannot deadlock. */
-async function lockDues(tx: Prisma.TransactionClient, dueIds: string[]): Promise<void> {
-  if (!dueIds.length) return;
-  await tx.$queryRaw(
-    Prisma.sql`SELECT "id" FROM "ClientDue" WHERE "projectId" = ${await activeProjectId()} AND "id" IN (${Prisma.join([...dueIds].sort())}) ORDER BY "id" FOR UPDATE`,
-  );
-}
-
 function receiptsOf(rows: Array<{ receiptNumber: string; clientId: string; currency: string; amount: Prisma.Decimal }>) {
   return rows.map((p) => ({ receiptNumber: p.receiptNumber, clientId: p.clientId, currency: p.currency, amount: p.amount.toFixed(2) }));
 }
@@ -103,73 +95,7 @@ export async function recordPayments(input: RecordPaymentsInput): Promise<Record
 
   try {
     const result = await prisma.$transaction(async (tx): Promise<RecordPaymentsResult> => {
-      const dueIds = [...new Set(lines.map((l) => l.dueId))];
-      await lockDues(tx, dueIds);
-      // Read through the project-scoped client: a due from another project is simply "no longer exists".
-      const rows = await tx.clientDue.findMany({
-        where: { id: { in: dueIds } },
-        select: { id: true, clientId: true, status: true, currency: true, amount: true, paidAmount: true, invoiceNumber: true, client: { select: { status: true } } },
-      });
-      const archived = rows.find((r) => r.client.status === "ARCHIVED");
-      if (archived) return { ok: false, message: "One of these clients is archived. Restore it before recording a payment.", lineErrors: { [archived.id]: "The client is archived." } };
-      const dues: PayableDue[] = rows.map((r) => ({ id: r.id, clientId: r.clientId, status: r.status, currency: r.currency, amount: decimalToMinor(r.amount), paid: decimalToMinor(r.paidAmount) ?? ZERO }));
-      const plan = planPayments(dues, lines);
-      if (!plan.ok) {
-        const lineErrors: Record<string, string> = {};
-        for (const e of plan.errors) if (e.dueId) lineErrors[e.dueId] = e.message;
-        const general = plan.errors.find((e) => !e.dueId)?.message;
-        return { ok: false, message: general ?? "Nothing was recorded. Fix the highlighted invoices and try again.", lineErrors };
-      }
-      const invoiceOf = new Map(rows.map((r) => [r.id, r.invoiceNumber]));
-      // Deterministic order, so the same submission always maps to the same keys.
-      const payments = [...plan.payments].sort((a, b) => `${a.clientId}${a.currency}`.localeCompare(`${b.clientId}${b.currency}`));
-      const receipts: NonNullable<RecordPaymentsResult["receipts"]> = [];
-      for (const [index, payment] of payments.entries()) {
-        const receiptNumber = formatReceiptNumber(await nextDocumentNumber(tx, "receipt"));
-        const created = await tx.clientPayment.create({
-          data: {
-            receiptNumber,
-            clientId: payment.clientId,
-            currency: payment.currency,
-            amount: fromMinor(payment.total),
-            method,
-            reference: reference || null,
-            note: note || null,
-            receivedDate: new Date(`${receivedDate}T00:00:00.000Z`),
-            batchReference: payments.length > 1 || payment.lines.length > 1 ? `BATCH-${key.slice(0, 12)}` : null,
-            idempotencyKey: `${key}:${index}`,
-            recordedById: granted.session.userId,
-          },
-          select: { id: true },
-        });
-        for (const line of payment.lines) {
-          await tx.clientPaymentAllocation.create({ data: { paymentId: created.id, dueId: line.dueId, amount: fromMinor(line.amount) } });
-          const statusChanged = line.statusAfter !== line.statusBefore;
-          await tx.clientDue.update({
-            where: { id: line.dueId },
-            data: { paidAmount: fromMinor(line.paidAfter), status: line.statusAfter, updatedById: granted.session.userId, ...(statusChanged ? { statusChangedAt: new Date() } : {}) },
-          });
-          await tx.clientDueEvent.create({
-            data: {
-              dueId: line.dueId,
-              clientId: payment.clientId,
-              type: "PAYMENT_RECORDED",
-              changes: {
-                paidAmount: { from: fromMinor(line.paidBefore), to: fromMinor(line.paidAfter) },
-                ...(statusChanged ? { status: { from: line.statusBefore, to: line.statusAfter } } : {}),
-                receipt: { from: null, to: receiptNumber },
-              },
-              actorUserId: granted.session.userId,
-            },
-          });
-        }
-        // The timeline says a payment was recorded and which invoices — never the amount.
-        const invoices = payment.lines.map((l) => invoiceOf.get(l.dueId) ?? "an older due").join(", ");
-        await recordClientActivity(tx, payment.clientId, granted.session.userId, { type: "PAYMENT_RECORDED", summary: `Payment ${receiptNumber} recorded against ${invoices}`, details: { paymentId: created.id } });
-        receipts.push({ receiptNumber, clientId: payment.clientId, currency: payment.currency, amount: fromMinor(payment.total) });
-      }
-      const total = payments.map((p) => formatMinor(p.total, p.currency)).join(" + ");
-      return { ok: true, message: `Recorded ${receipts.length === 1 ? receipts[0]!.receiptNumber : `${receipts.length} receipts`}: ${total}.`, receipts };
+      return applyClientPayment(tx, { key, method, receivedDate, reference, note, lines }, granted.session.userId);
     });
     if (result.ok) {
       await logSystemEvent("INFO", "clients", "Client payment(s) recorded", { receipts: result.receipts?.map((r) => r.receiptNumber), lines: lines.length }, { actorUserId: granted.session.userId });

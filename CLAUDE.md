@@ -2956,6 +2956,10 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 
 `/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
 
+### Payment links (`PAYMENT_LINKS.md`, 9 Nov 2026)
+
+Feature `PAYMENT_LINKS`, **off by default**. SSLCOMMERZ and bKash into each business's own merchant account; **not yet verified against a real gateway**. Rules worth not undoing: a callback is never believed, the gateway is asked directly; exact amount or it is not a payment; no answer is UNKNOWN, neither paid nor failed; bKash executes once; settling is idempotent and goes through `applyClientPayment`, the same code a person's payment runs; paid twice is flagged; a link only fills the reply box.
+
 ### Public sign-up (`SIGNUP.md`, 9 Nov 2026)
 
 Off until an operator switches it on at Platform → Sign-ups; `/pricing` and `/signup` do not exist until then and never on a customer's address. Prices are the plans marked public. Rules worth not undoing: the form only records a `SignupRequest` and answers the same for any email; Approve is claimed first and calls `createCustomer` itself, never a second way to make a customer; only the token's hash is stored; links use the platform's own address, never the request's host.

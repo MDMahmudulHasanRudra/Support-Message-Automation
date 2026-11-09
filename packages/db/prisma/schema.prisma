@@ -744,6 +744,11 @@ model Project {
   csatSurveys                          CsatSurvey[]
   csatSettings                         CsatSettings?
   followUps                            FollowUp[]
+  paymentGateways                      PaymentGateway[]
+  paymentSettings                      PaymentSettings?
+  paymentLinks                         PaymentLink[]
+  paymentAttempts                      PaymentAttempt[]
+  paymentLinkEvents                    PaymentLinkEvent[]
   menuBots                             MenuBot[]
   menuSessions                         MenuSession[]
   menuEvents                           MenuEvent[]
@@ -1027,6 +1032,7 @@ model User {
   followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
   followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
   followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
+  paymentLinksCreated           PaymentLink[]               @relation("PaymentLinkCreator")
   menuBotsCreated               MenuBot[]                   @relation("MenuBotCreator")
   contactsCreated               Contact[]                   @relation("ContactCreator")
   contactCampaignsCreated       ContactCampaign[]           @relation("ContactCampaignCreator")
@@ -1143,6 +1149,7 @@ model SecuritySettings {
 }
 
 model WhatsAppAccount {
+  paymentLinks             PaymentLink[]
   menuSessions             MenuSession[]
   contactConversationLinks ContactConversationLink[]
   id                       String                    @id @default(cuid())
@@ -6615,6 +6622,7 @@ model ChannelConnection {
 
 /// One conversation: a customer's thread with a Page / Instagram account, or one Telegram chat.
 model ChannelConversation {
+  paymentLinks         PaymentLink[]
   menuSessions         MenuSession[]
   contactLinks         ContactConversationLink[]
   id                   String                    @id @default(cuid())
@@ -6833,6 +6841,7 @@ enum ClientDuplicatePolicy {
 }
 
 model Client {
+  paymentLinks          PaymentLink[]
   contacts              Contact[]
   id                    String              @id @default(cuid())
   /// The project this row belongs to. Every write must name it: the default raises (no default
@@ -7113,6 +7122,7 @@ enum ClientDueStatus {
 /// or deleted (cancel it instead). The amount is optional; the currency is required only when an
 /// amount is present and comes from the project's ClientBillingCurrency list.
 model ClientDue {
+  paymentLinks    PaymentLink[]
   id              String              @id @default(cuid())
   projectId       String              @default(dbgenerated("project_id_required()"))
   project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -8604,6 +8614,7 @@ model InventoryMovement {
 }
 
 model CommerceOrder {
+  paymentLinks      PaymentLink[]
   id                String                @id @default(cuid())
   projectId         String                @default(dbgenerated("project_id_required()"))
   project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -10147,6 +10158,7 @@ enum ContactRecipientStatus {
 /// One person or business a project has met. `serial` is counted per project by ContactSettings.lastSerial and never
 /// reused; `code` is optional and free-form (unique per project, case-insensitively, by a partial index in the migration).
 model Contact {
+  paymentLinks    PaymentLink[]
   id              String                     @id @default(cuid())
   projectId       String                     @default(dbgenerated("project_id_required()"))
   project         Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -10439,4 +10451,139 @@ model SignupRequest {
 
   @@index([status, createdAt])
   @@index([addressHash, createdAt])
+}
+
+// Payment links (PAYMENT_LINKS.md, feature PAYMENT_LINKS): paid into the business's own merchant account.
+enum PaymentProvider {
+  SSLCOMMERZ
+  BKASH
+}
+
+enum PaymentMode {
+  SANDBOX
+  LIVE
+}
+
+enum PaymentLinkStatus {
+  OPEN
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentAttemptStatus {
+  STARTED
+  PAID
+  FAILED
+  UNKNOWN
+  MISMATCH
+}
+
+/// One merchant account per service per project. Details are encrypted and never leave the server.
+model PaymentGateway {
+  id                    String          @id @default(cuid())
+  projectId             String          @default(dbgenerated("project_id_required()"))
+  project               Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider              PaymentProvider
+  mode                  PaymentMode     @default(SANDBOX)
+  enabled               Boolean         @default(false)
+  credentialsCiphertext String
+  updatedByName         String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@unique([projectId, provider])
+}
+
+model PaymentSettings {
+  id         String   @id @default(cuid())
+  projectId  String   @unique @default(dbgenerated("project_id_required()"))
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  lastNumber Int      @default(0)
+  updatedAt  DateTime @default(now()) @updatedAt
+}
+
+model PaymentLink {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  number                Int
+  tokenHash             String               @unique
+  /// Encrypted so staff can copy the link again; the hash is what a request is matched on.
+  tokenCiphertext       String
+  amountMinor           BigInt
+  currency              String               @default("BDT")
+  description           String?
+  status                PaymentLinkStatus    @default(OPEN)
+  expiresAt             DateTime
+  paidAt                DateTime?
+  paidProvider          PaymentProvider?
+  gatewayTxnId          String?
+  needsAttention        Boolean              @default(false)
+  attentionNote         String?
+  receiptNumber         String?
+  clientDueId           String?
+  clientDue             ClientDue?           @relation(fields: [clientDueId], references: [id], onDelete: SetNull)
+  orderId               String?
+  order                 CommerceOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId              String?
+  client                Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contactId             String?
+  contact               Contact?             @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: SetNull)
+  customerName          String?
+  createdById           String?
+  createdBy             User?                @relation("PaymentLinkCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdByName         String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  attempts              PaymentAttempt[]
+  events                PaymentLinkEvent[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, createdAt])
+  @@index([projectId, chatId])
+  @@index([channelConversationId])
+  @@index([clientDueId])
+}
+
+/// One try at paying. The reference is what the gateway knows it by, so a replayed callback lands on the same row.
+model PaymentAttempt {
+  id           String               @id @default(cuid())
+  projectId    String               @default(dbgenerated("project_id_required()"))
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  linkId       String
+  link         PaymentLink          @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  provider     PaymentProvider
+  mode         PaymentMode
+  reference    String
+  sessionRef   String?
+  status       PaymentAttemptStatus @default(STARTED)
+  gatewayTxnId String?
+  note         String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([projectId, provider, reference])
+  @@index([linkId])
+  @@index([sessionRef])
+}
+
+/// Append-only (trigger in the migration).
+model PaymentLinkEvent {
+  id        String      @id @default(cuid())
+  projectId String      @default(dbgenerated("project_id_required()"))
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  linkId    String
+  link      PaymentLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  kind      String
+  detail    String?
+  actorName String?
+  createdAt DateTime    @default(now())
+
+  @@index([linkId, createdAt])
 }
