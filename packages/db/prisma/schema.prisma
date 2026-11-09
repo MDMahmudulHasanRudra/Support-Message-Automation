@@ -744,6 +744,7 @@ model Project {
   csatSurveys                          CsatSurvey[]
   csatSettings                         CsatSettings?
   followUps                            FollowUp[]
+  whatsAppCloudTemplates               WhatsAppCloudTemplate[]
   paymentGateways                      PaymentGateway[]
   paymentSettings                      PaymentSettings?
   paymentLinks                         PaymentLink[]
@@ -6360,6 +6361,8 @@ enum ChannelType {
   MESSENGER
   INSTAGRAM
   TELEGRAM
+  /// WhatsApp (Official API), the Cloud API (WHATSAPP_OFFICIAL.md). Separate from WhatsApp (Legacy).
+  WHATSAPP_CLOUD
   /// Website live chat (WEBSITE_CHAT.md): our own widget; no outside provider.
   WEBCHAT
 }
@@ -6526,6 +6529,9 @@ enum ChannelAiOutcome {
 /// Credentials are `encryptSecret` envelopes, read only in apps/web `server/channels/connections.ts`
 /// and the worker's send path; nothing returns them to a browser.
 model ChannelConnection {
+  /// WhatsApp (Official API): the business account the phone number belongs to.
+  wabaId                       String?
+  cloudTemplates               WhatsAppCloudTemplate[]
   id                           String                  @id @default(cuid())
   projectId                    String                  @default(dbgenerated("project_id_required()"))
   project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -6685,6 +6691,10 @@ model ChannelConversation {
 /// written QUEUED when a person or AI replies and the worker moves it through SENDING to SENT (and
 /// DELIVERED / READ when the provider says so), so the thread and the queue cannot disagree.
 model ChannelMessage {
+  /// WhatsApp (Official API): set on a template message, the only kind allowed outside the 24-hour window.
+  templateName      String?
+  templateLanguage  String?
+  templateParams    String[]                @default([])
   id                String                  @id @default(cuid())
   projectId         String                  @default(dbgenerated("project_id_required()"))
   project           Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -10586,4 +10596,24 @@ model PaymentLinkEvent {
   createdAt DateTime    @default(now())
 
   @@index([linkId, createdAt])
+}
+
+/// A message template as Meta approved it, copied by Sync (WHATSAPP_OFFICIAL.md).
+model WhatsAppCloudTemplate {
+  id           String            @id @default(cuid())
+  projectId    String            @default(dbgenerated("project_id_required()"))
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId String
+  connection   ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name         String
+  language     String
+  category     String
+  status       String
+  bodyText     String
+  paramCount   Int               @default(0)
+  supported    Boolean           @default(true)
+  syncedAt     DateTime
+
+  @@unique([connectionId, name, language])
+  @@index([projectId])
 }

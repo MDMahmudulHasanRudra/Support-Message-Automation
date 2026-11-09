@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { redirect } from "next/navigation";
 import { checkPermission } from "@/server/authorize";
 import { projectPath } from "@/server/projectPaths";
@@ -8,6 +9,7 @@ import { logSystemEvent } from "@/server/logSystemEvent";
 import {
   ChannelConnectionError,
   connectMeta,
+  connectWhatsAppCloud,
   connectTelegram,
   disconnectConnection,
   setConnectionFlags,
@@ -46,6 +48,11 @@ function failure(err: unknown, what: string): ChannelActionResult {
 
 const field = (form: FormData, name: string) => String(form.get(name) ?? "");
 
+async function connectCloudIfAllowed(form: FormData, username: string) {
+  if ((await activeDisabledFeatures()).has("WHATSAPP_OFFICIAL")) throw new ChannelConnectionError("WhatsApp (Official API) is not switched on for this project.");
+  return connectWhatsAppCloud({ phoneNumberId: field(form, "phoneNumberId"), wabaId: field(form, "wabaId"), accessToken: field(form, "accessToken"), appId: field(form, "appId"), appSecret: field(form, "appSecret"), username });
+}
+
 export async function connectChannelAction(_prev: ChannelActionResult, form: FormData): Promise<ChannelActionResult> {
   const access = await checkPermission("channels.manage");
   if ("denied" in access) return { error: access.denied };
@@ -63,7 +70,9 @@ export async function connectChannelAction(_prev: ChannelActionResult, form: For
   }
   try {
     const result =
-      type === "TELEGRAM"
+      type === "WHATSAPP_CLOUD"
+        ? await connectCloudIfAllowed(form, access.session.username)
+        : type === "TELEGRAM"
         ? await connectTelegram({ botToken: field(form, "botToken"), username: access.session.username })
         : type === "MESSENGER" || type === "INSTAGRAM"
           ? await connectMeta({ type, appId: field(form, "appId"), appSecret: field(form, "appSecret"), pageAccessToken: field(form, "pageAccessToken"), username: access.session.username })

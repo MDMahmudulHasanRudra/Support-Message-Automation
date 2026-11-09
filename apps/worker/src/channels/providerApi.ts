@@ -85,6 +85,36 @@ export async function metaGraph<T>(
   return { ok: true, data: body as T };
 }
 
+/** A text or an approved template through the Cloud API (WHATSAPP_OFFICIAL.md). */
+export async function sendWhatsAppCloud(input: { phoneNumberId: string; token: string; appSecret: string; to: string; text: string; template: { name: string; language: string; params: string[] } | null; fetchImpl?: FetchImpl }): Promise<SendOutcome> {
+  const url = new URL(`${graphBase()}/${encodeURIComponent(input.phoneNumberId)}/messages`);
+  url.searchParams.set("appsecret_proof", appSecretProof(input.token, input.appSecret));
+  const body: Record<string, unknown> = { messaging_product: "whatsapp", recipient_type: "individual", to: input.to };
+  if (input.template) {
+    body.type = "template";
+    body.template = { name: input.template.name, language: { code: input.template.language }, ...(input.template.params.length ? { components: [{ type: "body", parameters: input.template.params.map((text) => ({ type: "text", text })) }] } : {}) };
+  } else {
+    body.type = "text";
+    body.text = { preview_url: false, body: input.text };
+  }
+  let response: Response;
+  try {
+    response = await (input.fetchImpl ?? fetch)(url, { method: "POST", headers: { Authorization: `Bearer ${input.token}`, "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+  } catch (err) {
+    return readThrown(err, "Meta");
+  }
+  let json: unknown = null;
+  try {
+    json = await response.json();
+  } catch {
+    json = null;
+  }
+  if (!response.ok) return { kind: "REFUSED", error: readMetaError(response.status, json) };
+  const id = (json as { messages?: Array<{ id?: unknown }> } | null)?.messages?.[0]?.id;
+  // Accepted, but with no id to follow it by: it may well have gone out, so it is never retried.
+  return typeof id === "string" && id ? { kind: "SENT", externalMessageId: id } : { kind: "UNKNOWN", message: "Meta accepted the request but returned no message id." };
+}
+
 /**
  * Send a text through a Page — Messenger, or Instagram through the Page linked to the account.
  * `metadata` (Messenger only) travels back in the echo, which is how the echo of our own send is

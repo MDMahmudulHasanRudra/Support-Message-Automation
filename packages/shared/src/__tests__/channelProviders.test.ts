@@ -5,22 +5,22 @@ import { CHANNEL_PROVIDER_IDS, CHANNEL_PROVIDERS, classifyMetaWebhookObject, pro
 /**
  * Meta expansion B1: explicit, exhaustive provider dispatch. What must hold:
  *   - every channel type has exactly one provider, and every implemented provider has a channel type;
- *   - WhatsApp (Official API) is listed, not implemented, and maps to no channel type yet;
+ *   - WhatsApp (Official API) is its own channel, reached only through its per-number address;
  *   - a WhatsApp Cloud API webhook is never classified as a Page (Messenger) event;
  *   - a recorded event is processed only by its own connection's provider — any mismatch, a missing
  *     provider, or a WhatsApp Cloud event is REJECTED, never routed to Meta by default.
  */
 
 describe("the provider catalogue", () => {
-  it("maps each channel type to one provider, and only WhatsApp (Official API) is unimplemented", () => {
-    expect(CHANNEL_TYPES.map(providerForChannelType)).toEqual(["META_MESSENGER", "META_INSTAGRAM", "TELEGRAM", "WEBCHAT"]);
+  it("maps each channel type to one provider", () => {
+    expect(CHANNEL_TYPES.map(providerForChannelType)).toEqual(["META_MESSENGER", "META_INSTAGRAM", "TELEGRAM", "WEBCHAT", "WHATSAPP_CLOUD"]);
     const mapped = new Set(CHANNEL_TYPES.map(providerForChannelType));
     for (const id of CHANNEL_PROVIDER_IDS) expect(mapped.has(id), id).toBe(CHANNEL_PROVIDERS[id].implemented);
-    expect(CHANNEL_PROVIDERS.WHATSAPP_CLOUD).toMatchObject({ implemented: false, label: "WhatsApp (Official API)" });
+    expect(CHANNEL_PROVIDERS.WHATSAPP_CLOUD).toMatchObject({ implemented: true, label: "WhatsApp (Official API)" });
   });
 
   it("refuses an impossible channel type at run time", () => {
-    expect(() => providerForChannelType("WHATSAPP_CLOUD" as never)).toThrow(/Unhandled channel type/);
+    expect(() => providerForChannelType("NOT_A_CHANNEL" as never)).toThrow(/Unhandled channel type/);
   });
 });
 

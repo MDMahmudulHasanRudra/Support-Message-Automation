@@ -453,6 +453,18 @@ const FEATURE_MODULE_META: Record<ProjectFeatureKey, ModuleMeta> = {
     setupSteps: ["Connect Facebook / Instagram under Social Studio → Accounts", "Write a post and have it approved"],
     documentation: "SOCIAL_STUDIO.md",
   },
+  WHATSAPP_OFFICIAL: {
+    category: "Messaging",
+    benefits: ["Meta's official API: no phone, no QR code, no linked device", "Delivery and read receipts on every message", "Approved templates to reach people after 24 hours"],
+    defaultForTypes: [],
+    dependencies: [{ kind: "HARD", anyOf: ["OMNICHANNEL"], why: "Its conversations live in All Conversations." }],
+    conflicts: [],
+    aiCapabilities: ["AI replies follow the same rules as the other channels, inside the 24-hour window only."],
+    hasBackgroundJobs: true,
+    dataWhenOff: "Connections and conversations are kept. " + KEPT,
+    setupSteps: [],
+    documentation: "WHATSAPP_OFFICIAL.md",
+  },
   PAYMENT_LINKS: {
     category: "Commerce",
     benefits: ["Get paid inside the conversation by card, bKash, Nagad or bank", "The money goes to your own merchant account", "A paid link settles the invoice by itself"],

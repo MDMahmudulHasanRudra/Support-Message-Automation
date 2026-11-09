@@ -40,9 +40,9 @@ export const MAX_MENU_LABEL = 60;
 export const MAX_MENU_TITLE = 60;
 
 /** The channels a bot can answer on besides WhatsApp. */
-export const MENU_BOT_CHANNELS = ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] as const;
+export const MENU_BOT_CHANNELS = ["WHATSAPP_CLOUD", "MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] as const;
 export type MenuBotChannel = (typeof MENU_BOT_CHANNELS)[number];
-export const MENU_BOT_CHANNEL_LABEL: Record<MenuBotChannel, string> = { MESSENGER: "Messenger", INSTAGRAM: "Instagram", TELEGRAM: "Telegram", WEBCHAT: "Website chat" };
+export const MENU_BOT_CHANNEL_LABEL: Record<MenuBotChannel, string> = { WHATSAPP_CLOUD: "WhatsApp (Official)", MESSENGER: "Messenger", INSTAGRAM: "Instagram", TELEGRAM: "Telegram", WEBCHAT: "Website chat" };
 
 /** Marks a menu reply in the outbound queue. A menu step is not an AI answer, so the AI reply cooldown ignores it. */
 export const MENU_BOT_VARIANT = "menu-bot";

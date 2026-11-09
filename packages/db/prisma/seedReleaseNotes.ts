@@ -951,6 +951,21 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.41.0",
+    title: "WhatsApp (Official API)",
+    summary: "Connect a number through Meta's official WhatsApp API and answer it in All Conversations.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["All Conversations", "Messaging Channels"],
+    whatsNew: [
+      "Connect a number from your own Meta account, beside your QR-linked numbers",
+      "Its customers appear in All Conversations, with AI, routing and contacts working as on other channels",
+      "Send an approved template to reach someone after the 24-hour window",
+    ],
+    improvements: [],
+    bugFixes: ["The Send in their chat button in a contact campaign now works on Messenger, Instagram and Telegram"],
+  },
 ];
 
 async function main() {

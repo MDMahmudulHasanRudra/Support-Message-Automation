@@ -16,6 +16,17 @@ export function SetupGuide({ type }: { type: ChannelType }) {
       </ol>
     );
   }
+  if (type === "WHATSAPP_CLOUD") {
+    return (
+      <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+        <li>In your Meta app, add the WhatsApp product. Your business must be verified by Meta to go beyond test numbers.</li>
+        <li>Add your number there. A number on the Cloud API stops working in the normal WhatsApp app, so do not use one you link with a QR code.</li>
+        <li>Make a System User token with whatsapp_business_messaging and whatsapp_business_management, and fill in the form here.</li>
+        <li>On the next page, copy the callback address and verify token into WhatsApp → Configuration, and subscribe to the messages field.</li>
+        <li>Press Sync templates once your templates are approved in WhatsApp Manager.</li>
+      </ol>
+    );
+  }
   if (type === "TELEGRAM") {
     return (
       <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">

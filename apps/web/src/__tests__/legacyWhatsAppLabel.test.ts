@@ -52,8 +52,9 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
     expect(CHANNEL_PRESENTATION.WHATSAPP.label).toBe(LEGACY_WHATSAPP_LABEL);
   });
 
-  it("no identifier moved: WhatsApp is still not a channel type, and the keys are unchanged", () => {
-    expect([...CHANNEL_TYPES]).toEqual(["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"]);
+  it("no identifier moved: the linked-device WhatsApp is still not a channel type, and the keys are unchanged", () => {
+    // WHATSAPP_CLOUD is the Official API, a separate channel. The QR-linked module must never become one.
+    expect([...CHANNEL_TYPES]).toEqual(["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT", "WHATSAPP_CLOUD"]);
     const chat = PROJECT_FEATURES.find((f) => f.key === "WHATSAPP_CHAT");
     expect(chat).toMatchObject({ label: "WhatsApp Chat", routes: ["/chat"], permissionKeys: ["messages.reply"] });
     expect(PERMISSIONS.filter((p) => p.key.startsWith("whatsapp.")).map((p) => p.key)).toEqual(["whatsapp.view", "whatsapp.manage"]);

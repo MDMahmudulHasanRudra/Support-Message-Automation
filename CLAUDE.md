@@ -2956,6 +2956,10 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 
 `/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
 
+### WhatsApp (Official API) (`WHATSAPP_OFFICIAL.md`, 9 Nov 2026)
+
+Feature `WHATSAPP_OFFICIAL`, **off by default**, needs `OMNICHANNEL`; `ChannelType.WHATSAPP_CLOUD` is one more channel, and the QR-linked module is untouched (never write `Message` or `OutboundMessage` from it). **Not verified against real Meta**; each number is connected by hand (no Embedded Signup). Rules worth not undoing: an event goes to the connection in the key's project, on the same app, whose phone number id it names; a template passes the 24-hour window only for a person, never AI or a bot; `queueCloudTemplate` is one press to one person who has written in, approved templates only, and there is no bulk path, because Meta charges for each.
+
 ### Payment links (`PAYMENT_LINKS.md`, 9 Nov 2026)
 
 Feature `PAYMENT_LINKS`, **off by default**. SSLCOMMERZ and bKash into each business's own merchant account; **not yet verified against a real gateway**. Rules worth not undoing: a callback is never believed, the gateway is asked directly; exact amount or it is not a payment; no answer is UNKNOWN, neither paid nor failed; bKash executes once; settling is idempotent and goes through `applyClientPayment`, the same code a person's payment runs; paid twice is flagged; a link only fills the reply box.

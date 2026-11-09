@@ -35,6 +35,24 @@ export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; 
           <OriginsEditor value={origins} onChange={setOrigins} />
           <input type="hidden" name="origins" value={origins} />
         </>
+      ) : type === "WHATSAPP_CLOUD" ? (
+        <>
+          <Field label="Phone number ID" htmlFor="phoneNumberId" required hint="WhatsApp → API Setup in your Meta app. Not the phone number itself.">
+            <Input id="phoneNumberId" name="phoneNumberId" inputMode="numeric" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="WhatsApp Business Account ID" htmlFor="wabaId" required>
+            <Input id="wabaId" name="wabaId" inputMode="numeric" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="App ID" htmlFor="appId" required>
+            <Input id="appId" name="appId" inputMode="numeric" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="App secret" htmlFor="appSecret" required>
+            <Input id="appSecret" name="appSecret" type="password" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="Permanent access token" htmlFor="accessToken" required hint="A System User token with whatsapp_business_messaging and whatsapp_business_management.">
+            <Input id="accessToken" name="accessToken" type="password" autoComplete="off" spellCheck={false} />
+          </Field>
+        </>
       ) : type === "TELEGRAM" ? (
         <Field
           label="Bot token"

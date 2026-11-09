@@ -679,12 +679,24 @@ export function readContactAiAnswer(answer: string, message: string, candidates:
 
 /** Where a channel conversation's contact came from. */
 export function channelContactSource(channelType: string): ContactSourceValue {
-  return ({ MESSENGER: "MESSENGER", INSTAGRAM: "INSTAGRAM", TELEGRAM: "TELEGRAM", WEBCHAT: "WEBSITE" } as Record<string, ContactSourceValue>)[channelType] ?? "MANUAL";
+  return ({ MESSENGER: "MESSENGER", INSTAGRAM: "INSTAGRAM", TELEGRAM: "TELEGRAM", WEBCHAT: "WEBSITE", WHATSAPP_CLOUD: "WHATSAPP" } as Record<string, ContactSourceValue>)[channelType] ?? "MANUAL";
 }
 
 /** What kind of account a channel's customer username is. */
 export function channelContactHandleKind(channelType: string): ContactIdentifierKindValue | null {
-  return ({ MESSENGER: "FACEBOOK", INSTAGRAM: "INSTAGRAM", TELEGRAM: "TELEGRAM" } as Record<string, ContactIdentifierKindValue>)[channelType] ?? null;
+  return ({ MESSENGER: "FACEBOOK", INSTAGRAM: "INSTAGRAM", TELEGRAM: "TELEGRAM", WHATSAPP_CLOUD: "PHONE" } as Record<string, ContactIdentifierKindValue>)[channelType] ?? null;
+}
+
+/** What a channel conversation's username proves about the customer, as a stored value. */
+export function channelContactValue(channelType: string, username: string | null | undefined): ContactIdentifierReading | null {
+  const handle = username?.replace(/^@/, "").trim();
+  const kind = channelContactHandleKind(channelType);
+  if (!handle || !kind) return null;
+  if (kind === "PHONE") {
+    const phone = normalizeContactIdentifier("PHONE", handle);
+    return "error" in phone ? null : phone;
+  }
+  return { kind, value: handle, normalized: handle.toLowerCase() };
 }
 
 /** The number a WhatsApp chat proves, or null. A LID is not a phone number and never becomes one. */

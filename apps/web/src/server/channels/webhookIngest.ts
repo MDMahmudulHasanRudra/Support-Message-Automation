@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { assertNeverProvider, classifyMetaWebhookObject, isMetaChannelType, metaProjectAllowed, splitMetaWebhook, telegramDedupKey, type ChannelType, type MetaChannelType } from "@support-automation/shared";
+import { assertNeverProvider, classifyMetaWebhookObject, isMetaChannelType, metaProjectAllowed, splitMetaWebhook, splitWhatsAppCloudWebhook, telegramDedupKey, type ChannelType, type MetaChannelType } from "@support-automation/shared";
 import type { Prisma } from "@prisma/client";
 import { platformPrisma } from "@/server/db";
 import { loadWebhookConnection, secretsEqual } from "@/server/channels/connections";
@@ -108,7 +108,7 @@ const LAST_EVENT_RESOLUTION_MS = 60_000;
 /** Meta's one-time GET handshake when the callback URL is saved in the app dashboard. */
 export async function verifyMetaSubscription(input: { key: string; mode: string | null; token: string | null; challenge: string | null; now?: Date }): Promise<WebhookAnswer> {
   const connection = await loadWebhookConnection(input.key);
-  if (!connection || !isMetaChannelType(connection.type)) return NOT_FOUND;
+  if (!connection || !(isMetaChannelType(connection.type) || connection.type === "WHATSAPP_CLOUD")) return NOT_FOUND;
   if (input.mode !== "subscribe" || !input.challenge || !secretsEqual(input.token, connection.verifyToken)) return FORBIDDEN;
   // The challenge is echoed back verbatim as text/plain — Meta checks the body equals what it sent.
   // Limited to what Meta sends (digits), so this endpoint cannot be used to reflect arbitrary text.
@@ -127,6 +127,7 @@ export function metaSignatureValid(rawBody: Buffer, header: string | null, appSe
 export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; signature: string | null; receivedAt?: Date }): Promise<WebhookAnswer> {
   const receivedAt = input.receivedAt ?? new Date();
   const connection = await loadWebhookConnection(input.key);
+  if (connection?.type === "WHATSAPP_CLOUD") return ingestWhatsAppCloud(connection, input.rawBody, input.signature, receivedAt);
   if (!connection || !isMetaChannelType(connection.type)) return NOT_FOUND;
   if (!metaSignatureValid(input.rawBody, input.signature, connection.appSecret)) {
     console.warn(`[channels] Meta webhook with a missing or wrong signature for connection ${connection.id}; refused.`);
@@ -167,6 +168,35 @@ export async function ingestMetaWebhook(input: { key: string; rawBody: Buffer; s
       payload: { provider: "META", type, accountId: event.accountId, item: event.item } as Prisma.InputJsonValue,
       receivedAt,
     });
+  }
+  await record(rows, receivedAt);
+  return OK;
+}
+
+/**
+ * WhatsApp (Official API) at its own per-connection address (WHATSAPP_OFFICIAL.md). One Meta app can carry several numbers, so each event goes to the
+ * connection in this project, on this app, whose phone number id it names. A number nobody connected is dropped.
+ */
+async function ingestWhatsAppCloud(connection: { id: string; projectId: string; appId: string | null; appSecret: string | null }, rawBody: Buffer, signature: string | null, receivedAt: Date): Promise<WebhookAnswer> {
+  if (!metaSignatureValid(rawBody, signature, connection.appSecret)) {
+    console.warn(`[channels] WhatsApp webhook with a missing or wrong signature for connection ${connection.id}; refused.`);
+    return { status: 401, body: "Invalid signature" };
+  }
+  const envelope = readMetaEnvelope(rawBody);
+  if (!envelope.ok) return envelope.answer;
+  if (envelope.object !== "whatsapp_business_account") return OK;
+  const events = splitWhatsAppCloudWebhook(envelope.body, receivedAt);
+  if (events.length === 0) return OK;
+  const targets = await platformPrisma.channelConnection.findMany({
+    where: { projectId: connection.projectId, type: "WHATSAPP_CLOUD", status: { not: "DISCONNECTED" }, OR: [{ id: connection.id }, ...(connection.appId ? [{ appId: connection.appId }] : [])] },
+    select: { id: true, externalAccountId: true },
+  });
+  const byAccount = new Map(targets.filter((t) => t.externalAccountId).map((t) => [t.externalAccountId!, t.id]));
+  const rows: Prisma.ChannelInboundEventCreateManyInput[] = [];
+  for (const event of events) {
+    const connectionId = event.accountId ? byAccount.get(event.accountId) : undefined;
+    if (!connectionId) continue;
+    rows.push({ projectId: connection.projectId, connectionId, dedupKey: event.dedupKey, payload: { provider: "WHATSAPP_CLOUD", accountId: event.accountId, item: event.item } as Prisma.InputJsonValue, receivedAt });
   }
   await record(rows, receivedAt);
   return OK;

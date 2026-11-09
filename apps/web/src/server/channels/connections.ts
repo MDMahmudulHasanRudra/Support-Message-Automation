@@ -5,6 +5,8 @@ import type { ChannelAuthMode, ChannelConnectionStatus } from "@prisma/client";
 import { platformPrisma, prisma } from "@/server/db";
 import { activeProjectOrigin } from "@/server/customerAddress";
 import {
+  readCloudPhoneNumber,
+  subscribeCloudWaba,
   checkMetaApp,
   readLinkedInstagram,
   readMetaPage,
@@ -47,7 +49,8 @@ function webhookUrlAt(origin: string | null, type: ChannelType, webhookKey: stri
   const kind = CHANNELS[type].webhookKind;
   // Website chat has no webhook: its "address" is the widget's own API base.
   if (kind === "WEBCHAT") return `${origin}/api/webchat/${webhookKey}`;
-  return `${origin}/api/channels/${kind === "META" ? "meta" : "telegram"}/${webhookKey}`;
+  // WhatsApp (Official API) is signed by Meta the same way, so it shares the Meta address.
+  return `${origin}/api/channels/${kind === "TELEGRAM" ? "telegram" : "meta"}/${webhookKey}`;
 }
 
 /** On this project's own customer's address: another customer's address refuses its keys. */
@@ -131,7 +134,7 @@ const readViewRow = (id: string) => prisma.channelConnection.findUnique({ where:
 
 function toView(row: ViewRow, revealVerifyToken: boolean, origin: string | null): ChannelConnectionView {
   let verifyToken: string | null | undefined;
-  if (revealVerifyToken && CHANNELS[row.type].webhookKind === "META" && row.authMode === "MANUAL") {
+  if (revealVerifyToken && (CHANNELS[row.type].webhookKind === "META" || row.type === "WHATSAPP_CLOUD") && row.authMode === "MANUAL") {
     try {
       verifyToken = row.verifyTokenCiphertext ? decryptSecret(row.verifyTokenCiphertext) : null;
     } catch {
@@ -259,6 +262,50 @@ async function existingFor(type: ChannelType, externalAccountId: string) {
 }
 
 /** Connect a Facebook Page (Messenger) or the Instagram account linked to one. */
+/** WhatsApp (Official API): one phone number, with the business's own Meta app and permanent token (WHATSAPP_OFFICIAL.md). */
+export async function connectWhatsAppCloud(input: { phoneNumberId: string; wabaId: string; accessToken: string; appId: string; appSecret: string; username: string; fetchImpl?: FetchImpl; now?: Date }): Promise<ConnectResult> {
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const now = input.now ?? new Date();
+  const phoneNumberId = input.phoneNumberId.trim();
+  const wabaId = input.wabaId.trim();
+  const appId = input.appId.trim();
+  const token = input.accessToken.trim();
+  const appSecret = input.appSecret.trim();
+  if (!/^\d{5,30}$/.test(phoneNumberId) || !/^\d{5,30}$/.test(wabaId) || !/^\d{5,30}$/.test(appId)) throw new ChannelConnectionError("The phone number ID, business account ID and App ID are all long numbers from Meta's dashboard.");
+  if (!token || !appSecret) throw new ChannelConnectionError("Enter the access token and the app secret.");
+  const phone = await readCloudPhoneNumber(phoneNumberId, token, appSecret, fetchImpl);
+  if (!phone.ok) throw new ChannelConnectionError(phone.error.message);
+  const existing = await existingFor("WHATSAPP_CLOUD", phoneNumberId);
+  if (existing && existing.status !== "DISCONNECTED") throw new ChannelConnectionError("This number is already connected in this project.");
+  const subscribed = await subscribeCloudWaba(wabaId, token, appSecret, fetchImpl);
+  const warning = subscribed.ok ? null : `Saved, but Meta did not subscribe the app to this account, so no messages will arrive yet: ${subscribed.error.message}`;
+  const display = phone.data.display_phone_number ?? phoneNumberId;
+  const data = {
+    name: phone.data.verified_name ? `${phone.data.verified_name} (${display})` : display,
+    status: (subscribed.ok ? "CONNECTED" : "ERROR") as ChannelConnectionStatus,
+    enabled: true,
+    externalAccountName: phone.data.verified_name ?? display,
+    externalUsername: display,
+    pageId: phoneNumberId,
+    wabaId,
+    appId,
+    accessTokenCiphertext: encryptSecret(token),
+    appSecretCiphertext: encryptSecret(appSecret),
+    lastCheckedAt: now,
+    lastError: warning,
+    lastErrorAt: warning ? now : null,
+    credentialsUpdatedAt: now,
+    credentialsUpdatedByUsername: input.username,
+    disconnectedAt: null,
+  };
+  if (existing) {
+    await prisma.channelConnection.update({ where: { id: existing.id }, data: { ...data, webhookKey: newKey(), verifyTokenCiphertext: encryptSecret(newKey(18)), webhookVerifiedAt: null } });
+    return { id: existing.id, status: data.status, warning };
+  }
+  const created = await prisma.channelConnection.create({ data: { ...data, type: "WHATSAPP_CLOUD", externalAccountId: phoneNumberId, webhookKey: newKey(), verifyTokenCiphertext: encryptSecret(newKey(18)), createdByUsername: input.username }, select: { id: true } });
+  return { id: created.id, status: data.status, warning };
+}
+
 export async function connectMeta(input: MetaCredentialsInput & { username: string; fetchImpl?: FetchImpl; now?: Date }): Promise<ConnectResult> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? new Date();
@@ -610,6 +657,7 @@ export async function testConnection(id: string, input: { fetchImpl?: FetchImpl;
   // Only Telegram and Meta have a provider to ask; below, "not Telegram" means Meta, so say so explicitly
   // (Meta expansion B1) rather than let a website chat or a future channel reach the Meta checks.
   const provider = providerForChannelType(row.type);
+  if (provider === "WHATSAPP_CLOUD") return testWhatsAppCloud(row.id, fetchImpl, now);
   if (provider !== "TELEGRAM" && provider !== "META_MESSENGER" && provider !== "META_INSTAGRAM") {
     throw new ChannelConnectionError(`${CHANNEL_PROVIDERS[provider].label} has no provider connection to test.`);
   }
@@ -704,6 +752,19 @@ export interface WebhookConnection {
  * a webhook carries no project, and the key — 24 random bytes — is the authority that names one. A
  * disconnected connection has no secrets and is treated as unknown.
  */
+async function testWhatsAppCloud(id: string, fetchImpl: FetchImpl, now: Date): Promise<{ status: ChannelConnectionStatus; checks: ConnectionCheck[] }> {
+  const row = await prisma.channelConnection.findUniqueOrThrow({ where: { id }, select: { pageId: true, wabaId: true, status: true, accessTokenCiphertext: true, appSecretCiphertext: true, webhookVerifiedAt: true, lastEventAt: true } });
+  if (row.status === "DISCONNECTED" || !row.accessTokenCiphertext || !row.appSecretCiphertext || !row.pageId || !row.wabaId) throw new ChannelConnectionError("This connection is disconnected. Enter its details again.");
+  const phone = await readCloudPhoneNumber(row.pageId, readSecret(row.accessTokenCiphertext), readSecret(row.appSecretCiphertext), fetchImpl);
+  const checks: ConnectionCheck[] = [
+    { label: "Access token accepted", ok: phone.ok, detail: phone.ok ? (phone.data.verified_name ?? phone.data.display_phone_number ?? "Yes") : phone.error.message },
+    { label: "Meta has checked this address", ok: row.webhookVerifiedAt !== null, detail: row.webhookVerifiedAt ? "Yes" : "Not yet: paste the callback address and verify token into your Meta app." },
+  ];
+  const status: ChannelConnectionStatus = phone.ok ? "CONNECTED" : phone.error.needsReauth ? "NEEDS_RECONNECT" : "ERROR";
+  await prisma.channelConnection.update({ where: { id }, data: { status, lastCheckedAt: now, lastError: phone.ok ? null : phone.error.message, lastErrorAt: phone.ok ? null : now } });
+  return { status, checks };
+}
+
 export async function loadWebhookConnection(webhookKey: string): Promise<WebhookConnection | null> {
   if (!/^[A-Za-z0-9_-]{20,64}$/.test(webhookKey)) return null;
   const row = await platformPrisma.channelConnection.findUnique({

@@ -368,6 +368,15 @@ export const PROJECT_FEATURES = [
       "Nothing is published and nothing is checked: scheduled posts wait, and publish when it is on again only if their time has not passed. Drafts, history, media and connections are kept.",
   },
   {
+    key: "WHATSAPP_OFFICIAL",
+    label: "WhatsApp (Official API)",
+    description: "Connect a number through Meta's Cloud API: no phone or QR code, delivery receipts, and approved templates after 24 hours. Separate from WhatsApp (Legacy).",
+    defaultEnabled: false,
+    routes: ["/conversations/whatsapp-official"],
+    permissionKeys: [],
+    workerEffect: "Replies on Official API numbers stop going out and their incoming messages wait. Connections and conversations are kept.",
+  },
+  {
     key: "PAYMENT_LINKS",
     label: "Payment links",
     description: "Send a link in any chat so a customer can pay on SSLCOMMERZ or bKash, into your own merchant account. A paid link settles the invoice.",

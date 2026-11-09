@@ -706,7 +706,7 @@ export async function loadInbox(opts: { scope: InboxScope; filters?: InboxFilter
   ]);
 
   const merged = orderInboxItems([...rows.map((r) => fromChannelRow(r, opts.scope, opts.viewerId, lifecycle)), ...(wa?.items ?? [])], lifecycle ? filters.sort : null);
-  const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 };
+  const byChannel: Record<InboxChannel, number> = { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0, WHATSAPP_CLOUD: 0 };
   for (const [k, v] of Object.entries({ ...chCounts.byChannel, ...(wa?.counts.byChannel ?? {}) })) byChannel[k as InboxChannel] = v ?? 0;
   const counts: InboxCounts = {
     all: chCounts.all + (wa?.counts.all ?? 0),
@@ -881,6 +881,7 @@ export async function connectionSummary(): Promise<Record<ChannelType, { total: 
     INSTAGRAM: { total: 0, working: 0 },
     TELEGRAM: { total: 0, working: 0 },
     WEBCHAT: { total: 0, working: 0 },
+    WHATSAPP_CLOUD: { total: 0, working: 0 },
   };
   for (const r of rows) {
     if (r.status === "DISCONNECTED") continue;

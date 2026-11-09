@@ -684,7 +684,7 @@ export async function sendCampaignRecipientInChat(recipientId: string): Promise<
     const result = await sendPersonalChatMessage(recipient.inChat.accountId, recipient.inChat.chatId, {}, form);
     error = result.error ?? null;
   } else {
-    const result = await sendChannelReplyAction(recipient.inChat.id, recipient.message, `contact-campaign:${recipientId}`);
+    const result = await sendChannelReplyAction(recipient.inChat.id, recipient.message, `cc-${recipientId}`);
     error = "error" in result && result.error ? result.error : null;
   }
   if (error) {

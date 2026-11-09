@@ -1,5 +1,6 @@
 import { ArrowRight, PlugZap } from "lucide-react";
 import { CHANNEL_TYPES, CHANNELS, LEGACY_WHATSAPP_LABEL, UNAVAILABLE_CHANNELS } from "@support-automation/shared";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import Link from "@/components/ProjectLink";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader, ViewOnlyNotice } from "@/components/ui";
 import { pageAccess } from "@/server/authorize";
@@ -27,6 +28,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
   const oneClick = { ok: config.ok && allowed, problems: config.ok && allowed ? [] : ["One-click Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Get Assist platform to enable it."] };
   // What is missing on the server is the platform administrator's business; only a Main Admin sees it.
   const problems = !oneClick.ok && (await hasPermission(session, "projects.manage")) ? oneClick.problems : null;
+  const official = !(await activeDisabledFeatures()).has("WHATSAPP_OFFICIAL");
   const metaError = query.meta_error && query.meta_error in META_ERROR_TEXT ? META_ERROR_TEXT[query.meta_error as MetaOAuthErrorCode] : null;
 
   return (
@@ -52,7 +54,7 @@ export default async function ChannelsPage({ searchParams }: { searchParams: Pro
       <div className="space-y-8">
         <OneClickPanel available={oneClick.ok} canManage={canManage} problems={problems} />
 
-        {CHANNEL_TYPES.map((type) => {
+        {CHANNEL_TYPES.filter((t) => t !== "WHATSAPP_CLOUD" || official).map((type) => {
           const def = CHANNELS[type];
           const rows = connections.filter((c) => c.type === type);
           return (

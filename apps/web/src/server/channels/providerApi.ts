@@ -65,6 +65,21 @@ async function graph<T>(
   return { ok: true, data: body as T };
 }
 
+/** WhatsApp (Official API): who this phone number id is, as Meta knows it. */
+export function readCloudPhoneNumber(phoneNumberId: string, token: string, appSecret: string, fetchImpl: FetchImpl = fetch) {
+  return graph<{ id: string; display_phone_number?: string; verified_name?: string }>("GET", `/${encodeURIComponent(phoneNumberId)}`, { fields: "id,display_phone_number,verified_name" }, { token, appSecret }, fetchImpl);
+}
+
+/** Subscribes the app to the business account, without which no message arrives. */
+export function subscribeCloudWaba(wabaId: string, token: string, appSecret: string, fetchImpl: FetchImpl = fetch) {
+  return graph<{ success?: boolean }>("POST", `/${encodeURIComponent(wabaId)}/subscribed_apps`, {}, { token, appSecret }, fetchImpl);
+}
+
+export async function listCloudTemplates(wabaId: string, token: string, appSecret: string, fetchImpl: FetchImpl = fetch): Promise<ProviderResult<unknown[]>> {
+  const r = await graph<{ data?: unknown[] }>("GET", `/${encodeURIComponent(wabaId)}/message_templates`, { limit: "200", fields: "name,language,category,status,components" }, { token, appSecret }, fetchImpl);
+  return r.ok ? { ok: true, data: r.data.data ?? [] } : r;
+}
+
 /** Whether Meta accepts this App ID + App Secret pair (an app access token is exactly `id|secret`). */
 export function checkMetaApp(appId: string, appSecret: string, fetchImpl: FetchImpl = fetch) {
   return graph<{ id: string; name?: string }>("GET", `/${encodeURIComponent(appId)}`, { fields: "id,name" }, { appAccessToken: `${appId}|${appSecret}` }, fetchImpl);

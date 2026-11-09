@@ -17,6 +17,7 @@ import { SetupGuide } from "../SetupGuide";
 import { ConnectChannelForm } from "../ConnectChannelForm";
 import { WidgetStudio } from "../WebchatPanel";
 import { getWebchatDetails } from "@/server/channels/webchat";
+import { CloudTemplatesPanel } from "./CloudTemplatesPanel";
 import { ConnectionHealth, ConnectionSwitches, CopyValue, DisconnectConnection, RenameConnection } from "../ConnectionPanel";
 
 
@@ -35,6 +36,9 @@ export async function ChannelConnectionView({ id, query }: { id: string; query: 
   const def = CHANNELS[c.type];
   const disconnected = c.status === "DISCONNECTED";
   const meta = def.webhookKind === "META";
+  const cloud = c.type === "WHATSAPP_CLOUD";
+  const signedByMeta = meta || cloud;
+  const cloudTemplates = cloud ? await prisma.whatsAppCloudTemplate.findMany({ where: { connectionId: c.id }, orderBy: { name: "asc" }, select: { id: true, name: true, language: true, category: true, status: true, supported: true } }) : [];
   // Website chat: our own widget — no webhook, provider health or credentials (WEBSITE_CHAT.md).
   const webchat = c.type === "WEBCHAT";
   const wc = webchat ? await getWebchatDetails(c.id) : null;
@@ -165,6 +169,8 @@ export async function ChannelConnectionView({ id, query }: { id: string; query: 
             </div>
           </Card>
 
+          {cloud && !disconnected && canManage ? <CloudTemplatesPanel connectionId={c.id} templates={cloudTemplates} /> : null}
+
           {oneClick && !disconnected ? (
             <Card>
               <SectionHeader title="Connected with Facebook" description="Through the platform's Meta app. There is no webhook, App Secret or token for you to manage." />
@@ -185,12 +191,12 @@ export async function ChannelConnectionView({ id, query }: { id: string; query: 
 
           {!disconnected && !oneClick && !webchat ? (
             <Card>
-              <SectionHeader title="Webhook" description={meta ? "Paste these into your Meta app: Webhooks (Messenger or Instagram product) → Callback URL and Verify token." : "Registered with Telegram automatically. Shown for reference."} />
+              <SectionHeader title="Webhook" description={cloud ? "Paste these into your Meta app: WhatsApp → Configuration → Callback URL and Verify token, then subscribe to the messages field." : meta ? "Paste these into your Meta app: Webhooks (Messenger or Instagram product) → Callback URL and Verify token." : "Registered with Telegram automatically. Shown for reference."} />
               <div className="space-y-3">
                 <CopyValue label="Callback URL" value={c.webhookUrl} />
-                {meta && canManage ? <CopyValue label="Verify token" value={c.verifyToken ?? null} secret /> : null}
+                {signedByMeta && canManage ? <CopyValue label="Verify token" value={c.verifyToken ?? null} secret /> : null}
                 <p className="text-[12px] text-[color:var(--color-muted-foreground)]">
-                  {c.webhookVerifiedAt ? `${meta ? "Meta verified this address" : "Registered with Telegram"} ${when(c.webhookVerifiedAt)}.` : meta ? "Meta has not verified this address yet." : "Not registered with Telegram yet — save the token again below."}{" "}
+                  {c.webhookVerifiedAt ? `${signedByMeta ? "Meta verified this address" : "Registered with Telegram"} ${when(c.webhookVerifiedAt)}.` : signedByMeta ? "Meta has not verified this address yet." : "Not registered with Telegram yet — save the token again below."}{" "}
                   Last event received: {when(c.lastEventAt)}.
                 </p>
               </div>

@@ -212,6 +212,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "CsatSurvey", "CsatSettings",
   // Follow-ups (FOLLOW_UPS.md).
   "FollowUp", "FollowUpEvent",
+  // WhatsApp (Official API) (WHATSAPP_OFFICIAL.md).
+  "WhatsAppCloudTemplate",
   // Payment links (PAYMENT_LINKS.md).
   "PaymentGateway", "PaymentSettings", "PaymentLink", "PaymentAttempt", "PaymentLinkEvent",
   // Menu bots (MENU_BOTS.md).

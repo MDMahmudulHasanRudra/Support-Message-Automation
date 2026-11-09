@@ -11,7 +11,7 @@
  * semantics; the unified inbox reads it from there instead of copying it (see OMNICHANNEL.md §4).
  */
 
-export const CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"] as const;
+export const CHANNEL_TYPES = ["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT", "WHATSAPP_CLOUD"] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 
 export function isChannelType(value: unknown): value is ChannelType {
@@ -32,7 +32,7 @@ export function isMetaChannelType(value: unknown): value is MetaChannelType {
 }
 
 /** Which webhook dialect a channel speaks. Messenger and Instagram share Meta's. */
-export type ChannelWebhookKind = "META" | "TELEGRAM" | "WEBCHAT";
+export type ChannelWebhookKind = "META" | "TELEGRAM" | "WEBCHAT" | "WHATSAPP_CLOUD";
 
 export interface ChannelDefinition {
   type: ChannelType;
@@ -107,6 +107,23 @@ export const CHANNELS: Record<ChannelType, ChannelDefinition> = {
       "A bot can only message people who started a chat with it first.",
       "In groups, a bot sees every message only when its privacy mode is off (BotFather → /setprivacy); otherwise only commands and replies to it.",
       "Telegram tells bots nothing about delivery or reading, so a reply shows as Sent, never Delivered or Read.",
+    ],
+  },
+  WHATSAPP_CLOUD: {
+    type: "WHATSAPP_CLOUD",
+    label: "WhatsApp (Official API)",
+    slug: "whatsapp-official",
+    webhookKind: "WHATSAPP_CLOUD",
+    maxText: 4096,
+    maxTextUnit: "characters",
+    deliveryReceipts: true,
+    readReceipts: true,
+    replyWindow: { standardHours: 24, humanAgentDays: 1 },
+    accountNoun: "WhatsApp Business phone number",
+    limitations: [
+      "This is the official Cloud API, separate from the WhatsApp numbers you link with a QR code. A number on the Cloud API stops working in the normal WhatsApp app.",
+      "Replies are free-form for 24 hours after the customer's last message. After that only a template Meta approved can be sent, and Meta charges for it.",
+      "Groups are not supported. Attachments from customers are shown by type, and sending attachments is not supported yet.",
     ],
   },
   WEBCHAT: {
@@ -235,6 +252,9 @@ export function decideReplyWindow(input: {
   }
   if (!def.replyWindow) return { allowed: true, messagingType: null, tag: null };
   const age = input.now.getTime() - input.lastInboundAt.getTime();
+  if (input.type === "WHATSAPP_CLOUD" && age > def.replyWindow.standardHours * HOUR_MS) {
+    return { allowed: false, code: "WINDOW_CLOSED", reason: "The customer's last message is more than 24 hours old. WhatsApp only allows an approved template now." };
+  }
   if (age <= def.replyWindow.standardHours * HOUR_MS) return { allowed: true, messagingType: "RESPONSE", tag: null };
   const humanLimit = def.replyWindow.humanAgentDays * 24 * HOUR_MS;
   if (input.automated) {
@@ -300,6 +320,7 @@ export type NormalizedChannelEvent =
     }
   | { type: "DELIVERY"; threadId: string; externalMessageIds: string[]; watermark: Date | null }
   | { type: "READ"; threadId: string; watermark: Date | null; externalMessageId: string | null }
+  | { type: "SEND_FAILED"; externalMessageId: string; reason: string }
   | { type: "IGNORED"; reason: string };
 
 /** One event cut out of a webhook body, with the key that makes a provider's retry harmless. */

@@ -111,4 +111,5 @@ export * from "./contacts.js";
 export * from "./menuBots.js";
 export * from "./signups.js";
 export * from "./paymentLinks.js";
+export * from "./whatsappCloud.js";
 export * from "./autoRouting.js";

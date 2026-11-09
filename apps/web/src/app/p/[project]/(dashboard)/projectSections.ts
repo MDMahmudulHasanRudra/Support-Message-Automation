@@ -89,6 +89,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/conversations/messenger": { write: ["conversations.reply"] },
   "/conversations/instagram": { write: ["conversations.reply"] },
   "/conversations/telegram": { write: ["conversations.reply"] },
+  "/conversations/whatsapp-official": { write: ["conversations.reply"] },
   "/conversations/website": { write: ["conversations.reply"], also: ["/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/messages": { label: "All messages (needs attention, ignored)", also: ["/ignored", "/needs-attention", "/api/whatsapp/media"] },
   "/messages/unanswered": { write: ["messages.reply"], also: ["/api/messages/support-response"] },

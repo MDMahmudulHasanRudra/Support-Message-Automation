@@ -11,13 +11,14 @@ import { DHAKA_OFFSET_MS } from "./dhakaDay.js";
  * somebody who failed a check.
  */
 
-export const ROUTING_CHANNELS = ["WEBCHAT", "MESSENGER", "INSTAGRAM", "TELEGRAM", "WHATSAPP_PERSONAL"] as const;
+export const ROUTING_CHANNELS = ["WEBCHAT", "MESSENGER", "INSTAGRAM", "TELEGRAM", "WHATSAPP_CLOUD", "WHATSAPP_PERSONAL"] as const;
 export type RoutingChannel = (typeof ROUTING_CHANNELS)[number];
 export const ROUTING_CHANNEL_LABELS: Record<RoutingChannel, string> = {
   WEBCHAT: "Website chat",
   MESSENGER: "Messenger",
   INSTAGRAM: "Instagram",
   TELEGRAM: "Telegram",
+  WHATSAPP_CLOUD: "WhatsApp (Official API)",
   WHATSAPP_PERSONAL: "WhatsApp personal chats",
 };
 export function isRoutingChannel(value: unknown): value is RoutingChannel {
@@ -140,6 +141,7 @@ export function routingReplyPages(kind: RoutingConversationKind): readonly strin
     case "INSTAGRAM":
       return ["/conversations/all", "/conversations/instagram"];
     case "TELEGRAM":
+    case "WHATSAPP_CLOUD":
       return ["/conversations/all", "/conversations/telegram"];
     case "WEBCHAT":
       return ["/conversations/all", "/conversations/website"];
