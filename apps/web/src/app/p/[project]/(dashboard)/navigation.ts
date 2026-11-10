@@ -145,7 +145,7 @@ export interface NavGroup {
 
 // The one always-visible landing page — pinned above the scrollable groups below rather than
 // living inside a redundant single-item group of its own.
-export const OVERVIEW_LINK: NavLink = { href: "/overview", label: "Overview", icon: LayoutDashboard };
+export const OVERVIEW_LINK: NavLink = { href: "/overview", label: "Dashboard", icon: LayoutDashboard };
 
 /**
  * Every page whose job is CONFIGURATION, gathered into one Settings module.
@@ -405,20 +405,21 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Support",
+    id: "support",
+    label: "All Conversations",
     icon: MessageCircleMore,
     links: [
       // The unified inbox and the channel inboxes beside WhatsApp (OMNICHANNEL.md). The Omnichannel
       // feature hides all four when it is off; WhatsApp Chat is unaffected either way.
-      { href: "/conversations/all", label: "All Conversations", icon: Inbox },
+      { href: "/conversations/all", label: "Unified Inbox", icon: Inbox },
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
       { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
       { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
       { href: "/conversations/telegram", label: "Telegram", icon: Send },
-      { href: "/conversations/whatsapp-official", label: "WhatsApp (Official)", icon: MessageCircleMore },
+      { href: "/conversations/whatsapp-official", label: "WhatsApp", icon: MessageCircleMore },
       {
         href: "/messages",
-        label: "Messages",
+        label: "Message Activity",
         icon: MessagesSquare,
         tabs: [
           { href: "/messages", label: "All messages", icon: MessagesSquare },
@@ -431,7 +432,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         href: "/support-assignment/unanswered",
-        label: "Support Assignment",
+        label: "Agent Assignment",
         icon: ListTodo,
         tabs: [
           { href: "/support-assignment/unanswered", label: "Unanswered", icon: ListTodo },
@@ -461,7 +462,8 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     // Client Management (CLIENT_CENTER.md): the one client database. A project feature that ships off.
-    label: "Clients",
+    id: "clients",
+    label: "Client Management",
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
@@ -476,11 +478,11 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
-      { href: "/clients/dues", label: "Billing List", icon: ReceiptText },
+      { href: "/clients/dues", label: "Bills & Dues", icon: ReceiptText },
       { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
       {
         href: "/clients/messages",
-        label: "Client Messages",
+        label: "Client Campaigning",
         icon: MailCheck,
         // CLIENT_CRM_V7.md §6–§7: bulk email (prepared by one person, approved by another) and the reusable wording.
         tabs: [
@@ -494,7 +496,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Commerce (COMMERCE.md): catalogue and stock, orders, the sales pipeline. Each is its own project
     // feature, off by default and on for the E-commerce business type.
-    label: "Commerce",
+    id: "commerce",
+    label: "Sales & Commerce",
     icon: ShoppingCart,
     links: [
       { href: "/commerce/orders", label: "Orders", icon: ShoppingCart },
@@ -536,7 +539,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Support Activity's two people-pages joined Team Management's three: both answer "what is the
     // team doing" — one from the schedule, one from the messages.
-    label: "Team",
+    id: "team",
+    label: "Team & Workforce",
     icon: Users,
     links: [
       { href: "/team-management", label: "Today", icon: Users },
@@ -549,14 +553,15 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Reports",
+    id: "reports",
+    label: "Reports & Analytics",
     icon: BarChart3,
     links: [TEAM_REPORT_LINK, REPORTS_LINK],
   },
   {
     // Bulk Messaging lives here now: broadcasting to groups and adding a number to groups are
     // WhatsApp work done with the same accounts and the same groups listed right above them.
-    // Shown as "WhatsApp (Legacy)" (the OpenWA engine); the id keeps the module id it always had.
+    // Shown as "WhatsApp QR" (the OpenWA engine); the id keeps the module id it always had.
     id: "whatsapp",
     label: LEGACY_WHATSAPP_LABEL,
     icon: Smartphone,
@@ -588,7 +593,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Automation",
+    id: "automation",
+    label: "Automation Studio",
     icon: ListChecks,
     links: [
       {
@@ -607,7 +613,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "AI Learning",
+    id: "ai-learning",
+    label: "AI Knowledge",
     icon: Sparkles,
     links: [
       { href: "/ai-learning", label: "Overview", icon: Sparkles },
@@ -626,7 +633,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Conversation Learning",
+    id: "conversation-learning",
+    label: "AI Improvement",
     icon: Waypoints,
     links: [
       { href: "/conversation-learning", label: "Overview", icon: Waypoints },
@@ -645,7 +653,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "System",
+    id: "system",
+    label: "System & Activity",
     icon: ConsoleIcon,
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
@@ -656,16 +665,18 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Logins and roles of the whole installation — the same in every project. In the Main Admin
     // Workspace this group sits under Main Admin → Users & Permissions (DashboardShell), not here.
-    label: "Users & Permissions",
+    id: "users-permissions",
+    label: "Users & Access",
     icon: ShieldCheck,
     links: [
-      { href: "/users", label: "App Users", icon: UserCog },
-      { href: "/permissions", label: "Permission Modules", icon: ShieldCheck },
+      { href: "/users", label: "All Users", icon: UserCog },
+      { href: "/permissions", label: "Roles & Permissions", icon: ShieldCheck },
     ],
   },
   {
     // This project's own administration (PROJECT_ROLES.md): its Lead's pages, and a Main Admin's.
-    label: "Project Users & Permissions",
+    id: "project-users-permissions",
+    label: "Project Access",
     icon: UsersRound,
     links: [
       { href: "/project-members", label: "Project Members", icon: UsersRound },
@@ -675,12 +686,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Release Notes",
+    id: "release-notes",
+    label: "What's New",
     icon: Megaphone,
     links: [
       {
         href: "/release-notes",
-        label: "Release Notes",
+        label: "What's New",
         icon: Megaphone,
         tabs: [
           { href: "/release-notes", label: "Release notes", icon: Megaphone },

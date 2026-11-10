@@ -194,7 +194,7 @@ export function isInboxScope(value: unknown): value is InboxScope {
  * added later (docs/meta-expansion/09 A1). Words on screen only: the scope `whatsapp`, routes, feature and
  * permission keys, nav module and section ids never change with it.
  */
-export const LEGACY_WHATSAPP_LABEL = "WhatsApp (Legacy)";
+export const LEGACY_WHATSAPP_LABEL = "WhatsApp QR";
 
 export function inboxScopeLabel(scope: InboxScope): string {
   if (scope === "all") return "All conversations";

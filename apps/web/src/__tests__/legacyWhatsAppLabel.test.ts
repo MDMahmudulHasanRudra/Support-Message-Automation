@@ -16,7 +16,7 @@ const WHATSAPP_GROUP_HREFS = ["/accounts", "/groups", "/group-message-sender", "
 
 describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   it("the label is the one shared constant", () => {
-    expect(LEGACY_WHATSAPP_LABEL).toBe("WhatsApp (Legacy)");
+    expect(LEGACY_WHATSAPP_LABEL).toBe("WhatsApp QR");
   });
 
   it("the sidebar module is labelled Legacy, keeps its id and every page it held", () => {

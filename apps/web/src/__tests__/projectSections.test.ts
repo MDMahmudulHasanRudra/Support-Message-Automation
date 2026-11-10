@@ -98,8 +98,8 @@ describe("the catalogue mirrors the sidebar", () => {
     const navOrder = NAV_GROUPS.map((g) => g.label).filter((l) => labels.includes(l));
     expect(labels.filter((l) => navOrder.includes(l))).toEqual(navOrder);
     expect(labels).toContain("Settings");
-    expect(labels).not.toContain("Users & Permissions"); // platform and project administration: never a role's
-    expect(labels).not.toContain("Project Users & Permissions");
+    expect(labels).not.toContain("Users & Access"); // platform and project administration: never a role's
+    expect(labels).not.toContain("Project Access");
   });
 
   it("gives every key a project role may hold through some page, so nothing became impossible to grant", () => {
