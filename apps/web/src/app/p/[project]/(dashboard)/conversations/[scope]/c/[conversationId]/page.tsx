@@ -17,6 +17,7 @@ import { ThreadScroller } from "../../../../chat/ThreadScroller";
 import { conversationAvatar } from "../../../../chat/avatar";
 import { ChannelMark } from "../../../ChannelMark";
 import { ChannelComposer } from "../../../ChannelComposer";
+import { CloudTemplateButton } from "../../../CloudTemplateButton";
 import { ConversationControls, RetryReplyButton } from "../../../ConversationControls";
 
 export const metadata = { title: "Conversation" };
@@ -125,6 +126,11 @@ export default async function ChannelConversationPage({ params }: { params: Prom
       <ComposerShell>
         <ChannelComposer conversationId={conversation.id} type={conversation.type} via={connection.name} disabledReason={disabledReason} humanAgentReply={thread.humanAgentReply} savedReplies={savedReplies} />
       </ComposerShell>
+      {canReply && conversation.type === "WHATSAPP_CLOUD" ? (
+        <div className="shrink-0 px-5 pb-2">
+          <CloudTemplateButton conversationId={conversation.id} />
+        </div>
+      ) : null}
       {!canReply ? null : connection.status !== "CONNECTED" ? (
         <p className="shrink-0 px-5 pb-2 text-[11px] text-[color:var(--color-subtle-foreground)]">
           <Link href={`/settings/channels/${connection.id}`} className="inline-flex items-center gap-1 underline-offset-2 hover:underline">

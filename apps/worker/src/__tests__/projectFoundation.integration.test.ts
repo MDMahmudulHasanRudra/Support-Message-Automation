@@ -120,7 +120,7 @@ describe("the constraints later phases depend on", () => {
     //   same-project triggers on the account and the Team, projectId immutable.
     // + ConversationPresence (Inbox V3 agent presence, 20261106120000_inbox_v3_presence): projectId immutable,
     //   key shape CHECK; no relation to another project-owned table.
-    expect(refusing).toHaveLength(200);
+    expect(refusing).toHaveLength(206);
   });
 
   it("catalogue-keyed tables are keyed per project", async () => {
@@ -161,7 +161,7 @@ describe("the constraints later phases depend on", () => {
     // + FailedReplyAction (20261105120000_failed_replies).
     // + WhatsAppConversationState and InboxLifecycleSettings (20261106100000_inbox_v3_lifecycle).
     // + ConversationPresence (20261106120000_inbox_v3_presence).
-    expect(rows).toHaveLength(203);
+    expect(rows).toHaveLength(209);
     expect(rows.every((row) => row.validated)).toBe(true);
   });
 

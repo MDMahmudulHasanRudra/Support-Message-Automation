@@ -129,9 +129,9 @@ function NavItem({ link, active, collapsed }: { link: NavLink; active: boolean; 
  * Each needs the key its page checks; the shell filters them (presentation — the pages check again).
  */
 export const MAIN_ADMIN_LINKS: Array<NavLink & { key: string | null }> = [
-  { href: "/admin", label: "Admin Overview", icon: LayoutDashboard, key: null },
+  { href: "/admin", label: "Admin Dashboard", icon: LayoutDashboard, key: null },
   { href: "/admin/projects", label: "Projects", icon: FolderKanban, key: null },
-  { href: "/admin/configuration", label: "Configuration", icon: Building2, key: "configuration.view" },
+  { href: "/admin/configuration", label: "Organization", icon: Building2, key: "configuration.view" },
 ];
 
 /**

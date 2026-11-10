@@ -16,7 +16,7 @@ const WHATSAPP_GROUP_HREFS = ["/accounts", "/groups", "/group-message-sender", "
 
 describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   it("the label is the one shared constant", () => {
-    expect(LEGACY_WHATSAPP_LABEL).toBe("WhatsApp (Legacy)");
+    expect(LEGACY_WHATSAPP_LABEL).toBe("WhatsApp QR");
   });
 
   it("the sidebar module is labelled Legacy, keeps its id and every page it held", () => {
@@ -40,8 +40,8 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   });
 
   it("Team Members and Teams moved to the Team module with their section ids, so a role's saved access still applies", () => {
-    expect(NAV_GROUPS.find((g) => g.label === "Team")!.links.map((l) => l.href)).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
-    const team = ACCESS_MODULES.find((m) => m.label === "Team");
+    expect(NAV_GROUPS.find((g) => g.id === "team")!.links.map((l) => l.href)).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
+    const team = ACCESS_MODULES.find((m) => m.id === "team");
     const ids = team!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
     expect(ids).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
   });
@@ -52,8 +52,9 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
     expect(CHANNEL_PRESENTATION.WHATSAPP.label).toBe(LEGACY_WHATSAPP_LABEL);
   });
 
-  it("no identifier moved: WhatsApp is still not a channel type, and the keys are unchanged", () => {
-    expect([...CHANNEL_TYPES]).toEqual(["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT"]);
+  it("no identifier moved: the linked-device WhatsApp is still not a channel type, and the keys are unchanged", () => {
+    // WHATSAPP_CLOUD is the Official API, a separate channel. The QR-linked module must never become one.
+    expect([...CHANNEL_TYPES]).toEqual(["MESSENGER", "INSTAGRAM", "TELEGRAM", "WEBCHAT", "WHATSAPP_CLOUD"]);
     const chat = PROJECT_FEATURES.find((f) => f.key === "WHATSAPP_CHAT");
     expect(chat).toMatchObject({ label: "WhatsApp Chat", routes: ["/chat"], permissionKeys: ["messages.reply"] });
     expect(PERMISSIONS.filter((p) => p.key.startsWith("whatsapp.")).map((p) => p.key)).toEqual(["whatsapp.view", "whatsapp.manage"]);

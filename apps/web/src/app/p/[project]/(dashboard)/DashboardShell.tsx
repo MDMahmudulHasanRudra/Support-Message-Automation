@@ -232,7 +232,7 @@ export function DashboardShell({
                 // own overview first, so every login and role is managed from one group; Release Notes
                 // stays a global module. Project Members / Project Roles stay in the workspace below.
                 globalGroups: globalGroups.map((g) =>
-                  g.label === "Users & Permissions" && granted.has("users.view") ? { ...g, links: [ADMIN_USERS_OVERVIEW_LINK, ...g.links] } : g,
+                  g.id === "users-permissions" && granted.has("users.view") ? { ...g, links: [ADMIN_USERS_OVERVIEW_LINK, ...g.links] } : g,
                 ),
                 mainAdminLinks: MAIN_ADMIN_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
               }

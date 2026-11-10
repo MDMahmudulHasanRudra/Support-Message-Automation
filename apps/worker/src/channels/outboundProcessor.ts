@@ -6,7 +6,7 @@ import { logSystemEvent } from "../logging/logSystemEvent.js";
 import { currentProjectId, forEachProject } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import { getAutomationSettings } from "../pipeline/settings.js";
-import { metaAppSecretFor, sendMetaText, sendTelegramText, type FetchImpl, type SendOutcome } from "./providerApi.js";
+import { metaAppSecretFor, sendMetaText, sendTelegramText, sendWhatsAppCloud, type FetchImpl, type SendOutcome } from "./providerApi.js";
 
 /**
  * The send queue for Messenger, Instagram and Telegram (OMNICHANNEL.md §8) — the channels' one
@@ -112,6 +112,9 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
       senderType: true,
       messagingType: true,
       messagingTag: true,
+      templateName: true,
+      templateLanguage: true,
+      templateParams: true,
       conversation: { select: { id: true, externalThreadId: true, lastInboundAt: true, kind: true } },
       connection: {
         select: { id: true, name: true, enabled: true, status: true, authMode: true, pageId: true, humanAgentEnabled: true, accessTokenCiphertext: true, appSecretCiphertext: true },
@@ -174,10 +177,12 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
   // The window is checked again now, not only when the reply was written: a reply queued at 23h59
   // and retried after a provider outage may no longer be allowed.
   const window = decideReplyWindow({ type: message.type as ChannelType, lastInboundAt: conversation.lastInboundAt, now, humanAgentEnabled: connection.humanAgentEnabled, automated });
-  if (!window.allowed) {
+  // An approved template is the one thing WhatsApp allows outside the window, and only a person can queue one.
+  if (!window.allowed && !(provider === "WHATSAPP_CLOUD" && message.templateName && !automated)) {
     await fail(`Not sent: ${window.reason}`);
     return true;
   }
+  const sendAs = window.allowed ? window : { messagingType: null, tag: null };
 
   let outcome: SendOutcome;
   try {
@@ -203,8 +208,8 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
           appSecret,
           recipientId: conversation.externalThreadId,
           text: message.text,
-          messagingType: window.messagingType === "MESSAGE_TAG" ? "MESSAGE_TAG" : "RESPONSE",
-          tag: window.tag,
+          messagingType: sendAs.messagingType === "MESSAGE_TAG" ? "MESSAGE_TAG" : "RESPONSE",
+          tag: sendAs.tag,
           // Messenger echoes it back, which is how the echo of this send is recognised. Instagram's send
           // API has no such field; its echo is matched by the id returned below instead.
           metadata: provider === "META_MESSENGER" ? message.id : null,
@@ -212,10 +217,19 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
         });
         break;
       }
-      case "WHATSAPP_CLOUD":
-        // Not reachable: an unimplemented provider was refused above (website chat returned before it).
-        await fail(`Not sent: ${CHANNEL_PROVIDERS[provider].label} has no sender here.`);
-        return true;
+      case "WHATSAPP_CLOUD": {
+        const appSecret = metaAppSecretFor(connection);
+        if (!connection.pageId || !appSecret) {
+          await fail(`Not sent: ${connection.name}'s credentials are incomplete. Enter them again.`);
+          return true;
+        }
+        if (!(await projectHasFeature("WHATSAPP_OFFICIAL"))) {
+          await fail("Not sent: WhatsApp (Official API) is switched off for this project.");
+          return true;
+        }
+        outcome = await sendWhatsAppCloud({ phoneNumberId: connection.pageId, token, appSecret, to: conversation.externalThreadId, text: message.text, template: message.templateName && message.templateLanguage ? { name: message.templateName, language: message.templateLanguage, params: message.templateParams } : null, fetchImpl });
+        break;
+      }
       default:
         return assertNeverProvider(provider, "channel provider");
     }
@@ -228,7 +242,7 @@ export async function sendNextQueued(now: Date = new Date(), fetchImpl: FetchImp
 
   switch (outcome.kind) {
     case "SENT":
-      await markSent(message.id, outcome.externalMessageId, now, window.messagingType, window.tag);
+      await markSent(message.id, outcome.externalMessageId, now, sendAs.messagingType, sendAs.tag);
       return true;
     case "UNKNOWN":
       await finish(message.id, { deliveryStatus: "UNKNOWN", lastError: outcome.message, nextAttemptAt: null });

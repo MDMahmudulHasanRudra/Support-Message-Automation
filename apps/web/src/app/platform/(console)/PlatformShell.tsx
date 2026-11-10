@@ -3,7 +3,7 @@
 import { IntentLink } from "@/components/ProjectLink";
 import { PageEpoch } from "@/components/NavigationProgress";
 import { usePathname } from "next/navigation";
-import { Activity, Briefcase, ChevronRight, CreditCard, Globe, LayoutDashboard, LifeBuoy, LogOut, Settings, ShieldCheck } from "lucide-react";
+import { Activity, UserPlus, Briefcase, ChevronRight, CreditCard, Globe, LayoutDashboard, LifeBuoy, LogOut, Settings, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { ThemeToggle } from "@/app/p/[project]/(dashboard)/ThemeToggle";
 import { navIconClass, navItemClass } from "@/components/shell/ShellParts";
@@ -17,6 +17,7 @@ import { BrandMark } from "@/components/ui";
 const NAV = [
   { href: "/platform", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/platform/customers", label: "Customers", icon: Briefcase, exact: false },
+  { href: "/platform/signups", label: "Sign-ups", icon: UserPlus, exact: false },
   { href: "/platform/domains", label: "Domains", icon: Globe, exact: false },
   { href: "/platform/plans", label: "Plans & billing", icon: CreditCard, exact: false },
   { href: "/platform/support", label: "Support access", icon: LifeBuoy, exact: false },

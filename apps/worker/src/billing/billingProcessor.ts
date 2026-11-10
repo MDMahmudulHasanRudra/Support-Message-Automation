@@ -91,6 +91,7 @@ export function startBillingProcessor(intervalMs = BILLING_INTERVAL_MS): NodeJS.
     if (testing) return;
     testing = true;
     void sendRequestedTestEmail()
+      .then(() => sendSignupEmails(new Date()))
       .catch((err) => console.error("[billing] test email failed", err))
       .finally(() => {
         testing = false;
@@ -242,6 +243,37 @@ export async function sendInvitations(now: Date, deps: BillingDeps): Promise<voi
     await platformPrisma.subscriptionEvent.create({
       data: { customerId: inv.customerId, kind: problem ? "INVITATION_EMAIL_FAILED" : "INVITATION_EMAILED", detail: problem ? { name: inv.name, reason: problem.slice(0, 300) } : { name: inv.name } },
     });
+  }
+}
+
+/**
+ * Public sign-up's emails (SIGNUP.md): the confirmation link and a rejection. The text is held encrypted on the request
+ * and wiped when claimed, so one attempt is made and the link exists nowhere afterwards. Requests nobody confirmed lapse,
+ * and closed ones are forgotten after 90 days.
+ */
+export async function sendSignupEmails(now: Date, given?: BillingDeps): Promise<void> {
+  await platformPrisma.signupRequest.updateMany({ where: { status: "EMAIL_PENDING", verifyExpiresAt: { lte: now } }, data: { status: "EXPIRED", emailCiphertext: null } });
+  await platformPrisma.signupRequest.deleteMany({ where: { status: { in: ["EXPIRED", "REJECTED"] }, updatedAt: { lt: new Date(now.getTime() - 90 * 86_400_000) } } });
+  const pending = await platformPrisma.signupRequest.findMany({ where: { emailCiphertext: { not: null } }, take: 20, select: { id: true, email: true, emailCiphertext: true } });
+  if (pending.length === 0) return;
+  const deps: BillingDeps = given ?? { mailer: await platformMailer(), send: sendWithNodemailer, resolve: resolveHostAddresses };
+  if (!deps.mailer) return;
+  const name = await productName();
+  for (const row of pending) {
+    const claimed = await platformPrisma.signupRequest.updateMany({ where: { id: row.id, emailCiphertext: row.emailCiphertext }, data: { emailCiphertext: null } });
+    if (claimed.count === 0) continue;
+    let problem: string | null;
+    try {
+      const mail = JSON.parse(decryptSecret(row.emailCiphertext!)) as { kind: "VERIFY"; link: string; businessName: string } | { kind: "REJECTED"; reason: string | null; businessName: string };
+      const email =
+        mail.kind === "VERIFY"
+          ? { subject: `Confirm your email for ${name}`, text: `Hello,\n\nThanks for signing up ${mail.businessName} for ${name}. Please open this link and press the button to confirm your email:\n\n${mail.link}\n\nThe link works for 48 hours. If this was not you, ignore this email.` }
+          : { subject: `Your ${name} request`, text: `Hello,\n\nWe could not open a workspace for ${mail.businessName}.${mail.reason ? `\n\nReason: ${mail.reason}` : ""}\n\nYou can reply to this email if you have questions.` };
+      problem = await deliver(deps, row.email, email, row.id);
+    } catch (err) {
+      problem = err instanceof Error ? err.message : String(err);
+    }
+    await platformPrisma.signupRequest.update({ where: { id: row.id }, data: problem ? { emailError: problem.slice(0, 300) } : { emailSentAt: now, emailError: null } });
   }
 }
 

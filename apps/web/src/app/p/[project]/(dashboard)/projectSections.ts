@@ -89,6 +89,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/conversations/messenger": { write: ["conversations.reply"] },
   "/conversations/instagram": { write: ["conversations.reply"] },
   "/conversations/telegram": { write: ["conversations.reply"] },
+  "/conversations/whatsapp-official": { write: ["conversations.reply"] },
   "/conversations/website": { write: ["conversations.reply"], also: ["/api/channels/attachment", "/api/channels/webchat-photo"] },
   "/messages": { label: "All messages (needs attention, ignored)", also: ["/ignored", "/needs-attention", "/api/whatsapp/media"] },
   "/messages/unanswered": { write: ["messages.reply"], also: ["/api/messages/support-response"] },
@@ -103,6 +104,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/follow-ups": { write: ["messages.reply", "conversations.reply"] },
   // The same rule for a ticket (TICKETS.md).
   "/tickets": { write: ["messages.reply", "conversations.reply"] },
+  "/payments": { write: ["payments.create"] },
   "/contacts": { write: ["contacts.edit", "contacts.delete", "contacts.export"], also: ["/api/contacts"] },
   "/contacts/campaigns": { write: ["contacts.campaign"] },
   "/contacts/import": { fullOnly: true },
@@ -213,6 +215,7 @@ const SECTION_RULES: Record<string, SectionRule> = {
   "/settings/mood-detection": { write: ["settings.edit"] },
   "/settings/inbox-status": { write: ["settings.edit"] },
   "/settings/tickets": { write: ["settings.edit"] },
+  "/settings/payment-gateways": { fullOnly: true },
   "/settings/contacts": { write: ["settings.edit"] },
   "/settings/csat": { write: ["settings.edit"] },
   "/reports/csat": { also: ["/api/reports/csat"] },

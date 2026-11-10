@@ -36,7 +36,7 @@ export const CHANNEL_PROVIDERS: Record<ChannelProviderId, ChannelProviderDefinit
   META_INSTAGRAM: { label: "Instagram DM (Meta)", implemented: true, payloadProvider: "META" },
   TELEGRAM: { label: "Telegram Bot API", implemented: true, payloadProvider: "TELEGRAM" },
   WEBCHAT: { label: "Website chat (Get Assist)", implemented: true, payloadProvider: "WEBCHAT" },
-  WHATSAPP_CLOUD: { label: "WhatsApp (Official API)", implemented: false, payloadProvider: "WHATSAPP_CLOUD" },
+  WHATSAPP_CLOUD: { label: "WhatsApp (Official API)", implemented: true, payloadProvider: "WHATSAPP_CLOUD" },
 };
 
 /** Fails to compile when a case is missing; throws if an impossible value arrives at run time. */
@@ -55,6 +55,8 @@ export function providerForChannelType(type: ChannelType): ChannelProviderId {
       return "TELEGRAM";
     case "WEBCHAT":
       return "WEBCHAT";
+    case "WHATSAPP_CLOUD":
+      return "WHATSAPP_CLOUD";
     default:
       return assertNeverProvider(type, "channel type");
   }
@@ -79,7 +81,7 @@ export function classifyMetaWebhookObject(object: string): MetaWebhookObjectRout
     case "instagram":
       return { kind: "CHANNEL", type: "INSTAGRAM", provider: "META_INSTAGRAM" };
     case "whatsapp_business_account":
-      return { kind: "UNSUPPORTED", provider: "WHATSAPP_CLOUD", reason: "WhatsApp (Official API) is not available in this release; its events are not recorded." };
+      return { kind: "UNSUPPORTED", provider: "WHATSAPP_CLOUD", reason: "WhatsApp (Official API) is connected per number at its own callback address, not through the platform app; its events are not recorded." };
     default:
       return { kind: "UNKNOWN", reason: `Meta object "${object.slice(0, 64)}" is not handled by this server.` };
   }
@@ -87,7 +89,7 @@ export function classifyMetaWebhookObject(object: string): MetaWebhookObjectRout
 
 // ─── Recorded events ────────────────────────────────────────────────────────────────────────────
 
-export type InboundRoute = { route: "META"; type: MetaChannelType } | { route: "TELEGRAM" } | { route: "WEBCHAT" } | { route: "REJECT"; reason: string };
+export type InboundRoute = { route: "META"; type: MetaChannelType } | { route: "TELEGRAM" } | { route: "WEBCHAT" } | { route: "WHATSAPP_CLOUD" } | { route: "REJECT"; reason: string };
 
 /**
  * How the worker processes one recorded event on one connection. The payload's provider must be the
@@ -112,7 +114,7 @@ export function routeInboundEvent(payload: { provider?: unknown; type?: unknown 
     case "WEBCHAT":
       return recorded === "WEBCHAT" ? { route: "WEBCHAT" } : mismatch();
     case "WHATSAPP_CLOUD":
-      return { route: "REJECT", reason: "WhatsApp (Official API) is not available in this release; nothing is processed for it." };
+      return recorded === "WHATSAPP_CLOUD" ? { route: "WHATSAPP_CLOUD" } : mismatch();
     default:
       return assertNeverProvider(provider, "channel provider");
   }

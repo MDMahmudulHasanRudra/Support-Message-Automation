@@ -1,3 +1,4 @@
+import { normalizeWhatsAppCloudEvent } from "@support-automation/shared";
 import { handleChannelMenu } from "../menuBot/menuBot.js";
 import { decryptSecret } from "@support-automation/db";
 import {
@@ -96,7 +97,7 @@ export function resetChannelInboundStateForTests(): void {
 
 type Connection = {
   id: string;
-  type: "MESSENGER" | "INSTAGRAM" | "TELEGRAM" | "WEBCHAT";
+  type: "MESSENGER" | "INSTAGRAM" | "TELEGRAM" | "WEBCHAT" | "WHATSAPP_CLOUD";
   externalAccountId: string | null;
   appId: string | null;
   authMode: "MANUAL" | "PLATFORM";
@@ -127,6 +128,9 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
         // The web already validated the visitor and recorded a plain message (WEBSITE_CHAT.md).
         normalized = normalizeWebchatEvent(payload);
         break;
+      case "WHATSAPP_CLOUD":
+        normalized = (await projectHasFeature("WHATSAPP_OFFICIAL")) ? normalizeWhatsAppCloudEvent(payload.item, event.receivedAt) : { type: "IGNORED", reason: "WhatsApp (Official API) is switched off for this project." };
+        break;
       case "META":
         normalized = connection.externalAccountId ? normalizeMetaEvent(payload.item, connection.externalAccountId, event.receivedAt) : { type: "IGNORED", reason: "The connection has no account id yet." };
         break;
@@ -137,6 +141,9 @@ export async function processChannelEvent(event: ChannelInboundEvent, now: Date 
     switch (normalized.type) {
       case "IGNORED":
         return settle(event.id, "IGNORED", normalized.reason);
+      case "SEND_FAILED":
+        await prisma.channelMessage.updateMany({ where: { connectionId: connection.id, externalMessageId: normalized.externalMessageId, direction: "OUTBOUND" }, data: { deliveryStatus: "FAILED", lastError: normalized.reason } });
+        return settle(event.id, "PROCESSED", null);
       case "MESSAGE":
         await storeMessage(connection, normalized, now, fetchImpl);
         return settle(event.id, "PROCESSED", null);

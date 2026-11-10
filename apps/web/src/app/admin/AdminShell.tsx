@@ -33,8 +33,8 @@ interface AdminNavItem {
   sub?: boolean;
 }
 
-/** Support is shown page by page (WhatsApp Chat, Messages, Escalations); every other module is one entry. */
-const EXPANDED_GROUPS = new Set(["Support"]);
+/** All Conversations and Operations are shown page by page; every other module is one entry. */
+const EXPANDED_GROUPS = new Set(["support", "operations"]);
 
 function buildSections(granted: ReadonlySet<string>): Array<{ title: string; items: AdminNavItem[] }> {
   const groups = navGroupsFor(granted);
@@ -44,33 +44,33 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
     {
       title: "Main Admin",
       items: [
-        { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
+        { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
         // Reusable module selections (PROJECT_MODULES.md §8); editing needs projects.manage.
-        { href: "/admin/module-templates", label: "Module templates", icon: Blocks, exact: false },
+        { href: "/admin/module-templates", label: "Project Templates", icon: Blocks, exact: false },
         // SaaS (SAAS_PLATFORM_PLAN.md): customers and the addresses that open their workspaces.
-        ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Configuration", icon: Building2, exact: false }] : []),
+        ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Organization", icon: Building2, exact: false }] : []),
         // Users & Permissions: the overview, then App Users and Permission Modules (the same in every
         // project, opened without project tabs) — one place for every login and every role.
-        ...(granted.has("users.view") ? [{ href: "/admin/users", label: "Users & Permissions", icon: ShieldCheck, exact: false }] : []),
+        ...(granted.has("users.view") ? [{ href: "/admin/users", label: "Users & Access", icon: ShieldCheck, exact: false }] : []),
         ...groups
-          .filter((g) => g.label === "Users & Permissions")
+          .filter((g) => g.id === "users-permissions")
           .flatMap((g) => g.links.map((link) => ({ ...open(link), sub: true }))),
         // White labeling (BRANDING.md): anyone in the portal can see it; saving needs projects.manage.
-        { href: "/admin/branding", label: "Branding", icon: Palette, exact: false },
+        { href: "/admin/branding", label: "Branding Settings", icon: Palette, exact: false },
         // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
         ...groups
-          .filter((g) => isGlobal(g.links) && g.label !== "Users & Permissions")
+          .filter((g) => isGlobal(g.links) && g.id !== "users-permissions")
           .map((g) => ({ ...open(g.links[0]!, g.label), icon: g.icon })),
         // The signed-in person's own profile, password, two-step sign-in and devices (ACCOUNT_SELF_SERVICE.md).
-        { href: "/admin/account", label: "My account", icon: UserRound, exact: false },
+        { href: "/admin/account", label: "My Account", icon: UserRound, exact: false },
       ],
     },
     {
       title: "Workspace",
       items: groups
         .filter((g) => !isGlobal(g.links))
-        .flatMap((g) => (EXPANDED_GROUPS.has(g.label) ? g.links.map((link) => open(link)) : [{ ...open(g.links[0]!, g.label), icon: g.icon }])),
+        .flatMap((g) => (EXPANDED_GROUPS.has(g.id ?? "") ? g.links.map((link) => open(link)) : [{ ...open(g.links[0]!, g.label), icon: g.icon }])),
     },
   ];
 }

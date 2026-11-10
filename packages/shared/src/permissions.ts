@@ -130,6 +130,10 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   //   export  — export clients to a file (personal data leaves the system)
   // Contacts (CONTACTS.md). Apart from Clients on purpose: a person who answers chats can note a number here without
   // being able to see billing, and exporting or campaigning to the whole list is its own decision.
+  // Payment links (PAYMENT_LINKS.md). Merchant account details are their own key: whoever holds it decides where money goes.
+  { key: "payments.view", label: "View Payment Links", category: "Payments" },
+  { key: "payments.create", label: "Create Payment Links", category: "Payments" },
+  { key: "payments.manage", label: "Manage Payment Accounts", category: "Payments" },
   { key: "contacts.view", label: "View Contacts", category: "Contacts" },
   { key: "contacts.edit", label: "Add and Edit Contacts", category: "Contacts" },
   { key: "contacts.delete", label: "Permanently Delete Contacts", category: "Contacts" },

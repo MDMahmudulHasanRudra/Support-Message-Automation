@@ -920,6 +920,52 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.39.0",
+    title: "Public sign-up",
+    summary: "A pricing page and a sign-up form, with every new business approved by a person.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["Platform"],
+    whatsNew: [
+      "A public pricing page that shows the plans you choose, at the prices you set",
+      "A sign-up form with email confirmation and protection against fake requests",
+      "A Sign-ups page on the platform: one press sets up the workspace, plan and owner invitation",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
+  {
+    version: "0.40.0",
+    title: "Payment links",
+    summary: "Ask for payment inside a chat, paid into your own SSLCOMMERZ or bKash account.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["Payment Links", "All Conversations", "WhatsApp Chat"],
+    whatsNew: [
+      "A Payment tab beside every chat: make a link and drop it in your reply",
+      "Customers pay by card, bKash, Nagad or bank on a simple page",
+      "A paid link settles the invoice and records the receipt by itself",
+      "Anything unusual, like a different amount or paying twice, is flagged for you to check",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
+  {
+    version: "0.41.0",
+    title: "WhatsApp (Official API)",
+    summary: "Connect a number through Meta's official WhatsApp API and answer it in All Conversations.",
+    releaseDate: "2026-11-09",
+    releaseType: "FEATURE",
+    affectedModules: ["All Conversations", "Messaging Channels"],
+    whatsNew: [
+      "Connect a number from your own Meta account, beside your QR-linked numbers",
+      "Its customers appear in All Conversations, with AI, routing and contacts working as on other channels",
+      "Send an approved template to reach someone after the 24-hour window",
+    ],
+    improvements: [],
+    bugFixes: ["The Send in their chat button in a contact campaign now works on Messenger, Instagram and Telegram"],
+  },
 ];
 
 async function main() {

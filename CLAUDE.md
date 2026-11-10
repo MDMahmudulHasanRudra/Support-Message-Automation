@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-**Softify Assist** (production: `https://assist.softifybd.com`). Rule-based WhatsApp support
+**Softify Assist** (this deployment answers on `admin.getassist.pro` and its customers' `*.getassist.pro` addresses; `assist.softifybd.com` is a separate project). Rule-based WhatsApp support
 automation: a Next.js dashboard (`apps/web`), a dedicated OpenWA worker (`apps/worker`), and a
 PostgreSQL/Prisma backend (`packages/db`), run via Docker Compose. The npm scope
 (`@support-automation/*`), the git repo name (`support-crm`) and the Docker volume names predate
@@ -2955,6 +2955,18 @@ Feature `CSAT_SURVEYS`, **off by default**, needs `UNIFIED_INBOX_V3`; every chan
 ### All projects inbox (`ALL_PROJECTS_INBOX.md`, 8 Nov 2026)
 
 `/conversations/all-projects`: one list of every conversation a person can read across their projects. Rules worth not undoing: it adds no authority and no second query, so `universalInboxProjects` runs `checkPermission` inside each project and `loadUniversalInbox` calls the ordinary `loadInbox` there; a row opens under ITS OWN project's URL, so the conversation page, its actions and replies run that project's checks; the project list always comes from the session, never the request; saved views and mentions belong to one project and are not offered here.
+
+### WhatsApp (Official API) (`WHATSAPP_OFFICIAL.md`, 9 Nov 2026)
+
+Feature `WHATSAPP_OFFICIAL`, **off by default**, needs `OMNICHANNEL`; `ChannelType.WHATSAPP_CLOUD` is one more channel, and the QR-linked module is untouched (never write `Message` or `OutboundMessage` from it). **Not verified against real Meta**; each number is connected by hand (no Embedded Signup). Rules worth not undoing: an event goes to the connection in the key's project, on the same app, whose phone number id it names; a template passes the 24-hour window only for a person, never AI or a bot; `queueCloudTemplate` is one press to one person who has written in, approved templates only, and there is no bulk path, because Meta charges for each.
+
+### Payment links (`PAYMENT_LINKS.md`, 9 Nov 2026)
+
+Feature `PAYMENT_LINKS`, **off by default**. SSLCOMMERZ and bKash into each business's own merchant account; **not yet verified against a real gateway**. Rules worth not undoing: a callback is never believed, the gateway is asked directly; exact amount or it is not a payment; no answer is UNKNOWN, neither paid nor failed; bKash executes once; settling is idempotent and goes through `applyClientPayment`, the same code a person's payment runs; paid twice is flagged; a link only fills the reply box.
+
+### Public sign-up (`SIGNUP.md`, 9 Nov 2026)
+
+Off until an operator switches it on at Platform → Sign-ups; `/pricing` and `/signup` do not exist until then and never on a customer's address. Prices are the plans marked public. Rules worth not undoing: the form only records a `SignupRequest` and answers the same for any email; Approve is claimed first and calls `createCustomer` itself, never a second way to make a customer; only the token's hash is stored; links use the platform's own address, never the request's host.
 
 ### Menu bots (`MENU_BOTS.md`, 8 Nov 2026)
 

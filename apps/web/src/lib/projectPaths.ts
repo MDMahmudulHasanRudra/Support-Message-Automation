@@ -65,6 +65,11 @@ const OUTSIDE_PROJECT = [
   // The RELQIVO platform (Layer 1) and the support-access handoff (SAAS_PLATFORM_PLAN.md §12).
   /^\/platform(\/|$|\?)/,
   /^\/support-access\//,
+  // The public pricing and sign-up pages (SIGNUP.md).
+  /^\/pricing(\/|$|\?)/,
+  // A customer's payment page (PAYMENT_LINKS.md).
+  /^\/pay\//,
+  /^\/signup(\/|$|\?)/,
   /^\/api\/health(\/|$|\?)/,
   /^\/p\//,
   /^\/_next\//,

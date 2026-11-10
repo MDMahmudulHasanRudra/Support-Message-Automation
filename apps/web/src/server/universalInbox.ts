@@ -99,7 +99,7 @@ function readProject(session: Session, project: ActiveProject, channel: InboxSco
 }
 
 function sumCounts(all: readonly InboxCounts[]): InboxCounts {
-  const total: InboxCounts = { all: 0, unread: 0, needsReply: 0, mine: 0, closed: 0, byChannel: { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0 } };
+  const total: InboxCounts = { all: 0, unread: 0, needsReply: 0, mine: 0, closed: 0, byChannel: { WHATSAPP: 0, MESSENGER: 0, INSTAGRAM: 0, TELEGRAM: 0, WEBCHAT: 0, WHATSAPP_CLOUD: 0 } };
   for (const c of all) {
     total.all += c.all;
     total.unread += c.unread;

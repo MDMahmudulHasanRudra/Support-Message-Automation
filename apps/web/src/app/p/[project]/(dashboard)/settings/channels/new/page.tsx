@@ -4,6 +4,7 @@ import { projectPath } from "@/server/projectPaths";
 import Link from "@/components/ProjectLink";
 import { Card, PageHeader } from "@/components/ui";
 import { requireAccess } from "@/server/authorize";
+import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { ChannelMark } from "../../../conversations/ChannelMark";
 import { SetupGuide } from "../SetupGuide";
 import { ConnectChannelForm } from "../ConnectChannelForm";
@@ -14,14 +15,15 @@ export const metadata = { title: "Connect a channel" };
 export default async function NewChannelPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
   await requireAccess("channels.manage", "OMNICHANNEL");
   const { type: raw } = await searchParams;
-  const type = isChannelType(raw) ? raw : null;
+  const official = !(await activeDisabledFeatures()).has("WHATSAPP_OFFICIAL");
+  const type = isChannelType(raw) && (raw !== "WHATSAPP_CLOUD" || official) ? raw : null;
 
   if (!type) {
     return (
       <div>
         <PageHeader title="Connect a channel" description="Choose what to connect. You can connect several of each." />
         <div className="grid gap-3 sm:grid-cols-3">
-          {CHANNEL_TYPES.map((t) => (
+          {CHANNEL_TYPES.filter((t) => t !== "WHATSAPP_CLOUD" || official).map((t) => (
             <Link key={t} href={`/settings/channels/new?type=${t}`} className="rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5 transition-colors hover:border-[var(--color-border-strong)]">
               <ChannelMark channel={t} size="md" />
               <p className="mt-3 text-[14px] font-semibold text-[color:var(--color-foreground)]">{CHANNELS[t].label}</p>

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   CAMPAIGN_CHANNEL_KIND,
   channelContactHandleKind,
+  channelContactValue,
   channelContactSource,
   collectedChatKind,
   CONTACT_EMAIL_FOOTER,
@@ -300,7 +301,7 @@ export async function conversationFacts(ref: ConversationRef) {
   }
   const conversation = await prisma.channelConversation.findFirst({ where: { id: ref.conversationId }, select: { type: true, title: true, customerName: true, customerUsername: true } });
   const source = channelContactSource(conversation?.type ?? "");
-  const handle = conversation?.customerUsername?.replace(/^@/, "").trim();
+  const value = channelContactValue(conversation?.type ?? "", conversation?.customerUsername);
   const kind = channelContactHandleKind(conversation?.type ?? "");
   return {
     source,
@@ -308,7 +309,7 @@ export async function conversationFacts(ref: ConversationRef) {
     name: conversation?.customerName?.trim() || null,
     title: conversation?.customerName?.trim() || conversation?.title || null,
     chat: { channelConversationId: ref.conversationId } as const,
-    values: handle && kind ? [{ kind, value: handle, normalized: handle.toLowerCase() }] : [],
+    values: value ? [{ ...value, isWhatsApp: value.kind === "PHONE" }] : [],
     handleKind: kind ?? undefined,
   };
 }

@@ -744,6 +744,12 @@ model Project {
   csatSurveys                          CsatSurvey[]
   csatSettings                         CsatSettings?
   followUps                            FollowUp[]
+  whatsAppCloudTemplates               WhatsAppCloudTemplate[]
+  paymentGateways                      PaymentGateway[]
+  paymentSettings                      PaymentSettings?
+  paymentLinks                         PaymentLink[]
+  paymentAttempts                      PaymentAttempt[]
+  paymentLinkEvents                    PaymentLinkEvent[]
   menuBots                             MenuBot[]
   menuSessions                         MenuSession[]
   menuEvents                           MenuEvent[]
@@ -1027,6 +1033,7 @@ model User {
   followUpsAssigned             FollowUp[]                  @relation("FollowUpAssignee")
   followUpsCreated              FollowUp[]                  @relation("FollowUpCreator")
   followUpsCompleted            FollowUp[]                  @relation("FollowUpCompleter")
+  paymentLinksCreated           PaymentLink[]               @relation("PaymentLinkCreator")
   menuBotsCreated               MenuBot[]                   @relation("MenuBotCreator")
   contactsCreated               Contact[]                   @relation("ContactCreator")
   contactCampaignsCreated       ContactCampaign[]           @relation("ContactCampaignCreator")
@@ -1143,6 +1150,7 @@ model SecuritySettings {
 }
 
 model WhatsAppAccount {
+  paymentLinks             PaymentLink[]
   menuSessions             MenuSession[]
   contactConversationLinks ContactConversationLink[]
   id                       String                    @id @default(cuid())
@@ -6353,6 +6361,8 @@ enum ChannelType {
   MESSENGER
   INSTAGRAM
   TELEGRAM
+  /// WhatsApp (Official API), the Cloud API (WHATSAPP_OFFICIAL.md). Separate from WhatsApp (Legacy).
+  WHATSAPP_CLOUD
   /// Website live chat (WEBSITE_CHAT.md): our own widget; no outside provider.
   WEBCHAT
 }
@@ -6519,6 +6529,9 @@ enum ChannelAiOutcome {
 /// Credentials are `encryptSecret` envelopes, read only in apps/web `server/channels/connections.ts`
 /// and the worker's send path; nothing returns them to a browser.
 model ChannelConnection {
+  /// WhatsApp (Official API): the business account the phone number belongs to.
+  wabaId                       String?
+  cloudTemplates               WhatsAppCloudTemplate[]
   id                           String                  @id @default(cuid())
   projectId                    String                  @default(dbgenerated("project_id_required()"))
   project                      Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -6615,6 +6628,7 @@ model ChannelConnection {
 
 /// One conversation: a customer's thread with a Page / Instagram account, or one Telegram chat.
 model ChannelConversation {
+  paymentLinks         PaymentLink[]
   menuSessions         MenuSession[]
   contactLinks         ContactConversationLink[]
   id                   String                    @id @default(cuid())
@@ -6677,6 +6691,10 @@ model ChannelConversation {
 /// written QUEUED when a person or AI replies and the worker moves it through SENDING to SENT (and
 /// DELIVERED / READ when the provider says so), so the thread and the queue cannot disagree.
 model ChannelMessage {
+  /// WhatsApp (Official API): set on a template message, the only kind allowed outside the 24-hour window.
+  templateName      String?
+  templateLanguage  String?
+  templateParams    String[]                @default([])
   id                String                  @id @default(cuid())
   projectId         String                  @default(dbgenerated("project_id_required()"))
   project           Project                 @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -6833,6 +6851,7 @@ enum ClientDuplicatePolicy {
 }
 
 model Client {
+  paymentLinks          PaymentLink[]
   contacts              Contact[]
   id                    String              @id @default(cuid())
   /// The project this row belongs to. Every write must name it: the default raises (no default
@@ -7113,6 +7132,7 @@ enum ClientDueStatus {
 /// or deleted (cancel it instead). The amount is optional; the currency is required only when an
 /// amount is present and comes from the project's ClientBillingCurrency list.
 model ClientDue {
+  paymentLinks    PaymentLink[]
   id              String              @id @default(cuid())
   projectId       String              @default(dbgenerated("project_id_required()"))
   project         Project             @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -7751,6 +7771,7 @@ model ListViewPreference {
 
 /// One customer (tenant) of the platform: a company with its own project and its own address.
 model Customer {
+  signupRequests        SignupRequest[]
   /// Platform approvals for the approval-only modules (MODULE_APPROVALS.md).
   moduleApprovals       ModuleApproval[]
   id                    String                 @id @default(cuid())
@@ -7856,6 +7877,8 @@ model PlatformBillingSettings {
   paymentInstructions String?
   /// The plan a new customer is given unless the operator chooses otherwise. Null = none preselected.
   defaultPlanId       String?
+  /// The public pricing and sign-up pages exist only while this is on (SIGNUP.md).
+  signupEnabled       Boolean  @default(false)
   updatedByUsername   String?
   updatedAt           DateTime @updatedAt
 }
@@ -7863,26 +7886,29 @@ model PlatformBillingSettings {
 /// A package a customer can be on. Editing a plan never changes a customer already on it: a
 /// subscription keeps a snapshot of the plan as it was when assigned.
 model Plan {
-  id                  String         @id @default(cuid())
-  name                String         @unique
+  id                  String          @id @default(cuid())
+  name                String          @unique
   description         String?
   priceMinor          BigInt
-  currency            String         @default("BDT")
+  currency            String          @default("BDT")
   /// MONTH or YEAR.
-  interval            String         @default("MONTH")
-  trialDays           Int            @default(0)
+  interval            String          @default("MONTH")
+  trialDays           Int             @default(0)
   /// Null = no limit.
   maxWhatsAppAccounts Int?
   maxUsers            Int?
   /// Feature keys (packages/shared/src/projectFeatures.ts) the plan includes.
-  features            String[]       @default([])
+  features            String[]        @default([])
   /// Every module, including ones added later: `features` is ignored when this is on ("All Access").
-  allModules          Boolean        @default(false)
-  isActive            Boolean        @default(true)
-  sortOrder           Int            @default(0)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
+  allModules          Boolean         @default(false)
+  isActive            Boolean         @default(true)
+  /// Shown on the public pricing page (SIGNUP.md).
+  isPublic            Boolean         @default(false)
+  sortOrder           Int             @default(0)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
   subscriptions       Subscription[]
+  signupRequests      SignupRequest[]
 }
 
 /// A customer's subscription. One CURRENT row per customer (endedAt null, partial unique in the
@@ -8598,6 +8624,7 @@ model InventoryMovement {
 }
 
 model CommerceOrder {
+  paymentLinks      PaymentLink[]
   id                String                @id @default(cuid())
   projectId         String                @default(dbgenerated("project_id_required()"))
   project           Project               @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -10141,6 +10168,7 @@ enum ContactRecipientStatus {
 /// One person or business a project has met. `serial` is counted per project by ContactSettings.lastSerial and never
 /// reused; `code` is optional and free-form (unique per project, case-insensitively, by a partial index in the migration).
 model Contact {
+  paymentLinks    PaymentLink[]
   id              String                     @id @default(cuid())
   projectId       String                     @default(dbgenerated("project_id_required()"))
   project         Project                    @relation(fields: [projectId], references: [id], onDelete: Restrict)
@@ -10394,4 +10422,198 @@ model MenuEvent {
   @@unique([projectId, messageRef])
   @@index([botId, createdAt])
   @@index([sessionId])
+}
+
+// Public sign-up (SIGNUP.md): a request waiting for a platform operator. Platform data, no projectId.
+enum SignupStatus {
+  EMAIL_PENDING
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model SignupRequest {
+  id              String       @id @default(cuid())
+  status          SignupStatus @default(EMAIL_PENDING)
+  businessName    String
+  ownerName       String
+  email           String
+  phone           String?
+  slug            String
+  planId          String?
+  plan            Plan?        @relation(fields: [planId], references: [id], onDelete: SetNull)
+  verifyTokenHash String       @unique
+  verifyExpiresAt DateTime
+  verifiedAt      DateTime?
+  /// The next email, encrypted so the worker can send it; wiped once sent.
+  emailCiphertext String?
+  emailSentAt     DateTime?
+  emailError      String?
+  addressHash     String?
+  decidedAt       DateTime?
+  decidedBy       String?
+  rejectReason    String?
+  customerId      String?
+  customer        Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([addressHash, createdAt])
+}
+
+// Payment links (PAYMENT_LINKS.md, feature PAYMENT_LINKS): paid into the business's own merchant account.
+enum PaymentProvider {
+  SSLCOMMERZ
+  BKASH
+}
+
+enum PaymentMode {
+  SANDBOX
+  LIVE
+}
+
+enum PaymentLinkStatus {
+  OPEN
+  PAID
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentAttemptStatus {
+  STARTED
+  PAID
+  FAILED
+  UNKNOWN
+  MISMATCH
+}
+
+/// One merchant account per service per project. Details are encrypted and never leave the server.
+model PaymentGateway {
+  id                    String          @id @default(cuid())
+  projectId             String          @default(dbgenerated("project_id_required()"))
+  project               Project         @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  provider              PaymentProvider
+  mode                  PaymentMode     @default(SANDBOX)
+  enabled               Boolean         @default(false)
+  credentialsCiphertext String
+  updatedByName         String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  @@unique([projectId, provider])
+}
+
+model PaymentSettings {
+  id         String   @id @default(cuid())
+  projectId  String   @unique @default(dbgenerated("project_id_required()"))
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  lastNumber Int      @default(0)
+  updatedAt  DateTime @default(now()) @updatedAt
+}
+
+model PaymentLink {
+  id                    String               @id @default(cuid())
+  projectId             String               @default(dbgenerated("project_id_required()"))
+  project               Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  number                Int
+  tokenHash             String               @unique
+  /// Encrypted so staff can copy the link again; the hash is what a request is matched on.
+  tokenCiphertext       String
+  amountMinor           BigInt
+  currency              String               @default("BDT")
+  description           String?
+  status                PaymentLinkStatus    @default(OPEN)
+  expiresAt             DateTime
+  paidAt                DateTime?
+  paidProvider          PaymentProvider?
+  gatewayTxnId          String?
+  needsAttention        Boolean              @default(false)
+  attentionNote         String?
+  receiptNumber         String?
+  clientDueId           String?
+  clientDue             ClientDue?           @relation(fields: [clientDueId], references: [id], onDelete: SetNull)
+  orderId               String?
+  order                 CommerceOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  clientId              String?
+  client                Client?              @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contactId             String?
+  contact               Contact?             @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  accountId             String?
+  account               WhatsAppAccount?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  chatId                String?
+  channelConversationId String?
+  channelConversation   ChannelConversation? @relation(fields: [channelConversationId], references: [id], onDelete: SetNull)
+  customerName          String?
+  createdById           String?
+  createdBy             User?                @relation("PaymentLinkCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdByName         String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  attempts              PaymentAttempt[]
+  events                PaymentLinkEvent[]
+
+  @@unique([projectId, number])
+  @@index([projectId, status, createdAt])
+  @@index([projectId, chatId])
+  @@index([channelConversationId])
+  @@index([clientDueId])
+}
+
+/// One try at paying. The reference is what the gateway knows it by, so a replayed callback lands on the same row.
+model PaymentAttempt {
+  id           String               @id @default(cuid())
+  projectId    String               @default(dbgenerated("project_id_required()"))
+  project      Project              @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  linkId       String
+  link         PaymentLink          @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  provider     PaymentProvider
+  mode         PaymentMode
+  reference    String
+  sessionRef   String?
+  status       PaymentAttemptStatus @default(STARTED)
+  gatewayTxnId String?
+  note         String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([projectId, provider, reference])
+  @@index([linkId])
+  @@index([sessionRef])
+}
+
+/// Append-only (trigger in the migration).
+model PaymentLinkEvent {
+  id        String      @id @default(cuid())
+  projectId String      @default(dbgenerated("project_id_required()"))
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  linkId    String
+  link      PaymentLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  kind      String
+  detail    String?
+  actorName String?
+  createdAt DateTime    @default(now())
+
+  @@index([linkId, createdAt])
+}
+
+/// A message template as Meta approved it, copied by Sync (WHATSAPP_OFFICIAL.md).
+model WhatsAppCloudTemplate {
+  id           String            @id @default(cuid())
+  projectId    String            @default(dbgenerated("project_id_required()"))
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  connectionId String
+  connection   ChannelConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name         String
+  language     String
+  category     String
+  status       String
+  bodyText     String
+  paramCount   Int               @default(0)
+  supported    Boolean           @default(true)
+  syncedAt     DateTime
+
+  @@unique([connectionId, name, language])
+  @@index([projectId])
 }

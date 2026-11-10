@@ -2,7 +2,7 @@ import { resolveAiClient, type AiClient } from "@support-automation/ai-client";
 import { collectContactFromChat } from "@support-automation/db";
 import {
   buildContactAiPrompt,
-  channelContactHandleKind,
+  channelContactValue,
   channelContactSource,
   collectedChatKind,
   CONTACT_AI_SYSTEM_PROMPT,
@@ -193,8 +193,7 @@ async function collectFromChannels(pass: Pass, cursorAt: Date, now: Date): Promi
     const isNew = pass.autoCreate && !linked.has(conversation.id) && messages.length > 0;
     if (found.values.length > 0 || isNew) {
       const title = conversation.customerName?.trim() || conversation.title || null;
-      const handle = conversation.customerUsername?.replace(/^@/, "").trim();
-      const handleKind = channelContactHandleKind(conversation.type);
+      const proven = channelContactValue(conversation.type, conversation.customerUsername);
       await save({
         projectId,
         chat: { channelConversationId: conversation.id },
@@ -202,7 +201,7 @@ async function collectFromChannels(pass: Pass, cursorAt: Date, now: Date): Promi
         source: channelContactSource(conversation.type),
         sourceDetail: title ? `From the chat with ${title}` : "From a chat",
         name: found.name ?? conversation.customerName?.trim() ?? null,
-        values: [...(handle && handleKind ? [{ kind: handleKind, value: handle, normalized: handle.toLowerCase() }] : []), ...found.values],
+        values: [...(proven ? [{ ...proven, isWhatsApp: proven.kind === "PHONE" }] : []), ...found.values],
         collectedByAi: found.usedAi,
         actor: { userId: null, name: found.usedAi ? "AI" : "Automatic" },
       });

@@ -17,6 +17,7 @@ import { loadLifecycle } from "@/server/conversationLifecycle";
 import { loadConversationFollowUps, type ConversationFollowUp } from "@/server/followUps";
 import { loadConversationTickets, loadTicketConfig, type TicketSummary } from "@/server/tickets";
 import { loadConversationContact, type ConversationContact } from "@/server/contacts";
+import { loadConversationPayments, type ConversationPayments } from "@/server/payments/core";
 
 /**
  * The inbox workspace side panel (INBOX_WORKSPACE.md): internal notes, priority / tags, Team
@@ -143,6 +144,8 @@ export interface WorkspaceData {
   followUps: ConversationFollowUp[] | null;
   /** This conversation's contact and what the chat itself proves (CONTACTS). Null when off or not allowed. */
   contactCard: ConversationContact | null;
+  /** This conversation's payment links (PAYMENT_LINKS). Null when off or not allowed. */
+  paymentCard: ConversationPayments | null;
   /** This conversation's tickets (TICKETS). Null while the feature is off. */
   tickets: TicketSummary[] | null;
   /** What the New ticket form offers. Null while the feature is off. */
@@ -269,7 +272,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     access.lifecycle && !access.collaboration ? mentionablePeople(session) : null,
     loadConversationCsat(ref, access.canRead),
   ]);
-  const [followUps, contactCard] = await Promise.all([access.followUps ? loadConversationFollowUps(ref) : null, loadConversationContact(session, ref)]);
+  const [followUps, contactCard, paymentCard] = await Promise.all([access.followUps ? loadConversationFollowUps(ref) : null, loadConversationContact(session, ref), loadConversationPayments(session, ref)]);
   const [tickets, ticketConfig, ticketTeams] = access.tickets
     ? await Promise.all([loadConversationTickets(ref), loadTicketConfig(), prisma.team.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } })])
     : [null, null, null];
@@ -304,6 +307,7 @@ export async function loadWorkspace(session: Session, ref: ConversationRef): Pro
     groupOwner: group ? { name: group.assignedTeamMember?.name ?? "", groupName: group.name } : null,
     followUps,
     contactCard,
+    paymentCard,
     tickets,
     ticketOptions: ticketConfig && ticketTeams ? { teams: ticketTeams, categories: ticketConfig.categories } : null,
     lifecycle: lifecycle
