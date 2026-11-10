@@ -40,8 +40,8 @@ describe("A1 — WhatsApp (Legacy) is a label, not an identifier", () => {
   });
 
   it("Team Members and Teams moved to the Team module with their section ids, so a role's saved access still applies", () => {
-    expect(NAV_GROUPS.find((g) => g.label === "Team")!.links.map((l) => l.href)).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
-    const team = ACCESS_MODULES.find((m) => m.label === "Team");
+    expect(NAV_GROUPS.find((g) => g.id === "team")!.links.map((l) => l.href)).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
+    const team = ACCESS_MODULES.find((m) => m.id === "team");
     const ids = team!.groups.flatMap((g) => g.entries.flatMap((e) => e.sections.map((s) => s.id)));
     expect(ids).toEqual(expect.arrayContaining(["/team-members", "/teams"]));
   });
