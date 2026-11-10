@@ -33,8 +33,8 @@ interface AdminNavItem {
   sub?: boolean;
 }
 
-/** Support is shown page by page (WhatsApp Chat, Messages, Escalations); every other module is one entry. */
-const EXPANDED_GROUPS = new Set(["support"]);
+/** All Conversations and Operations are shown page by page; every other module is one entry. */
+const EXPANDED_GROUPS = new Set(["support", "operations"]);
 
 function buildSections(granted: ReadonlySet<string>): Array<{ title: string; items: AdminNavItem[] }> {
   const groups = navGroupsFor(granted);

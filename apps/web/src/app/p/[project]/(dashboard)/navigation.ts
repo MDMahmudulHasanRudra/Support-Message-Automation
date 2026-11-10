@@ -393,41 +393,49 @@ export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: R
 // escalations, team activity) first, setup/config areas checked occasionally next, advanced
 // analytical modules and system admin — checked rarely — last.
 export const NAV_GROUPS: NavGroup[] = [
-  // The website chat widget's own module (WEBSITE_CHAT.md); the Omnichannel feature hides it when off.
   {
-    label: "Website Chat",
-    icon: Globe,
-    links: [
-      { href: "/website-chat", label: "Live board", icon: LiveBoardIcon },
-      { href: "/conversations/website", label: "Conversations", icon: MessagesSquare },
-      { href: "/website-chat/visitors", label: "Visitors", icon: VisitorsIcon },
-      { href: "/website-chat/widgets", label: "Widgets & install", icon: InstallIcon },
-    ],
-  },
-  {
+    // Every place a customer is answered, one entry per channel (OMNICHANNEL.md). The Omnichannel
+    // feature hides the channel inboxes when it is off; WhatsApp Chat is unaffected either way.
     id: "support",
     label: "All Conversations",
     icon: MessageCircleMore,
     links: [
-      // The unified inbox and the channel inboxes beside WhatsApp (OMNICHANNEL.md). The Omnichannel
-      // feature hides all four when it is off; WhatsApp Chat is unaffected either way.
       { href: "/conversations/all", label: "Unified Inbox", icon: Inbox },
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
+      { href: "/conversations/whatsapp-official", label: "WhatsApp", icon: MessageCircleMore },
       { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
       { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
       { href: "/conversations/telegram", label: "Telegram", icon: Send },
-      { href: "/conversations/whatsapp-official", label: "WhatsApp", icon: MessageCircleMore },
+      { href: "/conversations/website", label: "Website Chat", icon: Globe },
+    ],
+  },
+  // The website chat widget's own module (WEBSITE_CHAT.md); its conversations are under All Conversations.
+  {
+    label: "Website Chat",
+    icon: Globe,
+    links: [
+      { href: "/website-chat", label: "Live Board", icon: LiveBoardIcon },
+      { href: "/website-chat/visitors", label: "Visitors", icon: VisitorsIcon },
+      { href: "/website-chat/widgets", label: "Widgets & Install", icon: InstallIcon },
+    ],
+  },
+  {
+    // Watching the support work rather than doing it: what came in, who has it, what is late.
+    id: "operations",
+    label: "Operations",
+    icon: ListTodo,
+    links: [
       {
         href: "/messages",
         label: "Message Activity",
         icon: MessagesSquare,
         tabs: [
-          { href: "/messages", label: "All messages", icon: MessagesSquare },
-          { href: "/messages?decision=SUPPORT_REQUIRED", label: "Needs attention", icon: AlertCircle },
+          { href: "/messages", label: "All Messages", icon: MessagesSquare },
+          { href: "/messages?decision=SUPPORT_REQUIRED", label: "Needs Attention", icon: AlertCircle },
           { href: "/messages?decision=IGNORE", label: "Ignored", icon: EyeOff },
-          { href: "/messages/unanswered", label: "Unanswered groups", icon: Hourglass },
-          { href: "/messages/response-time", label: "Response time", icon: Timer },
-          { href: "/messages/failed-replies", label: "Failed replies", icon: MessageSquareWarning },
+          { href: "/messages/unanswered", label: "Unanswered Groups", icon: Hourglass },
+          { href: "/messages/response-time", label: "Response Time", icon: Timer },
+          { href: "/messages/failed-replies", label: "Failed Replies", icon: MessageSquareWarning },
         ],
       },
       {
@@ -435,19 +443,17 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Agent Assignment",
         icon: ListTodo,
         tabs: [
-          { href: "/support-assignment/unanswered", label: "Unanswered", icon: ListTodo },
-          { href: "/support-assignment/mine", label: "My assignments", icon: UserCheck },
+          { href: "/support-assignment/unanswered", label: "Waiting for Agent", icon: ListTodo },
+          { href: "/support-assignment/mine", label: "My Assignments", icon: UserCheck },
           { href: "/support-assignment/completed", label: "Completed", icon: CheckCheck },
           { href: "/support-assignment/report", label: "Report", icon: BarChart3 },
         ],
       },
-      { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
-      // Call-backs, visits and promised replies (FOLLOW_UPS.md). A project feature that ships off.
-      { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
       // Numbered support cases (TICKETS.md).
       { href: "/tickets", label: "Tickets", icon: Ticket },
-      // Links a customer pays in a chat (PAYMENT_LINKS.md).
-      { href: "/payments", label: "Payment Links", icon: Banknote },
+      // Call-backs, visits and promised replies (FOLLOW_UPS.md). A project feature that ships off.
+      { href: "/follow-ups", label: "Follow-ups", icon: AlarmClock },
+      { href: "/support-escalation", label: "Escalations", icon: ShieldAlert },
     ],
   },
   {
@@ -455,7 +461,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Contacts",
     icon: BookUser,
     links: [
-      { href: "/contacts", label: "All contacts", icon: BookUser },
+      { href: "/contacts", label: "All Contacts", icon: BookUser },
       { href: "/contacts/campaigns", label: "Campaigns", icon: ContactCampaignIcon },
       { href: "/contacts/import", label: "Import", icon: ContactImportIcon },
     ],
@@ -467,6 +473,7 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: Contact,
     links: [
       { href: "/clients", label: "All Clients", icon: Contact },
+      { href: "/clients/import", label: "Import Clients", icon: FileUp },
       {
         href: "/clients/subscriptions",
         label: "Subscriptions",
@@ -477,20 +484,21 @@ export const NAV_GROUPS: NavGroup[] = [
           { href: "/clients/subscriptions/renewals", label: "Renewals", icon: RefreshCcw },
         ],
       },
-      // The route is still /clients/dues (bookmarks keep working); the page is the Billing List now.
+      // The route is still /clients/dues (bookmarks keep working).
       { href: "/clients/dues", label: "Bills & Dues", icon: ReceiptText },
       { href: "/clients/payments", label: "Payments & Receipts", icon: Wallet },
-      {
-        href: "/clients/messages",
-        label: "Client Campaigning",
-        icon: MailCheck,
-        // CLIENT_CRM_V7.md §6–§7: bulk email (prepared by one person, approved by another) and the reusable wording.
-        tabs: [
-          { href: "/clients/messages", label: "Bulk email", icon: MailCheck },
-          { href: "/clients/templates", label: "Message Templates", icon: FileText },
-        ],
-      },
-      { href: "/clients/import", label: "Import Clients", icon: FileUp },
+      // Links a customer pays in a chat (PAYMENT_LINKS.md): made from a chat, followed up here beside the money.
+      { href: "/payments", label: "Payment Links", icon: Banknote },
+    ],
+  },
+  {
+    // CLIENT_CRM_V7.md §6–§7: bulk email (prepared by one person, approved by another) and the reusable wording.
+    id: "client-campaigning",
+    label: "Client Campaigning",
+    icon: MailCheck,
+    links: [
+      { href: "/clients/messages", label: "Bulk Email", icon: MailCheck },
+      { href: "/clients/templates", label: "Message Templates", icon: FileText },
     ],
   },
   {
@@ -553,15 +561,16 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Right after the team: managers read these every day.
     id: "reports",
     label: "Reports & Analytics",
     icon: BarChart3,
     links: [TEAM_REPORT_LINK, REPORTS_LINK],
   },
   {
-    // Bulk Messaging lives here now: broadcasting to groups and adding a number to groups are
-    // WhatsApp work done with the same accounts and the same groups listed right above them.
-    // Shown as "WhatsApp QR" (the OpenWA engine); the id keeps the module id it always had.
+    // Bulk Messaging lives here: broadcasting to groups and adding a number to groups are WhatsApp
+    // work done with the same accounts and groups. Shown as "WhatsApp QR" (the OpenWA engine); the id
+    // keeps the module id it always had.
     id: "whatsapp",
     label: LEGACY_WHATSAPP_LABEL,
     icon: Smartphone,
@@ -659,12 +668,11 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: "/notifications", label: "Notifications", icon: Bell },
       { href: "/logs", label: "System Logs", icon: ConsoleIcon },
-      SETTINGS_LINK,
     ],
   },
   {
     // Logins and roles of the whole installation — the same in every project. In the Main Admin
-    // Workspace this group sits under Main Admin → Users & Permissions (DashboardShell), not here.
+    // Workspace this group sits under Main Admin → Users & Access (DashboardShell), not here.
     id: "users-permissions",
     label: "Users & Access",
     icon: ShieldCheck,
@@ -700,6 +708,13 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
     ],
+  },
+  {
+    // Last and on its own, so it is always one glance away. A one-link module renders as that link.
+    id: "settings-link",
+    label: "Settings",
+    icon: SettingsIcon,
+    links: [SETTINGS_LINK],
   },
 ];
 
