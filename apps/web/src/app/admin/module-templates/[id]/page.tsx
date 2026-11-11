@@ -19,7 +19,7 @@ export default async function ModuleTemplatePage({ params }: { params: Promise<{
     <div className="max-w-5xl">
       <ButtonLink href="/admin/module-templates" variant="ghost" size="sm" className="mb-3">
         <ArrowLeft className="size-3.5" aria-hidden />
-        Module templates
+        Project Templates
       </ButtonLink>
       <PageHeader
         title={row ? `Edit “${row.name}”` : "New module template"}

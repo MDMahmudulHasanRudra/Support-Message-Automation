@@ -92,6 +92,7 @@ export function AdminShell({
   onLogout,
   grantedKeys,
   supportSession,
+  avatarUrl = null,
 }: {
   children: ReactNode;
   /** Permission keys the role grants — which workspace modules to offer. Presentation only. */
@@ -102,6 +103,7 @@ export function AdminShell({
   onLogout: () => Promise<void>;
   /** Set during a RELQIVO support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
   supportSession?: SupportSessionBannerInfo | null;
+  avatarUrl?: string | null;
 }) {
   const pathname = usePathname();
   const pendingNav = usePendingNavigation();
@@ -183,7 +185,7 @@ export function AdminShell({
         </nav>
         <div className="hidden flex-1 lg:block" />
         <ShellSearch onOpen={() => setPaletteOpen(true)} />
-        <ShellUserMenu username={username} role="Main Admin" accountHref="/admin/account" onLogout={onLogout} />
+        <ShellUserMenu username={username} role="Main Admin" accountHref="/admin/account" onLogout={onLogout} avatarUrl={avatarUrl} />
       </header>
 
       <div className="flex min-h-0 flex-1">

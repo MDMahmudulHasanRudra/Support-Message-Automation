@@ -1,3 +1,4 @@
+import { headerAvatarUrl } from "@/server/account";
 import { requireAdminPortalHost } from "@/server/hostScope";
 import { workspaceBillingNotice } from "@/server/platform/billing";
 import { notFound, redirect } from "next/navigation";
@@ -59,6 +60,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       billingNotice={billingNotice}
       supportSession={session.support ? { operatorUsername: session.support.operatorUsername, reason: session.support.reason, expiresAt: session.support.expiresAt.toISOString() } : null}
       username={session.username}
+      avatarUrl={await headerAvatarUrl(session.userId)}
       automationEnabled={Boolean(settings?.automationEnabled)}
       automationMode={settings?.mode ?? "SAFE_AUTO_REPLY"}
       onLogout={logout}

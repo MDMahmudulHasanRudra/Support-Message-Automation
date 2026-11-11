@@ -5,6 +5,7 @@ import { logout } from "@/server/actions/session";
 import { AdminShell } from "./AdminShell";
 import type { Metadata } from "next";
 import { getBranding } from "@/server/branding";
+import { headerAvatarUrl } from "@/server/account";
 
 export async function generateMetadata(): Promise<Metadata> {
   const { productName } = await getBranding();
@@ -19,13 +20,14 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const { session, canManage } = await requireMainAdminPage();
-  const [projects, grantedKeys] = await Promise.all([accessibleProjects(session.userId), getGrantedPermissionKeys(session)]);
+  const [projects, grantedKeys, avatarUrl] = await Promise.all([accessibleProjects(session.userId), getGrantedPermissionKeys(session), headerAvatarUrl(session.userId)]);
   return (
     <AdminShell
       username={session.username}
       projects={projects.map(({ name, slug, status }) => ({ name, slug, status }))}
       canCreate={canManage}
       grantedKeys={grantedKeys}
+      avatarUrl={avatarUrl}
       onLogout={logout}
       supportSession={session.support ? { operatorUsername: session.support.operatorUsername, reason: session.support.reason, expiresAt: session.support.expiresAt.toISOString() } : null}
     >

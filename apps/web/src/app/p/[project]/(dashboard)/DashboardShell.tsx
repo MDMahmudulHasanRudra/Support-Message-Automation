@@ -47,6 +47,7 @@ import { canOpenPath, type SectionAccess } from "./projectSections";
 export function DashboardShell({
   children,
   username,
+  avatarUrl = null,
   automationEnabled,
   automationMode,
   onLogout,
@@ -82,6 +83,8 @@ export function DashboardShell({
   /** Set during a RELQIVO support session (SAAS_PLATFORM_PLAN.md §12): a banner on every page. */
   supportSession?: SupportSessionBannerInfo | null;
   username: string;
+  /** The signed-in person's photo for the header, or null for initials. */
+  avatarUrl?: string | null;
   automationEnabled: boolean;
   automationMode: string;
   onLogout: () => Promise<void>;
@@ -215,7 +218,7 @@ export function DashboardShell({
         {/* My overdue + due-today follow-ups (FOLLOW_UPS.md); in-app only, renders nothing at zero. */}
         {granted.has("messages.view") && !featuresOff.has("FOLLOW_UPS") ? <FollowUpBadge /> : null}
 
-        <ShellUserMenu username={username} role={granted.has("projects.manage") ? "Main Admin" : undefined} onLogout={onLogout} />
+        <ShellUserMenu username={username} role={granted.has("projects.manage") ? "Main Admin" : undefined} onLogout={onLogout} avatarUrl={avatarUrl} />
       </header>
 
       <div className="flex min-h-0 flex-1">

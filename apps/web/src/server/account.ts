@@ -122,6 +122,12 @@ export async function getMyAccount(session: Session): Promise<MyAccount | null> 
   };
 }
 
+/** The header's photo for the signed-in person, or null for initials. One indexed read of a version number. */
+export async function headerAvatarUrl(userId: string): Promise<string | null> {
+  const row = await globalPrisma.userAvatar.findUnique({ where: { userId }, select: { version: true } });
+  return row ? userAvatarUrl(userId, row.version) : null;
+}
+
 export function userAvatarUrl(userId: string, version: number): string {
   return `/api/account/avatar/${encodeURIComponent(userId)}?v=${version}`;
 }

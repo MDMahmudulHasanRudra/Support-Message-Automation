@@ -31,7 +31,7 @@ export function ShellSearch({ onOpen, placeholder = "Jump to a page…" }: { onO
 }
 
 /** Who is signed in: name, role when known, their account and sign out. */
-export function ShellUserMenu({ username, role, accountHref = "/account", onLogout }: { username: string; role?: string; accountHref?: string; onLogout: () => Promise<void> }) {
+export function ShellUserMenu({ username, role, accountHref = "/account", onLogout, avatarUrl = null }: { username: string; role?: string; avatarUrl?: string | null; accountHref?: string; onLogout: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
@@ -61,7 +61,12 @@ export function ShellUserMenu({ username, role, accountHref = "/account", onLogo
         aria-label={`Account menu for ${username}`}
         className="flex cursor-pointer items-center gap-2.5 rounded-[var(--radius-md)] py-1 pl-1 pr-1.5 transition-colors hover:bg-white/[0.08]"
       >
-        <span className="flex size-8 items-center justify-center rounded-full bg-[var(--tide-active)] text-[11.5px] font-semibold text-white ring-1 ring-inset ring-white/20">{initials(username)}</span>
+        {avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a private, session-checked photo; next/image cannot optimise it
+          <img src={avatarUrl} alt="" className="size-8 rounded-full object-cover ring-1 ring-white/20" />
+        ) : (
+          <span className="flex size-8 items-center justify-center rounded-full bg-[var(--tide-active)] text-[11.5px] font-semibold text-white ring-1 ring-inset ring-white/20">{initials(username)}</span>
+        )}
         <span className="min-w-0 text-left max-md:hidden">
           <span className="block max-w-[9rem] truncate text-[13px] font-medium leading-tight text-[color:var(--color-foreground)]">{username}</span>
           {role ? <span className="block max-w-[9rem] truncate text-[11px] leading-tight text-[color:var(--color-muted-foreground)]">{role}</span> : null}

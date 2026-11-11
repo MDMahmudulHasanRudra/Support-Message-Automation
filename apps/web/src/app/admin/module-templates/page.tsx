@@ -8,7 +8,7 @@ import { getBranding } from "@/server/branding";
 import { moduleTemplateOptions } from "@/server/projectModules";
 import { TemplateRowActions } from "./TemplateRowActions";
 
-export const metadata = { title: "Module templates" };
+export const metadata = { title: "Project Templates" };
 
 /**
  * Module templates (PROJECT_MODULES.md §8): the built-ins, then this customer's own. Applying one is
@@ -29,7 +29,7 @@ export default async function ModuleTemplatesPage() {
   return (
     <div>
       <PageHeader
-        title="Module templates"
+        title="Project Templates"
         description="Reusable module selections. Use one when creating a project or from a project's Type & modules page. Editing a template never changes a project that already used it."
         actions={
           canManage ? (
