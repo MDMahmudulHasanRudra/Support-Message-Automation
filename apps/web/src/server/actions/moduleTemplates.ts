@@ -125,3 +125,21 @@ export async function setModuleTemplateArchived(id: string, archived: boolean): 
   revalidatePath("/admin/module-templates");
   return { success: archived ? "Archived. Projects that used it keep their modules." : "Brought back." };
 }
+
+/**
+ * Delete an archived custom template for good. Only archived ones, so it is always a second, deliberate step;
+ * built-in templates live in code and cannot be deleted. Nothing references a template row: a project's module
+ * history keeps the key and version it applied, and the name is written to the System Log here.
+ */
+export async function deleteModuleTemplate(id: string): Promise<ModuleTemplateResult> {
+  const session = await requireManage();
+  if (!session) return { error: DENIED };
+  const row = await platformPrisma.moduleTemplate.findFirst({ where: { id }, select: { id: true, name: true, archivedAt: true } });
+  if (!row) return { error: "That template no longer exists." };
+  if (!row.archivedAt) return { error: "Archive the template first. Only an archived template can be deleted." };
+  const deleted = await platformPrisma.moduleTemplate.deleteMany({ where: { id, archivedAt: { not: null } } });
+  if (deleted.count !== 1) return { error: "That template changed while you were looking. Reload and try again." };
+  await logSystemEvent("WARN", "projects", "Module template deleted", { templateId: id, name: row.name, by: session.username });
+  revalidatePath("/admin/module-templates");
+  return { success: `"${row.name}" is deleted. Projects that used it keep their modules.` };
+}

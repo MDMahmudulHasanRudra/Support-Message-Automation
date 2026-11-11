@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { PERMISSIONS } from "@support-automation/shared";
 import { Button, Card, Checkbox, Field, Input, SectionHeader, Textarea } from "@/components/ui";
 import type { PermissionModuleFormState } from "@/server/actions/permissionModules";
+import { SimplePermissions } from "./SimplePermissions";
 
 export interface PermissionModuleFormDefaults {
   name?: string;
@@ -25,6 +26,7 @@ export function PermissionModuleForm({
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   const [checked, setChecked] = useState<Set<string>>(() => new Set(defaults.permissionKeys ?? []));
+  const [mode, setMode] = useState<"simple" | "detailed">("simple");
 
   function toggle(key: string) {
     setChecked((prev) => {
@@ -64,7 +66,34 @@ export function PermissionModuleForm({
       </Card>
 
       <Card>
-        <SectionHeader title="Permissions" />
+        <SectionHeader
+          title="Permissions"
+          description={mode === "simple" ? "Choose what this role can do in each module." : "Every permission, one by one."}
+          action={
+            <div role="tablist" aria-label="Permission view" className="inline-flex rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-0.5">
+              {(["simple", "detailed"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => setMode(m)}
+                  className={`rounded-[calc(var(--radius-md)-2px)] px-3 py-1 text-[12.5px] font-medium transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[color:var(--color-foreground)] shadow-[var(--shadow-xs)]" : "text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"}`}
+                >
+                  {m === "simple" ? "Simple" : "Detailed"}
+                </button>
+              ))}
+            </div>
+          }
+        />
+        {mode === "simple" ? (
+          <>
+            {[...checked].map((key) => (
+              <input key={key} type="hidden" name="permissionKeys" value={key} />
+            ))}
+            <SimplePermissions checked={checked} onChange={setChecked} onDetailed={() => setMode("detailed")} />
+          </>
+        ) : (
         <div className="space-y-4">
           {CATEGORIES.map((category) => {
             const keysInCategory = PERMISSIONS.filter((p) => p.category === category).map((p) => p.key);
@@ -95,6 +124,7 @@ export function PermissionModuleForm({
             );
           })}
         </div>
+        )}
       </Card>
 
       {state.error ? <p className="text-sm text-[color:var(--color-danger)]">{state.error}</p> : null}

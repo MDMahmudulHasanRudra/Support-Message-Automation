@@ -4,15 +4,16 @@ import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/admin/configuration/employees", label: "Employees" },
-  { href: "/admin/configuration/departments", label: "Departments" },
-  { href: "/admin/configuration/job-titles", label: "Job Titles" },
+  // The order things are set up in: a department and a job title are what an employee is filed under.
+  { href: "/admin/configuration/departments", label: "1. Departments" },
+  { href: "/admin/configuration/job-titles", label: "2. Job Titles" },
+  { href: "/admin/configuration/employees", label: "3. Employees" },
 ];
 
 export function ConfigurationTabs() {
   const pathname = usePathname();
   return (
-    <nav aria-label="Configuration" className="mb-6 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]">
+    <nav aria-label="Organization" className="mb-6 flex gap-1 overflow-x-auto border-b border-[var(--color-border)]">
       {TABS.map((tab) => {
         const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
         return (

@@ -220,6 +220,8 @@ FAILED with the reason when claimed, except session upkeep and read-only lookups
 project and LOGOUT for an ARCHIVED one (`refuseForHeldProject`, audit MEDIUM #4) — never left PENDING,
 since the command queue is one global oldest-first line. See `MULTI_PROJECT_PLAN.md` §10.4.
 
+**Every module is ON by default since 11 Nov 2026 (the owner's decision, new and existing projects; migration `20261111090000_all_modules_on`).** Every `PROJECT_FEATURES.defaultEnabled` is true and every base-type template selects every module, so "off by default" in the module sections below is historical. Do not add a module as off by default. A paid plan can still limit modules, and message-sending safety settings (kill switch, AI until a provider is set) are unchanged.
+
 **Phase 5 (project feature flags) has landed.** `packages/shared/src/projectFeatures.ts` is the
 catalogue: each feature's routes, the permission keys only it uses, and what switching it off stops.
 A feature is an ENTITLEMENT set by a Main Admin; the module's own settings stay the project's choice

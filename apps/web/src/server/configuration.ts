@@ -228,3 +228,10 @@ export async function linkEmployeeToUser(db: Db, employeeId: string, userId: str
     throw err;
   }
 }
+
+/** A new employee is filed under a department and a job title. `prefix` is the field prefix ("emp_" on the new-user form). */
+export function newEmployeeMissing(form: FormData, prefix: string): string | null {
+  if (!String(form.get(`${prefix}departmentId`) ?? "").trim()) return "Choose the employee's department, or add one with + New.";
+  if (!String(form.get(`${prefix}jobTitleId`) ?? "").trim()) return "Choose the employee's job title, or add one with + New.";
+  return null;
+}

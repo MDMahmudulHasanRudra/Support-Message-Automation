@@ -1,6 +1,6 @@
-import { Card, PageHeader } from "@/components/ui";
+import { PageHeader } from "@/components/ui";
 import { reservedClientCodePrefixes } from "@support-automation/db";
-import { codeTenantKey, nextDefaultProjectName } from "@support-automation/shared";
+import { codeTenantKey, moduleDefinition, nextDefaultProjectName, PROJECT_MODULES } from "@support-automation/shared";
 import { globalPrisma, platformPrisma } from "@/server/db";
 import { requireMainAdminManagePage } from "@/server/mainAdmin";
 import { currentTenant } from "@/server/tenant";
@@ -20,19 +20,24 @@ export default async function NewProjectPage() {
     reservedClientCodePrefixes(globalPrisma, codeTenantKey(tenant)),
   ]);
   return (
-    <div className="max-w-2xl">
-      <PageHeader
-        title="Create project"
-        description="A new project starts clean: nothing is copied from any other project. It gets its own default settings (automation off, AI off), the default shifts and alert settings, and you get access to it. WhatsApp numbers, AI providers, rules, teams and knowledge are then set up inside the project."
-      />
-      <Card>
+    <div className="mx-auto max-w-3xl">
+      <PageHeader title="Create a project" description="One business or team, with its own numbers, people and conversations. Nothing is copied from any other project." />
+      <div>
         <CreateProjectForm
           defaultName={nextDefaultProjectName(existing)}
+          everything={PROJECT_MODULES.filter((m) => m.status === "AVAILABLE").map((m) => m.name)}
           planName={planName}
           codeContext={{ primary: !reserved.some((r) => r.prefix === ""), reserved: reserved.map((r) => ({ prefix: r.prefix, projectName: r.projectName })) }}
-          templates={templates.map((t) => ({ key: t.key, name: t.name, description: t.description, builtIn: t.builtIn, moduleCount: t.modules.length }))}
+          templates={templates.map((t) => ({
+            key: t.key,
+            name: t.name,
+            description: t.description,
+            builtIn: t.builtIn,
+            moduleCount: t.modules.length,
+            moduleNames: t.modules.map((key) => moduleDefinition(key)?.name ?? key),
+          }))}
         />
-      </Card>
+      </div>
     </div>
   );
 }

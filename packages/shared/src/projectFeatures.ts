@@ -162,7 +162,7 @@ export const PROJECT_FEATURES = [
     label: "Google Sheets",
     description: "Connecting Google accounts, working on spreadsheets from the app, and tracking that work.",
     // Additive and new: no project gets it until a Main Admin switches it on.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/google-sheets", "/settings/google-sheets", "/api/google-sheets"],
     permissionKeys: ["google_sheets.view", "google_sheets.edit", "google_sheets.manage", "google_sheets.monitor", "google_sheets.report"],
     workerEffect: "Stops reading who changed monitored spreadsheets in Google directly. Connected accounts, sheets, members and their history are kept.",
@@ -173,7 +173,7 @@ export const PROJECT_FEATURES = [
     description: "All Conversations, plus Facebook Messenger, Instagram DM and Telegram alongside WhatsApp.",
     // Additive and new: no project gets it until a Main Admin switches it on. WhatsApp Chat is its
     // own feature and is unaffected either way.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/conversations", "/settings/channels", "/website-chat"],
     permissionKeys: ["channels.view", "channels.manage", "conversations.reply"],
     workerEffect:
@@ -184,7 +184,7 @@ export const PROJECT_FEATURES = [
     label: "Client Management",
     description: "One client database across every channel: contacts, channel references, tags, notes, import and export.",
     // New and unreleased: no project gets it until a Main Admin switches it on.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/clients", "/settings/email", "/settings/clients"],
     permissionKeys: ["clients.view", "clients.create", "clients.update", "clients.archive", "clients.delete", "clients.import", "clients.export", "clients.view_billing", "clients.edit_billing", "clients.link_whatsapp_chat", "clients.manage_subscriptions", "clients.link_whatsapp_group", "clients.manage_settings", "clients.send_messages", "clients.approve_messages", "communications.manage_email"],
     workerEffect: "Nothing runs in the background for it. Switching it off hides the pages and refuses the actions; client records are kept.",
@@ -197,7 +197,7 @@ export const PROJECT_FEATURES = [
     // A presentation switch, not a module: it owns no page and no key, so it never blocks anything.
     // Off for every project until a Main Admin switches it on; switching it off again is the
     // rollback, effective on the next page load, with no data to restore.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: [],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it. Replies already queued with a quote are still sent as replies.",
@@ -218,7 +218,7 @@ export const PROJECT_FEATURES = [
     label: "WhatsApp profile pictures",
     description:
       "Shows the profile pictures and group icons WhatsApp already attaches to incoming messages, in WhatsApp Chat (WHATSAPP_AVATARS.md). Nothing is ever asked of WhatsApp to get one. Off = coloured initials, as before.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     manualOnly: true,
     routes: [],
     permissionKeys: [],
@@ -230,7 +230,7 @@ export const PROJECT_FEATURES = [
     label: "Clients — Smart Bulk Import",
     description:
       "Import up to 5,000 clients from any Excel or CSV file: map each field to a column, a fixed value or a sample, correct rows before saving, and import in the background (SMART_IMPORT.md). Needs Client Management. Off = the original import.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     // A new way of writing many client records at once: switched on by a person, never by a plan.
     manualOnly: true,
     routes: [],
@@ -244,7 +244,7 @@ export const PROJECT_FEATURES = [
     description:
       "A side panel in WhatsApp Chat and All Conversations: internal notes with @mentions, priority, tags and Team assignment (INBOX_WORKSPACE.md). Notes are never sent to a customer. Off = the conversation views exactly as before; saved notes and tags are kept.",
     // A presentation switch over existing pages (messages.view to read, the reply keys to write).
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: [],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it.",
@@ -254,7 +254,7 @@ export const PROJECT_FEATURES = [
     label: "AI Copilot for agents",
     description:
       "The Copilot tab in the conversation side panel: a summary with verified knowledge and next steps, a suggested reply, and rewrites of the agent's own text (INBOX_WORKSPACE.md). Nothing is ever sent by it — the agent edits and sends. Needs the AI Engine and a Response model.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: [],
     permissionKeys: [],
     workerEffect: "Stops answering Copilot requests; requests already waiting stay unanswered until it is on again.",
@@ -265,7 +265,7 @@ export const PROJECT_FEATURES = [
     description:
       "Open / Pending / Snoozed / Resolved on every WhatsApp and channel conversation, snooze with automatic reopen, a reopen-on-customer-message policy, user and Team assignment for WhatsApp conversations, and their history. Off = the conversation views exactly as before; recorded states are kept.",
     // A presentation and workflow switch over existing pages (messages.view to read, the reply keys to write).
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/inbox-status"],
     permissionKeys: [],
     workerEffect: "Stops reopening snoozed conversations and stops applying the reopen policy to new customer messages.",
@@ -275,7 +275,7 @@ export const PROJECT_FEATURES = [
     label: "Satisfaction surveys (CSAT)",
     description:
       "\"How did we do? 1–5\" after a conversation is resolved, on the channels the project chooses (website chat card, Messenger, Instagram, Telegram, WhatsApp personal chats), with a CSAT report per agent and channel (CSAT.md). Never in a WhatsApp group, never to a team member, at most once per customer per cooldown. Needs Inbox V3. Off = nothing is asked; recorded answers are kept.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/csat", "/reports/csat", "/api/reports/csat"],
     permissionKeys: [],
     workerEffect: "Stops asking satisfaction surveys and stops reading ratings from customer messages; surveys waiting to go out are skipped.",
@@ -285,7 +285,7 @@ export const PROJECT_FEATURES = [
     label: "Automatic conversation routing",
     description:
       "Gives each new customer conversation to one person automatically — round robin or least busy — from a chosen pool, respecting each person's permission, the roster, leave and a limit of open conversations (AUTO_ROUTING.md). Needs Inbox V3. Off = nobody is assigned automatically; assignments already made are kept.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/auto-routing"],
     permissionKeys: [],
     workerEffect: "Stops assigning new conversations; nothing already assigned changes.",
@@ -295,7 +295,7 @@ export const PROJECT_FEATURES = [
     label: "Product Catalog",
     description: "Products, categories, variants, SKUs, prices and stock (COMMERCE.md).",
     // Additive and new: no project gets it until it is chosen in the Module Builder.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/commerce/products"],
     permissionKeys: ["commerce.view", "commerce.manage"],
     workerEffect: "Nothing runs in the background for it. Products and stock history are kept; AI stops looking products up.",
@@ -304,7 +304,7 @@ export const PROJECT_FEATURES = [
     key: "ORDERS",
     label: "Order Management",
     description: "Draft, confirm and track orders: items, totals, payment state, stock, cancellations and returns (COMMERCE.md).",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/commerce/orders"],
     permissionKeys: ["orders.view", "orders.manage"],
     workerEffect: "Nothing runs in the background for it. Orders and their history are kept; no new order can be created or moved.",
@@ -313,7 +313,7 @@ export const PROJECT_FEATURES = [
     key: "SALES_PIPELINE",
     label: "Leads & Sales Pipeline",
     description: "Leads, stages, follow-ups and conversion to clients and orders (COMMERCE.md).",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/sales"],
     permissionKeys: ["sales.view", "sales.manage"],
     workerEffect: "Nothing runs in the background for it. Leads and their history are kept.",
@@ -322,7 +322,7 @@ export const PROJECT_FEATURES = [
     key: "COURIER",
     label: "Courier Management",
     description: "Book and track deliveries with Steadfast, Pathao Courier and RedX (COMMERCE_INTEGRATIONS.md).",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/commerce/shipments", "/settings/couriers"],
     permissionKeys: ["shipments.view", "shipments.manage", "couriers.manage"],
     workerEffect: "Delivery statuses stop being refreshed. Shipments and their history are kept; nothing is booked.",
@@ -331,7 +331,7 @@ export const PROJECT_FEATURES = [
     key: "WOOCOMMERCE",
     label: "WooCommerce",
     description: "Import a WooCommerce shop's products, stock and orders, keep them updated by webhook, and send approved orders to it.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/woocommerce"],
     permissionKeys: ["woocommerce.manage"],
     workerEffect: "The shop's webhooks are refused and nothing is imported. Imported products and orders are kept.",
@@ -340,7 +340,7 @@ export const PROJECT_FEATURES = [
     key: "SHOPIFY",
     label: "Shopify",
     description: "Import a Shopify store's products, stock and orders, keep them updated by webhook, and send approved orders to it as drafts.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/shopify"],
     permissionKeys: ["shopify.manage"],
     workerEffect: "The store's webhooks are refused and nothing is imported. Imported products and orders are kept.",
@@ -349,7 +349,7 @@ export const PROJECT_FEATURES = [
     key: "API_ACCESS",
     label: "API & Webhooks",
     description: "Scoped API keys for the public API, and signed webhooks to your own systems, n8n or Zapier (INTEGRATION_HUB.md).",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/settings/api"],
     permissionKeys: ["api.manage"],
     workerEffect: "API keys stop working and no webhook is sent. Keys, endpoints and delivery history are kept.",
@@ -359,7 +359,7 @@ export const PROJECT_FEATURES = [
     label: "Social Studio",
     description:
       "Get Assist's own social media publishing: connect Facebook Pages and Instagram accounts, write, approve, schedule and follow posts, with a calendar, media library, campaigns, templates and AI help (SOCIAL_STUDIO.md). Nothing is published without a person's approval.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     // It publishes to a business's public channels: switched on by a person, never by a plan.
     manualOnly: true,
     routes: ["/social", "/settings/social"],
@@ -371,7 +371,7 @@ export const PROJECT_FEATURES = [
     key: "WHATSAPP_OFFICIAL",
     label: "WhatsApp (Official API)",
     description: "Connect a number through Meta's Cloud API: no phone or QR code, delivery receipts, and approved templates after 24 hours. Separate from WhatsApp (Legacy).",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/conversations/whatsapp-official"],
     permissionKeys: [],
     workerEffect: "Replies on Official API numbers stop going out and their incoming messages wait. Connections and conversations are kept.",
@@ -380,7 +380,7 @@ export const PROJECT_FEATURES = [
     key: "PAYMENT_LINKS",
     label: "Payment links",
     description: "Send a link in any chat so a customer can pay on SSLCOMMERZ or bKash, into your own merchant account. A paid link settles the invoice.",
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/payments", "/settings/payment-gateways"],
     permissionKeys: ["payments.view", "payments.create", "payments.manage"],
     workerEffect: "Nothing runs in the background for it. Links stop opening for customers; links and their history are kept.",
@@ -423,7 +423,7 @@ export const PROJECT_FEATURES = [
       "A personal and team to-do list for call-backs, technician visits and promised replies: due dates, a person or Team, priority, a link to the conversation or client, and Overdue / Due today reminders inside the app (FOLLOW_UPS.md). Nothing is ever sent to a customer.",
     // Reading uses messages.view; changing one uses the reply key of the conversation it is about
     // (messages.reply / conversations.reply). No key of its own.
-    defaultEnabled: false,
+    defaultEnabled: true,
     routes: ["/follow-ups"],
     permissionKeys: [],
     workerEffect: "Nothing runs in the background for it. Follow-ups and their history are kept; the reminder badge disappears.",

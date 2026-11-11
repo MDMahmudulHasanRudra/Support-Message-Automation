@@ -37,6 +37,9 @@ export function ProjectStatusControl({ projectId, projectName, status }: { proje
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState<ProjectStatusValue | null>(null);
   const next = allowedProjectTransitions(status);
+  // From archived the one way back is Restore (on hold); from on hold, Active is Resume.
+  const verb = (to: ProjectStatusValue) => (status === "ARCHIVED" ? "Restore" : status === "SUSPENDED" && to === "ACTIVE" ? "Resume" : VERB[to]);
+  const isStop = (to: ProjectStatusValue) => status !== "ARCHIVED" && (to === "ARCHIVED" || to === "SUSPENDED");
 
   function apply(to: ProjectStatusValue) {
     startTransition(async () => {
@@ -50,40 +53,39 @@ export function ProjectStatusControl({ projectId, projectName, status }: { proje
     });
   }
 
-  if (next.length === 0) {
-    return (
-      <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
-        An archived project cannot be reopened from the portal. Nothing in it has been deleted; it can be deleted permanently below.
-      </p>
-    );
-  }
 
   return (
     <div className="flex flex-wrap gap-2">
       {next.map((to) => (
         <Button
           key={to}
-          variant={to === "ARCHIVED" || to === "SUSPENDED" ? "danger" : "primary"}
+          variant={isStop(to) ? "danger" : "primary"}
           size="sm"
           loading={pending && confirming === to}
           onClick={() => (to === "ACTIVE" ? apply(to) : setConfirming(to))}
         >
-          {VERB[to]}
+          {verb(to)}
         </Button>
       ))}
       <ConfirmDialog
         open={confirming !== null}
         onClose={() => setConfirming(null)}
         onConfirm={() => confirming && apply(confirming)}
-        title={confirming ? `${VERB[confirming]} ${projectName}?` : ""}
-        description={confirming ? PROJECT_STATUS_DESCRIPTIONS[confirming] : undefined}
-        confirmLabel={confirming ? VERB[confirming] : undefined}
-        tone="danger"
+        title={confirming ? `${verb(confirming)} ${projectName}?` : ""}
+        description={
+          confirming && status === "ARCHIVED"
+            ? "It comes back on hold: visible again and read-only, with nothing sent. Press Resume when it should work normally again. Its WhatsApp numbers may need linking again."
+            : confirming
+              ? PROJECT_STATUS_DESCRIPTIONS[confirming]
+              : undefined
+        }
+        confirmLabel={confirming ? verb(confirming) : undefined}
+        tone={confirming && isStop(confirming) ? "danger" : "primary"}
         loading={pending}
       >
         {confirming === "ARCHIVED" ? (
           <p className="text-[13px] text-[color:var(--color-muted-foreground)]">
-            Archiving cannot be undone from the portal. Every message, setting and report stays in the database.
+            Every message, setting and report stays in the database. You can restore it later.
           </p>
         ) : null}
       </ConfirmDialog>

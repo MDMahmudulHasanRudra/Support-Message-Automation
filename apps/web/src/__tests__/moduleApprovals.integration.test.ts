@@ -2,7 +2,7 @@ import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createProjectWithDefaults, prisma as rawPrisma } from "@support-automation/db";
-import { templateModules } from "@support-automation/shared";
+import { PROJECT_FEATURES } from "@support-automation/shared";
 import type { Session } from "@/server/auth";
 import type { PlatformOperatorSession } from "@/server/platform/auth";
 
@@ -81,6 +81,10 @@ beforeAll(async () => {
   projectA2 = await make("a2", customerA);
   projectB = await make("b", customerB);
   created.projects.push(projectA, projectA2, projectB);
+  // Every module is on by default now (11 Nov 2026). The approval rules govern switching an approval-only
+  // module ON, so these workspaces start with those modules off, as one switched off by a person would be.
+  const approvalOnly = PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key);
+  await rawPrisma.projectFeature.updateMany({ where: { projectId: { in: [projectA, projectA2, projectB] }, key: { in: approvalOnly } }, data: { enabled: false } });
 });
 
 afterAll(async () => {
@@ -213,7 +217,6 @@ describe("revoking", () => {
     // Customer B's own Social Studio approval (customer-wide, from above), switched on directly in B's project.
     await rawPrisma.projectFeature.upsert({ where: { projectId_key: { projectId: projectB, key: "SOCIAL_STUDIO" } }, create: { projectId: projectB, key: "SOCIAL_STUDIO", enabled: true }, update: { enabled: true } });
     expect(await isOn(projectB, "SOCIAL_STUDIO")).toBe(true);
-    expect(templateModules("DEFAULT")).not.toContain("SOCIAL_STUDIO");
     // Every revocation above was customer A's: B's project kept its module.
     expect(await isOn(projectB, "SOCIAL_STUDIO")).toBe(true);
     const bRow = (await activeApproval(customerB, "SOCIAL_STUDIO", null))!;

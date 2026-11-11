@@ -12,7 +12,7 @@ export const metadata = { title: "New user" };
  * Creating a user from the Main Admin Portal: the person, the login, the role and the project access,
  * in one step — four separate things, each shown only to a role that may set it.
  */
-export default async function NewAdminUserPage() {
+export default async function NewAdminUserPage({ searchParams }: { searchParams: Promise<{ employee?: string }> }) {
   const { allowed, can } = await requireAdminSection("users.create");
   if (!allowed) {
     return (
@@ -37,12 +37,16 @@ export default async function NewAdminUserPage() {
     canEmployees ? platformPrisma.jobTitle.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : [],
   ]);
 
+  // Started from an employee's profile: that person, if they are still free to link.
+  const wanted = (await searchParams).employee;
+  const preset = wanted ? (freeEmployees.find((e) => e.id === wanted) ?? null) : null;
+
   return (
     <div>
       <NextLink href="/admin/users" className="text-xs text-[color:var(--color-muted-foreground)] hover:underline">
-        ← Users &amp; Permissions
+        ← Users &amp; Access
       </NextLink>
-      <PageHeader title="New user" description="The person, their login, their role and the projects they may enter. Nothing is saved until every part is valid." />
+      <PageHeader title={preset ? `Give ${preset.fullName} app access` : "New user"} description="The person, their login, their role and the projects they may enter. Nothing is saved until every part is valid." />
       <NewUserForm
         minPasswordLength={await customerPasswordLength(await currentTenant())}
         roles={roles}
@@ -52,6 +56,7 @@ export default async function NewAdminUserPage() {
         freeEmployees={freeEmployees}
         departments={departments}
         jobTitles={jobTitles}
+        preset={preset}
       />
     </div>
   );

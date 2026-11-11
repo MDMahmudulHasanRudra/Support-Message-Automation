@@ -602,9 +602,9 @@ export function moduleDefinition(key: string): ModuleDefinition | undefined {
   return MODULE_BY_KEY.get(key);
 }
 
-/** The AVAILABLE modules a base type's template selects. */
-export function templateModules(type: ProjectBaseType): string[] {
-  return PROJECT_MODULES.filter((m) => m.status === "AVAILABLE" && m.defaultForTypes.includes(type)).map((m) => m.key).sort();
+/** The AVAILABLE modules a base type's template selects: every one, since 11 Nov 2026 (the owner's decision). */
+export function templateModules(_type: ProjectBaseType): string[] {
+  return PROJECT_MODULES.filter((m) => m.status === "AVAILABLE").map((m) => m.key).sort();
 }
 
 /** The PLANNED modules a base type will add once they ship (shown, never selected). */

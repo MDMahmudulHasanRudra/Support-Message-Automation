@@ -25,6 +25,23 @@ export default async function NewEmployeePage() {
       <NextLink href="/admin/configuration/employees" className="text-xs text-[color:var(--color-muted-foreground)] hover:underline">
         ← Employees
       </NextLink>
+      {departments.every((d) => !d.isActive) || jobTitles.every((j) => !j.isActive) ? (
+        <Alert tone="info" title="Every employee has a department and a job title">
+          {departments.every((d) => !d.isActive) && jobTitles.every((j) => !j.isActive)
+            ? "You have none yet. Press + New beside each one below to add it right here, or set up "
+            : departments.every((d) => !d.isActive)
+              ? "You have no departments yet. Press + New beside Department to add one here, or set up "
+              : "You have no job titles yet. Press + New beside Job title to add one here, or set up "}
+          <NextLink href="/admin/configuration/departments" className="font-medium underline">
+            Departments
+          </NextLink>{" "}
+          and{" "}
+          <NextLink href="/admin/configuration/job-titles" className="font-medium underline">
+            Job Titles
+          </NextLink>{" "}
+          first.
+        </Alert>
+      ) : null}
       <EmployeeForm departments={departments} jobTitles={jobTitles} canManage />
     </div>
   );

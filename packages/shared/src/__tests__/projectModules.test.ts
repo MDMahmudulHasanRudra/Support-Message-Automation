@@ -177,8 +177,8 @@ describe("project types", () => {
   it("records a base type when the selection is its template, otherwise Custom Mix with that base", () => {
     expect(typeForSelection(templateModules("DEFAULT"), null)).toEqual({ projectType: "DEFAULT", baseType: "DEFAULT" });
     expect(typeForSelection(templateModules("ECOMMERCE"), "ECOMMERCE")).toEqual({ projectType: "ECOMMERCE", baseType: "ECOMMERCE" });
-    // E-commerce plus the Default Team Management: Custom Mix (E-commerce base), not a conversion.
-    expect(typeForSelection([...templateModules("ECOMMERCE"), "TEAM_MANAGEMENT"], "ECOMMERCE")).toEqual({ projectType: "CUSTOM_MIX", baseType: "ECOMMERCE" });
+    // Every template is every module now; switching one off is a Custom Mix on that base.
+    expect(typeForSelection(templateModules("ECOMMERCE").filter((k) => k !== "TEAM_MANAGEMENT"), "ECOMMERCE")).toEqual({ projectType: "CUSTOM_MIX", baseType: "ECOMMERCE" });
   });
 
   it("the diff names exactly what changes", () => {

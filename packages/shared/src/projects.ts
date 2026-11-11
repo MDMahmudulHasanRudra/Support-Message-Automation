@@ -38,7 +38,7 @@ const TRANSITIONS: Record<ProjectStatusValue, readonly ProjectStatusValue[]> = {
   SETUP: ["ACTIVE", "ARCHIVED"],
   ACTIVE: ["SUSPENDED", "ARCHIVED"],
   SUSPENDED: ["ACTIVE", "ARCHIVED"],
-  ARCHIVED: [],
+  ARCHIVED: ["SUSPENDED"],
 };
 
 export function allowedProjectTransitions(from: ProjectStatusValue): readonly ProjectStatusValue[] {

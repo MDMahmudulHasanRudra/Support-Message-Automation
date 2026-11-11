@@ -53,11 +53,12 @@ export default async function AdminUserPage({ params, searchParams }: { params: 
     ? await platformPrisma.employee.findMany({ where: { userId: null, status: "ACTIVE" }, orderBy: { fullName: "asc" }, select: { id: true, employeeCode: true, fullName: true } })
     : [];
   const isMainAdmin = (user.permissionModule?.permissions.length ?? 0) > 0;
+  const projectCount = created ? await platformPrisma.projectAccess.count({ where: { userId: id } }) : 0;
 
   return (
     <div className="space-y-6">
       <NextLink href="/admin/users" className="text-xs text-[color:var(--color-muted-foreground)] hover:underline">
-        ← Users &amp; Permissions
+        ← Users &amp; Access
       </NextLink>
       <PageHeader
         title={user.name}
@@ -69,7 +70,12 @@ export default async function AdminUserPage({ params, searchParams }: { params: 
           </div>
         }
       />
-      {created ? <Alert tone="success">User created.</Alert> : null}
+      {created ? (
+        <Alert tone={!user.permissionModuleId || (!isMainAdmin && projectCount === 0) ? "warning" : "success"} title={`${user.name} can sign in now`}>
+          Give them their username <span className="font-mono font-semibold">{user.username}</span> and the password you copied. They can change it on My Account after signing in.
+          {!user.permissionModuleId ? " They have no role yet, so they can do nothing: choose one below." : !isMainAdmin && projectCount === 0 ? " They have no project yet: give them one under Project access below." : ""}
+        </Alert>
+      ) : null}
 
       <Card>
         <SectionHeader title="Employee" description="The person this login belongs to (Configuration → Employees)." />

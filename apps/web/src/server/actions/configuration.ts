@@ -20,6 +20,7 @@ import {
   updateDepartment,
   updateEmployee,
   updateJobTitle,
+  newEmployeeMissing,
   type ConfigResult,
 } from "@/server/configuration";
 
@@ -72,6 +73,17 @@ export async function removeDepartment(id: string): Promise<ConfigFormState> {
   return done(await deleteDepartment(platformPrisma, id), g.session, "DEPARTMENT_DELETED", "/admin/configuration/departments", "Department deleted.");
 }
 
+/** "+ New" beside the department picker: create one and hand it back to be chosen. */
+export async function quickAddDepartment(name: string): Promise<{ id: string; name: string } | { error: string }> {
+  const g = await gate();
+  if ("denied" in g) return { error: g.denied };
+  const result = await createDepartment(platformPrisma, { name, code: null, description: null });
+  if (!result.ok) return { error: result.error };
+  await logSystemEvent("INFO", "configuration", "DEPARTMENT_CREATED", { targetId: result.id, changedBy: g.session.username });
+  revalidatePath("/admin/configuration/departments");
+  return { id: result.id, name: String(name).trim() };
+}
+
 // ── Job titles ───────────────────────────────────────────────────────────────────────────────────
 
 export async function saveJobTitle(_prev: ConfigFormState, form: FormData): Promise<ConfigFormState> {
@@ -95,6 +107,17 @@ export async function removeJobTitle(id: string): Promise<ConfigFormState> {
   return done(await deleteJobTitle(platformPrisma, id), g.session, "JOB_TITLE_DELETED", "/admin/configuration/job-titles", "Job title deleted.");
 }
 
+/** "+ New" beside the job title picker. */
+export async function quickAddJobTitle(name: string): Promise<{ id: string; name: string } | { error: string }> {
+  const g = await gate();
+  if ("denied" in g) return { error: g.denied };
+  const result = await createJobTitle(platformPrisma, { name, description: null });
+  if (!result.ok) return { error: result.error };
+  await logSystemEvent("INFO", "configuration", "JOB_TITLE_CREATED", { targetId: result.id, changedBy: g.session.username });
+  revalidatePath("/admin/configuration/job-titles");
+  return { id: result.id, name: String(name).trim() };
+}
+
 // ── Employees ────────────────────────────────────────────────────────────────────────────────────
 
 function employeeInput(form: FormData) {
@@ -112,11 +135,16 @@ export async function saveEmployee(_prev: ConfigFormState, form: FormData): Prom
   const g = await gate();
   if ("denied" in g) return { error: g.denied };
   const id = String(form.get("id") ?? "");
+  // Every new employee is filed under a department and a job title (the setup order: those come first).
+  if (!id) {
+    const missing = newEmployeeMissing(form, "");
+    if (missing) return { error: missing };
+  }
   const result = id ? await updateEmployee(platformPrisma, id, employeeInput(form)) : await createEmployee(platformPrisma, employeeInput(form));
   if (!result.ok) return { error: result.error };
   await logSystemEvent("INFO", "configuration", id ? "EMPLOYEE_UPDATED" : "EMPLOYEE_CREATED", { targetId: result.id, changedBy: g.session.username });
   revalidatePath("/admin/configuration/employees");
-  redirect(`/admin/configuration/employees/${result.id}?saved=1`);
+  redirect(`/admin/configuration/employees/${result.id}?${id ? "saved" : "created"}=1`);
 }
 
 export async function toggleEmployee(id: string, active: boolean): Promise<ConfigFormState> {
@@ -141,3 +169,4 @@ export async function linkEmployeeLogin(employeeId: string, userId: string | nul
   revalidatePath("/admin/users");
   return { success: userId ? "Login linked." : "Login unlinked." };
 }
+

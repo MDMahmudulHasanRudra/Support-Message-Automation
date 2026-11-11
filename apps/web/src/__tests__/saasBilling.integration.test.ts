@@ -2,7 +2,7 @@ import "./helpers/requireTestDatabase";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createProjectWithDefaults, ensureDefaultRoles, prisma as rawPrisma, recomputeCustomerBilling } from "@support-automation/db";
-import { PERMISSIONS } from "@support-automation/shared";
+import { PERMISSIONS, PROJECT_FEATURES } from "@support-automation/shared";
 
 /**
  * SaaS billing (SAAS_PLATFORM_PLAN.md §10), through the REAL sign-in, actions, access checks and
@@ -279,7 +279,9 @@ describe("limits and the plan's modules", () => {
   it("modules are applied only when asked, and the user limit holds under concurrent creation", async () => {
     await assign(ws.limited.customerId, { applyFeatures: "on" });
     const features = await rawPrisma.projectFeature.findMany({ where: { projectId: ws.limited.id }, select: { key: true, enabled: true } });
-    expect(features.filter((f) => f.enabled).map((f) => f.key)).toEqual(["WHATSAPP_CHAT"]);
+    // The approval-only switches are never set by a plan; since 11 Nov 2026 they start on, and the plan leaves them.
+    const approvalOnly = new Set<string>(PROJECT_FEATURES.filter((f) => "manualOnly" in f && f.manualOnly).map((f) => f.key));
+    expect(features.filter((f) => f.enabled && !approvalOnly.has(f.key)).map((f) => f.key)).toEqual(["WHATSAPP_CHAT"]);
 
     // Created inside the customer's own software, as its Main Admin portal does (SAAS §12).
     const attempts = await Promise.all(
