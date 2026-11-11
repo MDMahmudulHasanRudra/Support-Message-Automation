@@ -32,20 +32,22 @@ export function CreateProjectForm({
   templates = [],
   planName = null,
   codeContext,
+  everything = [],
 }: {
   defaultName?: string;
   templates?: ModuleSetupOption[];
   planName?: string | null;
   codeContext: ClientCodeContext;
+  /** Every module's name, for the "Everything" preview. */
+  everything?: string[];
 }) {
   const [state, formAction, pending] = useActionState<ProjectFormState, FormData>(createProject, {});
   const [name, setName] = useState(defaultName);
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
   const [editingSlug, setEditingSlug] = useState(false);
-  const builtIns = templates.filter((t) => t.builtIn);
   const own = templates.filter((t) => !t.builtIn);
-  const [setup, setSetup] = useState(builtIns[0]?.key ?? PLAN);
+  const [setup, setSetup] = useState(PLAN);
   const chosen = templates.find((t) => t.key === setup);
   const exampleName = `${useBranding().productName} Project 2`;
 
@@ -98,22 +100,20 @@ export function CreateProjectForm({
       </Card>
 
       <Card>
-        <StepTitle number={2} title="What kind of business is it?" hint="Pick the closest one. Its modules come switched on, and you can change them any time." />
-        <div role="radiogroup" aria-label="Business type" className="grid gap-3 sm:grid-cols-2">
-          {builtIns.map((t) => (
-            <TypeCard key={t.key} selected={setup === t.key} onSelect={() => setSetup(t.key)} title={t.name} description={t.description} meta={`${t.moduleCount} modules`} />
-          ))}
-          {own.map((t) => (
-            <TypeCard key={t.key} selected={setup === t.key} onSelect={() => setSetup(t.key)} title={t.name} description={t.description} meta={`Your template · ${t.moduleCount} modules`} />
-          ))}
+        <StepTitle number={2} title="Modules" hint="Every module comes switched on. Use what you need; anything unused simply waits." />
+        <div role="radiogroup" aria-label="Modules" className="grid gap-3 sm:grid-cols-2">
           <TypeCard
             selected={setup === PLAN}
             onSelect={() => setSetup(PLAN)}
             icon={Layers}
-            title="Everything in my plan"
-            description={`Every module your plan${planName ? ` (${planName})` : ""} includes.`}
+            title="Everything (recommended)"
+            description={`Every module${planName ? ` your plan (${planName}) includes` : ""}, ready to use.`}
+            meta={`${everything.length} modules`}
           />
-          <TypeCard selected={setup === CUSTOM} onSelect={() => setSetup(CUSTOM)} icon={SlidersHorizontal} title="Custom setup" description="Choose each module yourself on the next screen." />
+          {own.map((t) => (
+            <TypeCard key={t.key} selected={setup === t.key} onSelect={() => setSetup(t.key)} title={t.name} description={t.description} meta={`Your template · ${t.moduleCount} modules`} />
+          ))}
+          <TypeCard selected={setup === CUSTOM} onSelect={() => setSetup(CUSTOM)} icon={SlidersHorizontal} title="Choose modules myself" description="Pick each module on the next screen." />
         </div>
 
         <div className="mt-4 rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)] px-4 py-3">
@@ -121,7 +121,16 @@ export function CreateProjectForm({
             <Sparkles className="size-3.5 text-[color:var(--color-accent)]" aria-hidden />
             Your workspace will include
           </p>
-          {chosen ? (
+          {setup === PLAN ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {everything.slice(0, 14).map((m) => (
+                <span key={m} className="rounded-full bg-[var(--color-surface)] px-2.5 py-1 text-[12px] text-[color:var(--color-foreground)] ring-1 ring-[var(--color-border)]">
+                  {m}
+                </span>
+              ))}
+              {everything.length > 14 ? <span className="px-1 py-1 text-[12px] text-[color:var(--color-muted-foreground)]">+{everything.length - 14} more</span> : null}
+            </div>
+          ) : chosen ? (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {chosen.moduleNames.slice(0, 14).map((m) => (
                 <span key={m} className="rounded-full bg-[var(--color-surface)] px-2.5 py-1 text-[12px] text-[color:var(--color-foreground)] ring-1 ring-[var(--color-border)]">
@@ -132,10 +141,10 @@ export function CreateProjectForm({
             </div>
           ) : (
             <p className="mt-1 text-[12.5px] text-[color:var(--color-muted-foreground)]">
-              {setup === CUSTOM ? "The modules you choose next. Nothing is switched on until you save there." : "Every module your plan includes."}
+              {setup === CUSTOM ? "The modules you choose next. Nothing is switched on until you save there." : null}
             </p>
           )}
-          <p className="mt-2 text-[11.5px] text-[color:var(--color-subtle-foreground)]">Anything your plan does not include is left out and noted. You can change modules later in the Module Builder.</p>
+          <p className="mt-2 text-[11.5px] text-[color:var(--color-subtle-foreground)]">Anything your plan does not include is left out and noted. You can switch modules off later in the Module Builder.</p>
         </div>
       </Card>
 

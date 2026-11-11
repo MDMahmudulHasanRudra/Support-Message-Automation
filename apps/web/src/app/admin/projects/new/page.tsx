@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/ui";
 import { reservedClientCodePrefixes } from "@support-automation/db";
-import { codeTenantKey, moduleDefinition, nextDefaultProjectName } from "@support-automation/shared";
+import { codeTenantKey, moduleDefinition, nextDefaultProjectName, PROJECT_MODULES } from "@support-automation/shared";
 import { globalPrisma, platformPrisma } from "@/server/db";
 import { requireMainAdminManagePage } from "@/server/mainAdmin";
 import { currentTenant } from "@/server/tenant";
@@ -25,6 +25,7 @@ export default async function NewProjectPage() {
       <div>
         <CreateProjectForm
           defaultName={nextDefaultProjectName(existing)}
+          everything={PROJECT_MODULES.filter((m) => m.status === "AVAILABLE").map((m) => m.name)}
           planName={planName}
           codeContext={{ primary: !reserved.some((r) => r.prefix === ""), reserved: reserved.map((r) => ({ prefix: r.prefix, projectName: r.projectName })) }}
           templates={templates.map((t) => ({

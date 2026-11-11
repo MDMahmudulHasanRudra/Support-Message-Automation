@@ -85,7 +85,8 @@ beforeAll(async () => {
     const p = await createProjectWithDefaults({ name: `${name} ${tag}`, slug: `${name.toLowerCase()}-${tag}`, status: "ACTIVE", creatorUserId: people.manager.userId }, rawPrisma);
     ids.projects.push(p.id);
     await rawPrisma.projectAccess.createMany({ data: Object.values(people).map((u) => ({ projectId: p.id, userId: u.userId })), skipDuplicates: true });
-    if (withFeature) await rawPrisma.projectFeature.upsert({ where: { projectId_key: { projectId: p.id, key: "CLIENT_CENTER" } }, create: { projectId: p.id, key: "CLIENT_CENTER", enabled: true }, update: { enabled: true } });
+    // Every module is on by default now, so the project without Client Management switches it off explicitly.
+    await rawPrisma.projectFeature.upsert({ where: { projectId_key: { projectId: p.id, key: "CLIENT_CENTER" } }, create: { projectId: p.id, key: "CLIENT_CENTER", enabled: withFeature }, update: { enabled: withFeature } });
     return { id: p.id, slug: p.slug, name: `${name} ${tag}`, status: "ACTIVE" as const };
   };
   A = await make("ClientsA", true);

@@ -97,12 +97,10 @@ describe("the Main Admin keys leave the existing roles exactly as they were", ()
 });
 
 describe("project features", () => {
-  it("default to their own default — every feature on except the opt-in Google Sheets, Omnichannel, Client Management and the new chat view — and a stored row overrides it", () => {
+  it("default to on — every module is on unless a stored row says otherwise (owner's decision, 11 Nov 2026)", () => {
     const all = resolveProjectFeatures([]);
     expect(all).toHaveLength(PROJECT_FEATURES.length);
-    expect(all.every((f) => f.isDefault)).toBe(true);
-    expect(all.filter((f) => !f.enabled).map((f) => f.key)).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "CSAT_SURVEYS", "AUTO_ROUTING", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "WHATSAPP_OFFICIAL", "PAYMENT_LINKS", "FOLLOW_UPS"]);
-    expect(resolveProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: true }]).find((f) => f.key === "GOOGLE_SHEETS")).toMatchObject({ enabled: true, isDefault: false });
+    expect(all.every((f) => f.isDefault && f.enabled)).toBe(true);
     const withOverride = resolveProjectFeatures([{ key: "AI_REPLY", enabled: false }]);
     expect(withOverride.find((f) => f.key === "AI_REPLY")).toMatchObject({ enabled: false, isDefault: false });
   });
@@ -149,48 +147,21 @@ describe("which feature a page or action belongs to", () => {
 
   it("a disabled feature blocks exactly its own paths", () => {
     const disabled = disabledProjectFeatures([{ key: "WHATSAPP_CHAT", enabled: false }, { key: "AI_REPLY", enabled: true }]);
-    // Google Sheets, Omnichannel, Client Management and the new chat view are off until a Main Admin
-    // switches them on.
-    expect([...disabled]).toEqual(["WHATSAPP_CHAT", "GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "CSAT_SURVEYS", "AUTO_ROUTING", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "WHATSAPP_OFFICIAL", "PAYMENT_LINKS", "FOLLOW_UPS"]);
+    expect([...disabled]).toEqual(["WHATSAPP_CHAT"]);
     expect(pathAllowedByFeatures("/chat/1", disabled)).toBe(false);
     expect(pathAllowedByFeatures("/messages", disabled)).toBe(true);
     expect(pathAllowedByFeatures("/ai-learning/activity", disabled)).toBe(true);
-    expect([...disabledProjectFeatures([])]).toEqual(["GOOGLE_SHEETS", "OMNICHANNEL", "CLIENT_CENTER", "CHAT_UI_V2", "WHATSAPP_AVATARS", "CLIENT_SMART_IMPORT", "INBOX_COLLABORATION", "AI_COPILOT", "UNIFIED_INBOX_V3", "CSAT_SURVEYS", "AUTO_ROUTING", "PRODUCT_CATALOG", "ORDERS", "SALES_PIPELINE", "COURIER", "WOOCOMMERCE", "SHOPIFY", "API_ACCESS", "SOCIAL_STUDIO", "WHATSAPP_OFFICIAL", "PAYMENT_LINKS", "FOLLOW_UPS"]);
+    // Nothing stored: everything is on.
+    expect(disabledProjectFeatures([]).size).toBe(0);
     // The new chat view is a presentation switch: off, it blocks no page at all.
-    expect(pathAllowedByFeatures("/chat/account/a/g", disabledProjectFeatures([]))).toBe(true);
-    expect(pathAllowedByFeatures("/clients/import", disabledProjectFeatures([]))).toBe(false);
-    expect(pathAllowedByFeatures("/clients", disabledProjectFeatures([{ key: "CLIENT_CENTER", enabled: true }]))).toBe(true);
-    expect(pathAllowedByFeatures("/conversations/all", disabledProjectFeatures([]))).toBe(false);
+    expect(pathAllowedByFeatures("/chat/account/a/g", disabledProjectFeatures([{ key: "CHAT_UI_V2", enabled: false }]))).toBe(true);
+    expect(pathAllowedByFeatures("/clients/import", disabledProjectFeatures([{ key: "CLIENT_CENTER", enabled: false }]))).toBe(false);
+    expect(pathAllowedByFeatures("/clients", disabledProjectFeatures([]))).toBe(true);
+    const noChannels = disabledProjectFeatures([{ key: "OMNICHANNEL", enabled: false }]);
+    expect(pathAllowedByFeatures("/conversations/all", noChannels)).toBe(false);
     // WhatsApp Chat is its own feature: Omnichannel being off never touches it.
-    expect(pathAllowedByFeatures("/chat", disabledProjectFeatures([]))).toBe(true);
-    expect(pathAllowedByFeatures("/google-sheets", disabledProjectFeatures([]))).toBe(false);
-    expect(
-      disabledProjectFeatures([
-        { key: "GOOGLE_SHEETS", enabled: true },
-        { key: "OMNICHANNEL", enabled: true },
-        { key: "CLIENT_CENTER", enabled: true },
-        { key: "CHAT_UI_V2", enabled: true },
-        { key: "UNIFIED_REPORTING", enabled: true },
-        { key: "WHATSAPP_AVATARS", enabled: true },
-        { key: "CLIENT_SMART_IMPORT", enabled: true },
-        { key: "INBOX_COLLABORATION", enabled: true },
-        { key: "AI_COPILOT", enabled: true },
-        { key: "UNIFIED_INBOX_V3", enabled: true },
-        { key: "CSAT_SURVEYS", enabled: true },
-        { key: "AUTO_ROUTING", enabled: true },
-        { key: "PRODUCT_CATALOG", enabled: true },
-        { key: "ORDERS", enabled: true },
-        { key: "SALES_PIPELINE", enabled: true },
-        { key: "COURIER", enabled: true },
-        { key: "WOOCOMMERCE", enabled: true },
-        { key: "SHOPIFY", enabled: true },
-        { key: "API_ACCESS", enabled: true },
-        { key: "SOCIAL_STUDIO", enabled: true },
-        { key: "WHATSAPP_OFFICIAL", enabled: true },
-        { key: "PAYMENT_LINKS", enabled: true },
-        { key: "FOLLOW_UPS", enabled: true },
-      ]).size,
-    ).toBe(0);
+    expect(pathAllowedByFeatures("/chat", noChannels)).toBe(true);
+    expect(pathAllowedByFeatures("/google-sheets", disabledProjectFeatures([{ key: "GOOGLE_SHEETS", enabled: false }]))).toBe(false);
   });
 });
 

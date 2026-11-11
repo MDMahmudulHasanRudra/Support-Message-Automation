@@ -985,6 +985,7 @@ const RELEASES: HistoricalRelease[] = [
       "Roles have a Simple view: No access, View or Full for each module",
       "Your profile photo in the top bar",
       "Delete a custom template you no longer need",
+      "Every module is now switched on in every project, ready to use",
     ],
     improvements: [],
     bugFixes: [],

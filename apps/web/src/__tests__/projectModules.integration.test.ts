@@ -136,12 +136,14 @@ describe("applying", () => {
 
   it("adds hard dependencies, writes only changed rows, records history and becomes Custom Mix", async () => {
     current = admin;
-    const modules = [...templateModules("DEFAULT"), "CLIENT_SMART_IMPORT"];
+    // Every module is on by default (11 Nov 2026): switch Google Sheets off and leave out Client Management,
+    // which Smart Import needs, so it comes back as a hard dependency.
+    const modules = templateModules("DEFAULT").filter((k) => k !== "CLIENT_CENTER" && k !== "GOOGLE_SHEETS");
     const r = await inA(() => applyProjectModules(projectA, { modules, declined: [], baseType: "DEFAULT", expectedVersion: 0, reason: "Bought Smart Import" }));
     expect(r.error).toBeUndefined();
     expect(r.version).toBe(1);
     const rows = await featureRows(projectA);
-    expect(rows.map((x) => [x.key, x.enabled]).sort()).toEqual([["CLIENT_CENTER", true], ["CLIENT_SMART_IMPORT", true]]);
+    expect(rows.map((x) => [x.key, x.enabled]).sort()).toEqual([["GOOGLE_SHEETS", false]]);
     const s = await state(projectA);
     expect(s).toMatchObject({ projectType: "CUSTOM_MIX", projectBaseType: "DEFAULT", version: 1 });
     expect(s!.history[0]).toMatchObject({ version: 1, autoAdded: ["CLIENT_CENTER"], reason: "Bought Smart Import", actorUsername: admin.username });
