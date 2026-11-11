@@ -966,6 +966,23 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: ["The Send in their chat button in a contact campaign now works on Messenger, Instagram and Telegram"],
   },
+  {
+    version: "0.42.0",
+    title: "A simpler Main Admin",
+    summary: "A welcome guide for new customers, easier project creation, and one-click access for employees.",
+    releaseDate: "2026-11-11",
+    releaseType: "IMPROVEMENT",
+    affectedModules: ["Main Admin"],
+    whatsNew: [
+      "A welcome screen that walks a new customer through setup, step by step",
+      "Create a project by picking your business type from cards, and see what it will include",
+      "Each project page has three tabs: Overview, Team & Access and Settings",
+      "Give an employee a login in one click, with a generated password",
+      "An archived project can be restored",
+    ],
+    improvements: [],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

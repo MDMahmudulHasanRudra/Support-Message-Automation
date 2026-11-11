@@ -2,7 +2,8 @@ import NextLink from "next/link";
 import { notFound } from "next/navigation";
 import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
-import { Alert, Badge, Card, SectionHeader } from "@/components/ui";
+import { KeyRound } from "lucide-react";
+import { Alert, Badge, ButtonLink, Card, SectionHeader } from "@/components/ui";
 import { EmployeeForm } from "../EmployeeForm";
 import { EmployeeLoginControl, EmployeeStatusControl } from "./EmployeeControls";
 
@@ -34,6 +35,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
     can("configuration.manage"),
   ]);
   if (!employee) notFound();
+  const canCreateLogin = await can("users.create");
   // Logins nobody is linked to yet — the only ones this person can be given.
   const freeLogins = canManage
     ? await platformPrisma.user.findMany({ where: { employee: null }, orderBy: { username: "asc" }, select: { id: true, username: true, name: true } })
@@ -64,7 +66,18 @@ export default async function EmployeePage({ params, searchParams }: { params: P
       />
 
       <Card>
-        <SectionHeader title="Login" description="The app login this person uses, if any. One login per person; the login's role and project access are set under Users & Permissions." />
+        <SectionHeader
+          title="App access"
+          description="Whether this person can sign in, and to what. One login per person; its role and projects are set under Users & Access."
+          action={
+            !employee.user && canCreateLogin && employee.status === "ACTIVE" ? (
+              <ButtonLink href={`/admin/users/new?employee=${employee.id}`} variant="primary">
+                <KeyRound className="size-4" aria-hidden />
+                Give app access
+              </ButtonLink>
+            ) : null
+          }
+        />
         {employee.user ? (
           <p className="mb-3 text-[13px]">
             <NextLink href={`/admin/users/${employee.user.id}`} className="font-medium hover:underline">
@@ -73,7 +86,7 @@ export default async function EmployeePage({ params, searchParams }: { params: P
             {employee.user.isActive ? null : <span className="ml-2 text-xs text-[color:var(--color-muted-foreground)]">(login deactivated)</span>}
           </p>
         ) : (
-          <p className="mb-3 text-[13px] text-[color:var(--color-muted-foreground)]">No login linked.</p>
+          <p className="mb-3 text-[13px] text-[color:var(--color-muted-foreground)]">No app access yet. Give access to create their login, role and projects in one step, or link a login that already exists.</p>
         )}
         {canManage ? <EmployeeLoginControl employeeId={employee.id} linkedUserId={employee.user?.id ?? null} freeLogins={freeLogins} /> : null}
       </Card>

@@ -36,7 +36,7 @@ interface AdminNavItem {
 /** All Conversations and Operations are shown page by page; every other module is one entry. */
 const EXPANDED_GROUPS = new Set(["support", "operations"]);
 
-function buildSections(granted: ReadonlySet<string>): Array<{ title: string; items: AdminNavItem[] }> {
+function buildSections(granted: ReadonlySet<string>, hasProjects: boolean): Array<{ title: string; items: AdminNavItem[] }> {
   const groups = navGroupsFor(granted);
   const open = (link: NavLink, label = link.label): AdminNavItem => ({ href: workspaceOpenHref(link.href), label, icon: link.icon, exact: false });
   const isGlobal = (links: NavLink[]) => links.every((link) => isGlobalPage(link.href));
@@ -66,11 +66,16 @@ function buildSections(granted: ReadonlySet<string>): Array<{ title: string; ite
         { href: "/admin/account", label: "My Account", icon: UserRound, exact: false },
       ],
     },
+    // No project yet: nothing to open, so the Workspace menu is left out (the pages refuse without one anyway).
     {
       title: "Workspace",
-      items: groups
+      items: (hasProjects ? groups : [])
         .filter((g) => !isGlobal(g.links))
-        .flatMap((g) => (EXPANDED_GROUPS.has(g.id ?? "") ? g.links.map((link) => open(link)) : [{ ...open(g.links[0]!, g.label), icon: g.icon }])),
+        .flatMap((g, _i, all) => {
+          if (EXPANDED_GROUPS.has(g.id ?? "")) return g.links.map((link) => open(link));
+          const taken = all.some((other) => EXPANDED_GROUPS.has(other.id ?? "") && other.links.some((link) => link.label === g.label));
+          return [{ ...open(g.links[0]!, taken ? `${g.label}: ${g.links[0]!.label}` : g.label), icon: g.icon }];
+        }),
     },
   ];
 }
@@ -100,7 +105,8 @@ export function AdminShell({
 }) {
   const pathname = usePathname();
   const pendingNav = usePendingNavigation();
-  const sections = useMemo(() => buildSections(new Set(grantedKeys)), [grantedKeys]);
+  const hasProjects = projects.some((p) => p.status !== "ARCHIVED");
+  const sections = useMemo(() => buildSections(new Set(grantedKeys), hasProjects).filter((s) => s.items.length > 0), [grantedKeys, hasProjects]);
   const nav = sections.flatMap((section) => section.items);
   const currentLabel =
     nav.find((item) => isActive(pathname, item.href, item.exact))?.label ?? (pathname.startsWith("/admin/workspace") ? "Workspace" : nav[0]!.label);

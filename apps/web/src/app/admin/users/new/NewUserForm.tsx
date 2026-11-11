@@ -1,6 +1,7 @@
 "use client";
 
 import { startTransition, useActionState, useState, type FormEvent } from "react";
+import { Check, Copy, Wand2 } from "lucide-react";
 import {
   PROJECT_ACCESS_LEVEL_DESCRIPTIONS,
   PROJECT_ACCESS_LEVEL_LABELS,
@@ -22,6 +23,7 @@ export function NewUserForm({
   freeEmployees,
   departments,
   jobTitles,
+  preset = null,
 }: {
   minPasswordLength: number;
   roles: Array<Named & { description: string | null }>;
@@ -31,9 +33,26 @@ export function NewUserForm({
   freeEmployees: Array<{ id: string; employeeCode: string; fullName: string; email: string | null }>;
   departments: Named[];
   jobTitles: Named[];
+  /** Started from an employee's profile: link that person and suggest their login. */
+  preset?: { id: string; fullName: string; email: string | null } | null;
 }) {
   const [state, action, pending] = useActionState(createUserFromAdmin, {});
-  const [mode, setMode] = useState<"none" | "existing" | "new">("none");
+  const [mode, setMode] = useState<"none" | "existing" | "new">(preset ? "existing" : "none");
+  const [username, setUsername] = useState(preset ? suggestUsername(preset.fullName) : "");
+  const [password, setPassword] = useState("");
+  const [copied, setCopied] = useState(false);
+  const generate = () => {
+    setPassword(generatePassword(Math.max(16, minPasswordLength)));
+    setCopied(false);
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
   // action, which would throw away everything typed whenever the server refuses it.
@@ -68,7 +87,7 @@ export function NewUserForm({
                 <p className="text-xs text-[color:var(--color-muted-foreground)]">Every active employee already has a login.</p>
               ) : (
                 <Field label="Employee" required>
-                  <Select name="employeeId" defaultValue="">
+                  <Select name="employeeId" defaultValue={preset?.id ?? ""}>
                     <option value="">Choose…</option>
                     {freeEmployees.map((e) => (
                       <option key={e.id} value={e.id}>
@@ -129,21 +148,42 @@ export function NewUserForm({
         <SectionHeader title="2. Login" description="How they sign in." />
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Username" required hint="Lowercase, used to log in. Cannot be changed later.">
-            <Input name="username" required autoComplete="off" />
+            <Input name="username" required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
           </Field>
           <Field label="Display name" required>
-            <Input name="name" required maxLength={150} />
+            <Input name="name" required maxLength={150} defaultValue={preset?.fullName ?? ""} />
           </Field>
           <Field label="Login email" hint="Optional.">
-            <Input name="email" type="email" />
+            <Input name="email" type="email" defaultValue={preset?.email ?? ""} />
           </Field>
           <div />
-          <Field label="Password" required hint={`At least ${minPasswordLength} characters.`}>
-            <Input name="password" type="password" required minLength={minPasswordLength} autoComplete="new-password" />
+          <Field label="Password" required hint={`At least ${minPasswordLength} characters. Generate one, copy it, and give it to them.`}>
+            <div className="flex gap-2">
+              <Input
+                name="password"
+                type={password ? "text" : "password"}
+                required
+                minLength={minPasswordLength}
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setCopied(false);
+                }}
+                className="font-mono"
+              />
+              <Button type="button" variant="secondary" onClick={generate} aria-label="Generate a password">
+                <Wand2 className="size-4" aria-hidden />
+                Generate
+              </Button>
+              {password ? (
+                <Button type="button" variant="secondary" onClick={copy} aria-label="Copy the password">
+                  {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
+                </Button>
+              ) : null}
+            </div>
           </Field>
-          <Field label="Confirm password" required>
-            <Input name="confirmPassword" type="password" required minLength={minPasswordLength} autoComplete="new-password" />
-          </Field>
+          <input type="hidden" name="confirmPassword" value={password} />
         </div>
       </Card>
 
@@ -220,4 +260,26 @@ export function NewUserForm({
       </Button>
     </form>
   );
+}
+
+/** "Rahim Ahmed" → "rahim.ahmed". Only a suggestion: the field stays editable and the server checks it. */
+function suggestUsername(fullName: string): string {
+  return fullName
+    .normalize("NFKD")
+    .replace(/[^\w\s.-]/g, "")
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .slice(0, 2)
+    .join(".")
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 32);
+}
+
+/** A random password from the browser's own secure generator, without look-alike characters. */
+function generatePassword(length: number): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789@#%&*";
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (n) => chars[n % chars.length]).join("");
 }

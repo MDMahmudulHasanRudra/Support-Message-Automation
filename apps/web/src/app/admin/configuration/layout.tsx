@@ -2,7 +2,7 @@ import { Alert, PageHeader } from "@/components/ui";
 import { requireAdminSection } from "@/server/mainAdmin";
 import { ConfigurationTabs } from "./ConfigurationTabs";
 
-export const metadata = { title: "Configuration" };
+export const metadata = { title: "Organization" };
 
 /**
  * Main Admin → Configuration (MAIN_ADMIN_WORKSPACE.md §5): the organisation — departments, job titles,
@@ -14,8 +14,8 @@ export default async function ConfigurationLayout({ children }: { children: Reac
   return (
     <div>
       <PageHeader
-        title="Configuration"
-        description="The organisation, for every project: departments, job titles and the people who work here. These are not WhatsApp support Teams and not roles — a job title grants nothing."
+        title="Organization"
+        description="Your departments, job titles and the people who work here, shared by every project. Set them up in this order; a job title grants nothing, and access is given under Users & Access."
       />
       {allowed ? (
         <>
@@ -23,7 +23,7 @@ export default async function ConfigurationLayout({ children }: { children: Reac
           {children}
         </>
       ) : (
-        <Alert tone="warning" title="Your role does not include Configuration">
+        <Alert tone="warning" title="Your role does not include Organization">
           It needs View Departments, Job Titles &amp; Employees. An administrator can add it to your role on Permission Modules.
         </Alert>
       )}

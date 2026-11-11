@@ -51,12 +51,13 @@ export default async function EmployeesPage({
         status: true,
         department: { select: { name: true } },
         jobTitle: { select: { name: true } },
-        user: { select: { id: true, username: true } },
+        user: { select: { id: true, username: true, isActive: true } },
       },
     }),
     platformPrisma.department.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     can("configuration.manage"),
   ]);
+  const canCreateLogin = await can("users.create");
 
   return (
     <div className="space-y-4">
@@ -113,7 +114,7 @@ export default async function EmployeesPage({
               <Th>Name</Th>
               <Th>Department</Th>
               <Th>Job title</Th>
-              <Th>Login</Th>
+              <Th>App access</Th>
               <Th>Status</Th>
             </tr>
           </thead>
@@ -131,11 +132,18 @@ export default async function EmployeesPage({
                 <Td>{e.jobTitle?.name ?? "—"}</Td>
                 <Td>
                   {e.user ? (
-                    <NextLink href={`/admin/users/${e.user.id}`} className="font-mono text-xs hover:underline">
-                      @{e.user.username}
+                    <NextLink href={`/admin/users/${e.user.id}`} className="inline-flex items-center gap-2 hover:underline">
+                      <Badge color={e.user.isActive ? "green" : "gray"} dot>
+                        {e.user.isActive ? "Active user" : "Access disabled"}
+                      </Badge>
+                      <span className="font-mono text-xs text-[color:var(--color-muted-foreground)]">@{e.user.username}</span>
+                    </NextLink>
+                  ) : canCreateLogin && e.status === "ACTIVE" ? (
+                    <NextLink href={`/admin/users/new?employee=${e.id}`} className="text-xs font-medium text-[color:var(--color-accent-fg)] hover:underline">
+                      Give app access
                     </NextLink>
                   ) : (
-                    <span className="text-xs text-[color:var(--color-muted-foreground)]">No login</span>
+                    <span className="text-xs text-[color:var(--color-muted-foreground)]">No app access</span>
                   )}
                 </Td>
                 <Td>{e.status === "ACTIVE" ? <Badge color="green">Active</Badge> : <Badge color="gray">Inactive</Badge>}</Td>

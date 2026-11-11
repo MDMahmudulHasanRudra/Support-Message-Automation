@@ -64,7 +64,8 @@ describe("project lifecycle", () => {
     expect(canTransitionProject("SUSPENDED", "ACTIVE")).toBe(true);
     expect(canTransitionProject("SUSPENDED", "ARCHIVED")).toBe(true);
     expect(canTransitionProject("ACTIVE", "SETUP")).toBe(false);
-    expect(allowedProjectTransitions("ARCHIVED")).toEqual([]);
+    // Restore: an archived project comes back on hold, never straight to active.
+    expect(allowedProjectTransitions("ARCHIVED")).toEqual(["SUSPENDED"]);
   });
 
   it("is read-only exactly when it does not operate", () => {

@@ -35,8 +35,11 @@ import { ProjectStatusBadge } from "@/components/ProjectSwitcher";
 import { combineKpis, getProjectMessageSeries, getProjectSummaries, requireMainAdminPage, type ProjectSummary } from "@/server/mainAdmin";
 import { getGrantedPermissionKeys } from "@/server/permissions";
 import { whatsappLine } from "./ProjectCard";
+import { WelcomeSetup, type WelcomeStep } from "./WelcomeSetup";
+import { platformPrisma } from "@/server/db";
+import { getBranding } from "@/server/branding";
 
-export const metadata = { title: "Overview" };
+export const metadata = { title: "Dashboard" };
 
 const STATUS_COLOR: Record<ProjectStatusValue, string> = {
   ACTIVE: "var(--color-success)",
@@ -96,18 +99,48 @@ export default async function MainAdminOverview({ searchParams }: { searchParams
   const quickActions: QuickAction[] = [
     ...(canManage ? [{ label: "Create a project", href: "/admin/projects/new", icon: Plus }] : []),
     { label: "All projects", href: "/admin/projects", icon: FolderKanban },
-    { label: "Module templates", href: "/admin/module-templates", icon: Blocks },
-    ...(granted.has("users.view") ? [{ label: "Users & permissions", href: "/admin/users", icon: ShieldCheck }] : []),
-    ...(granted.has("configuration.view") ? [{ label: "Configuration", href: "/admin/configuration", icon: Building2 }] : []),
+    { label: "Project templates", href: "/admin/module-templates", icon: Blocks },
+    ...(granted.has("users.view") ? [{ label: "Users & access", href: "/admin/users", icon: ShieldCheck }] : []),
+    ...(granted.has("configuration.view") ? [{ label: "Organization", href: "/admin/configuration", icon: Building2 }] : []),
     { label: "Branding", href: "/admin/branding", icon: Palette },
   ];
 
-  const setup: SetupStep[] = [
-    { key: "project", title: "Create your first project", detail: "A project is one business or team, with its own numbers, people and data.", done: listed.length > 0, href: canManage ? "/admin/projects/new" : undefined, action: "Create project" },
-    { key: "number", title: "Connect a WhatsApp number", detail: "Open a project, then link a number from WhatsApp Accounts.", done: kpis.whatsappTotal > 0, href: enterable[0] ? `/p/${enterable[0].slug}/accounts` : undefined, action: "Open accounts" },
-    { key: "team", title: "Add your team", detail: "Give people a login and the projects they may enter.", done: kpis.activeTeamMembers > 0, href: granted.has("users.view") ? "/admin/users" : undefined, action: "Open users" },
-    { key: "monitor", title: "Monitor your groups", detail: "Choose which groups automation and reports should follow.", done: kpis.monitoredGroups > 0, href: enterable[0] ? `/p/${enterable[0].slug}/groups` : undefined, action: "Open groups" },
+  // The setup steps, ticked from what exists: the welcome screen and the dashboard's guide are one list.
+  const [employeeCount, otherLogins, branding, { productName }] = await Promise.all([
+    platformPrisma.employee.count(),
+    platformPrisma.user.count({ where: { id: { not: session.userId }, supportOperatorId: null } }),
+    platformPrisma.platformBranding.findFirst({ select: { productName: true, accentColor: true, assetVersion: true } }),
+    getBranding(),
+  ]);
+  const firstProject = enterable[0];
+  const steps: WelcomeStep[] = [
+    { key: "project", required: true, title: "Create your first project", detail: "Pick your business type and the modules come ready.", done: listed.length > 0, href: canManage ? "/admin/projects/new" : undefined, action: "Create project" },
+    {
+      key: "channel",
+      required: false,
+      title: "Connect WhatsApp or another channel",
+      detail: "Link the number or page your customers message.",
+      done: kpis.whatsappTotal > 0,
+      href: firstProject ? `/p/${firstProject.slug}/accounts` : undefined,
+      action: "Connect",
+      lockedReason: listed.length === 0 ? "After step 1" : undefined,
+    },
+    { key: "employees", required: false, title: "Add your employees", detail: "The people in your team, with department and job title.", done: employeeCount > 0, href: granted.has("configuration.manage") ? "/admin/configuration/employees/new" : undefined, action: "Add employee" },
+    { key: "access", required: false, title: "Give app access", detail: "A login for each person, with their role and projects.", done: otherLogins > 0, href: granted.has("users.create") ? "/admin/users/new" : undefined, action: "Give access" },
+    {
+      key: "branding",
+      required: false,
+      title: "Make it yours",
+      detail: "Your logo, name and colour on every screen.",
+      done: Boolean(branding && (branding.productName || branding.accentColor || branding.assetVersion > 0)),
+      href: "/admin/branding",
+      action: "Open branding",
+    },
   ];
+  const setup: SetupStep[] = steps;
+
+  // No project yet: a welcome screen instead of a dashboard of zeros.
+  if (listed.length === 0) return <WelcomeSetup productName={productName} username={session.username} steps={steps} />;
 
   // The setup guide: closed by this person stays closed, until they ask for it from Quick actions.
   const guideCookie = setupGuideCookie("admin", session.userId);
@@ -138,7 +171,7 @@ export default async function MainAdminOverview({ searchParams }: { searchParams
       {guideUnfinished && !guideClosed ? (
         <div className="mb-4">
           <ClosableGuide cookieName={guideCookie}>
-            <GettingStarted title="Set up your workspace" steps={setup} />
+            <GettingStarted title="Finish setting up" steps={setup} />
           </ClosableGuide>
         </div>
       ) : null}
