@@ -11,6 +11,7 @@ import {
 } from "@support-automation/shared";
 import { Alert, Button, Card, Field, Input, SectionHeader, Select } from "@/components/ui";
 import { createUserFromAdmin } from "@/server/actions/adminUsers";
+import { OrgSelect } from "../../configuration/OrgSelect";
 
 type Named = { id: string; name: string };
 
@@ -113,26 +114,8 @@ export function NewUserForm({
                 <Field label="Joined on" hint="Optional.">
                   <Input name="emp_joinedOn" type="date" />
                 </Field>
-                <Field label="Department">
-                  <Select name="emp_departmentId" defaultValue="">
-                    <option value="">None</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Job title">
-                  <Select name="emp_jobTitleId" defaultValue="">
-                    <option value="">None</option>
-                    {jobTitles.map((j) => (
-                      <option key={j.id} value={j.id}>
-                        {j.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
+                <OrgSelect kind="department" name="emp_departmentId" label="Department" options={departments.map((d) => ({ ...d, isActive: true }))} required canCreate={canEmployees} />
+                <OrgSelect kind="jobTitle" name="emp_jobTitleId" label="Job title" options={jobTitles.map((j) => ({ ...j, isActive: true }))} required canCreate={canEmployees} />
                 <p className="text-xs text-[color:var(--color-muted-foreground)] md:col-span-2">The employee ID (EMP-…) is assigned when you save.</p>
               </div>
             ) : null}

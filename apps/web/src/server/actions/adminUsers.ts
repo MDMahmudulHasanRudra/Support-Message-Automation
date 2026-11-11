@@ -1,5 +1,7 @@
 "use server";
 
+import { newEmployeeMissing } from "@/server/configuration";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { isProjectAccessLevel, PROJECT_ACCESS_LEVEL_LABELS, type ProjectAccessLevelValue } from "@support-automation/shared";
@@ -79,6 +81,10 @@ export async function createUserFromAdmin(_prev: AdminUserFormState, form: FormD
             },
           };
     if (mode === "existing" && !String(form.get("employeeId") ?? "")) return { error: "Choose the employee this login belongs to." };
+    if (mode === "new") {
+      const missing = newEmployeeMissing(form, "emp_");
+      if (missing) return { error: missing };
+    }
   }
 
   const result = await createUserWithAccess(platformPrisma, {

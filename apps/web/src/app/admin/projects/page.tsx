@@ -16,7 +16,7 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
     <div>
       <PageHeader
         title="Projects"
-        description={`Each project is its own ${productName}: its own WhatsApp numbers, groups, rules, AI, knowledge, team and reports. Opening one takes you into the portal you already know, with the permissions your role already has.`}
+        description={`Each project is one business or team in ${productName}, with its own numbers, conversations, people and reports. Open one to work in it.`}
         actions={
           <>
             <NextLink
@@ -36,7 +36,24 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
       />
 
       {projects.length === 0 ? (
-        <EmptyState>No projects to show.</EmptyState>
+        includeArchived ? (
+          <EmptyState>No projects to show.</EmptyState>
+        ) : (
+          <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--color-border-strong)] px-6 py-12 text-center">
+            <p className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Create your first project</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+              Pick your business type and it comes ready with the right modules. Then connect your number and start answering customers.
+            </p>
+            {canManage ? (
+              <div className="mt-4 flex justify-center">
+                <ButtonLink href="/admin/projects/new" variant="primary">
+                  <Plus className="size-4" aria-hidden />
+                  Create project
+                </ButtonLink>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => (

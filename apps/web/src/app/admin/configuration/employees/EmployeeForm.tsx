@@ -1,8 +1,9 @@
 "use client";
 
 import { startTransition, useActionState, type FormEvent } from "react";
-import { Alert, Button, Card, Field, Input, Select } from "@/components/ui";
+import { Alert, Button, Card, Field, Input } from "@/components/ui";
 import { saveEmployee } from "@/server/actions/configuration";
+import { OrgSelect } from "../OrgSelect";
 
 export interface Option {
   id: string;
@@ -34,8 +35,7 @@ export function EmployeeForm({
   canManage: boolean;
 }) {
   const [state, action, pending] = useActionState(saveEmployee, {});
-  // An inactive department or title stays selectable only if it is already this person's.
-  const offer = (options: Option[], current?: string | null) => options.filter((o) => o.isActive || o.id === current);
+  const creating = !defaults.id;
 
   // Submitted from onSubmit rather than <form action>: React resets an uncontrolled form after an
   // action, which would throw away everything typed whenever the server refuses it.
@@ -64,28 +64,8 @@ export function EmployeeForm({
           <Field label="Phone" hint="Optional.">
             <Input name="phone" defaultValue={defaults.phone ?? ""} maxLength={40} />
           </Field>
-          <Field label="Department">
-            <Select name="departmentId" defaultValue={defaults.departmentId ?? ""}>
-              <option value="">None</option>
-              {offer(departments, defaults.departmentId).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                  {d.isActive ? "" : " (inactive)"}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Job title">
-            <Select name="jobTitleId" defaultValue={defaults.jobTitleId ?? ""}>
-              <option value="">None</option>
-              {offer(jobTitles, defaults.jobTitleId).map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.name}
-                  {j.isActive ? "" : " (inactive)"}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <OrgSelect kind="department" name="departmentId" label="Department" options={departments} defaultValue={defaults.departmentId} required={creating} canCreate={canManage} />
+          <OrgSelect kind="jobTitle" name="jobTitleId" label="Job title" options={jobTitles} defaultValue={defaults.jobTitleId} required={creating} canCreate={canManage} />
           <Field label="Joined on" hint="Optional.">
             <Input name="joinedOn" type="date" defaultValue={defaults.joinedOn ?? ""} />
           </Field>

@@ -5,15 +5,16 @@ import { requireAdminSection } from "@/server/mainAdmin";
 import { KeyRound } from "lucide-react";
 import { Alert, Badge, ButtonLink, Card, SectionHeader } from "@/components/ui";
 import { EmployeeForm } from "../EmployeeForm";
+import { NextStep } from "../../../NextStep";
 import { EmployeeLoginControl, EmployeeStatusControl } from "./EmployeeControls";
 
 export const metadata = { title: "Employee" };
 
-export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string }> }) {
+export default async function EmployeePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string; created?: string }> }) {
   const { allowed, can } = await requireAdminSection("configuration.view");
   if (!allowed) return null;
   const { id } = await params;
-  const { saved } = await searchParams;
+  const { saved, created } = await searchParams;
   const [employee, departments, jobTitles, canManage] = await Promise.all([
     platformPrisma.employee.findUnique({
       where: { id },
@@ -54,6 +55,18 @@ export default async function EmployeePage({ params, searchParams }: { params: P
         </div>
       </div>
       {saved ? <Alert tone="success">Saved.</Alert> : null}
+      {created ? (
+        employee.user || !canCreateLogin ? (
+          <Alert tone="success">{employee.fullName} is added as {employee.employeeCode}.</Alert>
+        ) : (
+          <NextStep
+            title={`${employee.fullName} is added. Give them app access?`}
+            detail="A login lets them sign in and work in the projects you choose. Skip this for someone who will not use the software."
+            href={`/admin/users/new?employee=${employee.id}`}
+            action="Give app access"
+          />
+        )
+      ) : null}
 
       <EmployeeForm
         canManage={canManage}

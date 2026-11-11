@@ -5,6 +5,7 @@ import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
 import { Badge, Button, ButtonLink, Input, Pagination, Select, Td, Th } from "@/components/ui";
 import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
+import { NextStep } from "../../NextStep";
 import { ADMIN_LIST_DEFAULT_SIZE, ADMIN_LIST_PAGE_SIZES, listHref, readListPaging, SCROLL_TABLE_CLASS } from "../../listPaging";
 
 export const metadata = { title: "Employees" };
@@ -58,6 +59,7 @@ export default async function EmployeesPage({
     can("configuration.manage"),
   ]);
   const canCreateLogin = await can("users.create");
+  const withoutLogin = canCreateLogin ? await platformPrisma.employee.count({ where: { status: "ACTIVE", userId: null } }) : 0;
 
   return (
     <div className="space-y-4">
@@ -97,9 +99,24 @@ export default async function EmployeesPage({
       </div>
 
       {employees.length === 0 ? (
-        <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] px-4 py-8 text-center text-[13px] text-[color:var(--color-muted-foreground)]">
-          {term || department || status !== "ACTIVE" ? "No employees match those filters." : "No employees recorded yet."}
-        </p>
+        term || department || status !== "ACTIVE" ? (
+          <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] px-4 py-8 text-center text-[13px] text-[color:var(--color-muted-foreground)]">No employees match those filters.</p>
+        ) : (
+          <div className="rounded-[var(--radius-xl)] border border-dashed border-[var(--color-border-strong)] px-6 py-10 text-center">
+            <p className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Add the people who work here</p>
+            <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
+              Each employee gets an ID automatically and is filed under a department and a job title. Then you can give them a login in one click.
+            </p>
+            {canManage ? (
+              <div className="mt-4 flex justify-center">
+                <ButtonLink href="/admin/configuration/employees/new" variant="primary">
+                  <Plus className="size-4" aria-hidden />
+                  Add your first employee
+                </ButtonLink>
+              </div>
+            ) : null}
+          </div>
+        )
       ) : (
         <>
         <p className="text-xs text-[color:var(--color-muted-foreground)] tabular-nums">
@@ -160,6 +177,14 @@ export default async function EmployeesPage({
           pageSizeOptions={ADMIN_LIST_PAGE_SIZES}
           buildPageSizeHref={(n) => href({ size: n })}
         />
+        {withoutLogin > 0 ? (
+          <NextStep
+            title={`${withoutLogin} ${withoutLogin === 1 ? "employee has" : "employees have"} no app access`}
+            detail="Press Give app access in the App access column to create their login, role and projects in one step."
+            href={`/admin/configuration/employees?status=ACTIVE`}
+            action="Show them"
+          />
+        ) : null}
         </>
       )}
     </div>

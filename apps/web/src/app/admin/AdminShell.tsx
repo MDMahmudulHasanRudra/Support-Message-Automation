@@ -46,8 +46,6 @@ function buildSections(granted: ReadonlySet<string>, hasProjects: boolean): Arra
       items: [
         { href: "/admin", label: "Dashboard", icon: LayoutDashboard, exact: true },
         { href: "/admin/projects", label: "Projects", icon: FolderKanban, exact: false },
-        // Reusable module selections (PROJECT_MODULES.md §8); editing needs projects.manage.
-        { href: "/admin/module-templates", label: "Project Templates", icon: Blocks, exact: false },
         // SaaS (SAAS_PLATFORM_PLAN.md): customers and the addresses that open their workspaces.
         ...(granted.has("configuration.view") ? [{ href: "/admin/configuration", label: "Organization", icon: Building2, exact: false }] : []),
         // Users & Permissions: the overview, then App Users and Permission Modules (the same in every
@@ -58,6 +56,8 @@ function buildSections(granted: ReadonlySet<string>, hasProjects: boolean): Arra
           .flatMap((g) => g.links.map((link) => ({ ...open(link), sub: true }))),
         // White labeling (BRANDING.md): anyone in the portal can see it; saving needs projects.manage.
         { href: "/admin/branding", label: "Branding Settings", icon: Palette, exact: false },
+        // Reusable module selections (PROJECT_MODULES.md §8); editing needs projects.manage.
+        { href: "/admin/module-templates", label: "Project Templates", icon: Blocks, exact: false },
         // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
         ...groups
           .filter((g) => isGlobal(g.links) && g.id !== "users-permissions")
