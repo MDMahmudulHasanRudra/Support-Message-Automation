@@ -323,7 +323,7 @@ export function GettingStarted({ title = "Get set up", steps }: { title?: string
           <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${percent}%` }} />
         </div>
       </div>
-      <ol className="grid gap-px overflow-hidden rounded-b-[var(--radius-xl)] border-t border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 xl:grid-cols-4">
+      <ol className={`grid gap-px overflow-hidden rounded-b-[var(--radius-xl)] border-t border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 ${steps.length === 5 ? "xl:grid-cols-5" : steps.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}>
         {steps.map((s, i) => (
           <li key={s.key} className="flex gap-3 bg-[var(--color-surface)] px-5 py-3.5">
             <span aria-hidden className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${s.done ? "bg-[var(--color-success-bg)] text-[color:var(--color-success-fg)]" : "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)]"}`}>
@@ -331,7 +331,7 @@ export function GettingStarted({ title = "Get set up", steps }: { title?: string
             </span>
             <span className="min-w-0">
               <span className={`block text-[13px] font-medium ${s.done ? "text-[color:var(--color-muted-foreground)] line-through" : "text-[color:var(--color-foreground)]"}`}>{s.title}</span>
-              <span className="mt-0.5 block text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">{s.detail}</span>
+              <span className={`mt-0.5 block text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)] ${s.done ? "max-sm:hidden" : ""}`}>{s.detail}</span>
               {!s.done && s.href ? (
                 <Link href={s.href} className="mt-1.5 inline-flex items-center gap-1 text-[12.5px] font-medium text-[color:var(--color-accent-fg)] hover:underline">
                   {s.action ?? "Start"}

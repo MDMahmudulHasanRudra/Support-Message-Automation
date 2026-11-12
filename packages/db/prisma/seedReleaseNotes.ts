@@ -990,6 +990,24 @@ const RELEASES: HistoricalRelease[] = [
     improvements: [],
     bugFixes: [],
   },
+  {
+    version: "0.43.0",
+    title: "A Main Admin dashboard that shows the whole business",
+    summary: "More charts and figures on the Main Admin dashboard, organised into clear sections.",
+    releaseDate: "2026-11-12",
+    releaseType: "IMPROVEMENT",
+    affectedModules: ["Main Admin"],
+    whatsNew: [
+      "Messages received and sent per day, with the change from the two weeks before",
+      "Where customers write (by channel) and when (by weekday and hour)",
+      "How much the AI answered and how much went to your team",
+      "A 14-day trend beside every project",
+      "People and access: employees with a login, logins by role, employees by department",
+      "Recent changes made by your administrators",
+    ],
+    improvements: ["The setup guide fits on one row and takes less room on a phone"],
+    bugFixes: [],
+  },
 ];
 
 async function main() {
