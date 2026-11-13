@@ -66,3 +66,10 @@ migration's own header says how to roll it back, if it ever has to be.
   old code.
 - **Database:** restore the step-2 backup only if data itself is wrong. Never restore just to undo a
   migration; roll forward instead.
+
+## The reverse proxy (nginx)
+
+nginx terminates HTTPS on the server and proxies to the app on `127.0.0.1:8668` (Caddy until 13 Nov 2026). The full
+layout, the certificate timer for customer addresses and the rollback are in `DOMAIN_MIGRATION.md`. After changing
+anything in `/etc/nginx`: `sudo nginx -t && sudo systemctl reload nginx`. Certificates renew by themselves
+(`sudo certbot renew --dry-run` proves it).

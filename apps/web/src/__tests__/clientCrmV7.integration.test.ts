@@ -18,7 +18,7 @@ import type { Session } from "@/server/auth";
  *     images are never rewritten;
  *   - a document is served only to a billing viewer of its own project, escaped, and the PDF never draws a script it
  *     cannot (it refuses and points at Print);
- *   - choosing or previewing a template sends nothing; a WhatsApp message is PREPARED, never sent by Get Assist;
+ *   - choosing or previewing a template sends nothing; a WhatsApp message is PREPARED, never sent by Chithii;
  *   - an email is queued once per press, never to someone opted out, never while the channel is unverified;
  *   - a bulk email is never approved by the person who prepared it, never after 24 hours, never includes unknown
  *     consent, and re-checks consent at approval.

@@ -9005,7 +9005,7 @@ model ListSavedView {
 }
 
 // ── Social Studio (SOCIAL_STUDIO.md) ─────────────────────────────────────────────────────────────
-// Get Assist's own social publishing. A connection is one person's authorization at a network (Meta);
+// Chithii's own social publishing. A connection is one person's authorization at a network (Meta);
 // it brings accounts (Pages, Instagram accounts). A post is written and approved once; each chosen
 // account is one publish TARGET — a durable job the engine claims, publishes and records attempts for.
 // Every table is project-owned; disabling the module keeps every row.

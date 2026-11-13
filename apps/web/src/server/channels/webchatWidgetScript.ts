@@ -6,7 +6,7 @@ import { WIDGET_FONT_STACKS, widgetPathAllowed, webchatPathMatches, widgetInvita
  *
  *   <script src="https://<this app>/api/webchat/widget.js" data-key="<widget key>" async></script>
  *
- * Optional, before it: window.GetAssistChat = { user: { id, name, email, phone, hash, phoneHash } } where the hashes
+ * Optional, before it: window.ChithiiChat (older name: window.GetAssistChat) = { user: { id, name, email, phone, hash, phoneHash } } where the hashes
  * are HMAC-SHA256 computed on the site's SERVER — never in the browser. After it loads, the same object also gets
  * open(), close() and destroy().
  *
@@ -22,7 +22,7 @@ import { WIDGET_FONT_STACKS, widgetPathAllowed, webchatPathMatches, widgetInvita
  * conversation and posts the answer to `/csat` with the visitor's token. Answered ids are remembered per browser.
  *
  * Preview (`data-preview="1"`, the settings page only): no network at all. The configuration and sample messages come
- * from window.GetAssistChatPreview and from postMessage by the parent page; nothing is sent, no visitor is created.
+ * from window.ChithiiChatPreview (or the older GetAssistChatPreview) and from postMessage by the parent page; nothing is sent, no visitor is created.
  */
 const VERSION = "3.3.0";
 
@@ -39,7 +39,9 @@ const WIDGET_SOURCE = String.raw`(function () {
   var VERSION = "` + VERSION + String.raw`";
   var base = new URL(script.src, location.href).origin + "/api/webchat/" + encodeURIComponent(key);
   var storeKey = "getassist-chat-" + key;
-  var opts = window.GetAssistChat || (window.GetAssistChat = {});
+  // window.ChithiiChat; window.GetAssistChat is the older name, still read so installed pages keep working.
+  var opts = window.ChithiiChat || window.GetAssistChat || {};
+  window.ChithiiChat = window.GetAssistChat = opts;
   var pathAllowed = ` + widgetPathAllowed.toString() + String.raw`;
   var teaserAllowed = ` + widgetTeaserAllowed.toString() + String.raw`;
   var pathMatches = ` + webchatPathMatches.toString() + String.raw`;
@@ -861,7 +863,7 @@ const WIDGET_SOURCE = String.raw`(function () {
 
   if (preview) {
     // The settings page: a configuration and sample conversation, updated live by postMessage. No network at all.
-    var pv = window.GetAssistChatPreview || {};
+    var pv = window.ChithiiChatPreview || window.GetAssistChatPreview || {};
     function apply(data) {
       S.cfg = data.config; S.token = "preview"; S.msgs = (data.messages || []).slice(); S.pending = []; S.shown = true; S.agentTyping = Boolean(data.view && data.view.typing); S.previewPrechat = Boolean(data.view && data.view.prechat); S.formOpen = false;
       if (root) root.remove(); picker = null; build();

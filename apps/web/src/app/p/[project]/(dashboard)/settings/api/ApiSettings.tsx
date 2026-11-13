@@ -216,7 +216,7 @@ export function WebhooksPanel({ endpoints }: { endpoints: EndpointRow[] }) {
     <Card>
       <SectionHeader
         title="Webhooks"
-        description="Events are POSTed as JSON, signed in X-GetAssist-Signature (t=<seconds>,v1=<HMAC-SHA256 of “t.body”>). Failed deliveries are retried for a day; receivers should deduplicate on X-GetAssist-Event-Id."
+        description="Events are POSTed as JSON, signed in X-Chithii-Signature (t=<seconds>,v1=<HMAC-SHA256 of “t.body”>). Failed deliveries are retried for a day; receivers should deduplicate on X-Chithii-Event-Id."
       />
       {secret ? <SecretOnce secret={secret} onDone={() => setSecret(null)} /> : null}
       {error ? <Alert tone="danger">{error}</Alert> : null}

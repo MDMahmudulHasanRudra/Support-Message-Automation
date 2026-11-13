@@ -356,8 +356,8 @@ roles, projects, hostnames or anything under `/admin` or `/platform`.**
   identity turns support access off. Never a password, never a bypass.
 - Hostnames: routing OFF by default (`classifyHost` → OPEN, everything as before). On: a customer's address serves that
   customer's software (its Main Admin portal included); the admin address serves the platform; an unknown address
-  nothing. Sessions are bound to their address. The hostname is `visitedHost()` (x-forwarded-host first). Caddy gets
-  certificates only for what `/api/platform/tls-allowed` approves. Recovery (§8): localhost/IP always open,
+  nothing. Sessions are bound to their address. The hostname is `visitedHost()` (x-forwarded-host first). nginx (Caddy until Nov 2026, DOMAIN_MIGRATION.md) gets
+  certificates only for what `/api/platform/tls-allowed` approves (`chithii-domain-certs` timer). Recovery (§8): localhost/IP always open,
   `SAAS_HOST_ROUTING_DISABLED=true`. `saasTwoLayers.integration.test.ts` pins every rule above.
 
 **A public address is the customer's, never `NEXTAUTH_URL`** (`server/customerAddress.ts`, `pickCustomerOrigin`, 7 Nov 2026). That setting names one address, and on the live server it is a customer's, so every other customer was handed it in its widget code, chat link and webhook addresses. Anything shown to or registered for one project uses `activeProjectOrigin()` / `publicOriginForProject()`; a redirect back to the person uses `requestOrigin(request)`. A customer with no address gets none, never another's. `publicOrigin()` stays only for installation-wide things: the platform's one Meta app and the env Google client. `customerAddress.integration.test.ts` pins it.
@@ -3252,8 +3252,8 @@ Owned code, no Postiz or other publishing service. Rules worth not undoing:
 ### SaaS billing and onboarding (`SAAS_PLATFORM_PLAN.md` §10–§12)
 
 On the platform (Layer 1). Rules worth not undoing:
-- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.getassist.pro` is the platform;
-  `noorvip.getassist.pro` is Customer #1's (moved from admin/zoventio.udboy.com on 26 Oct 2026, which still answer). Routing ships OFF.
+- **An address is the platform's OR one customer's, never both** (`classifyHost`). `admin.chithii.com` is the platform (`admin.getassist.pro` until Nov 2026, DOMAIN_MIGRATION.md);
+  `noorvip.chithii.com` is Customer #1's (`noorvip.getassist.pro` before; admin/zoventio.udboy.com still answer). Routing ships OFF.
 - **A customer with no subscription is never held or limited, and a subscription suspends by itself only
   with `autoEnforce` ticked** (default off). This is Customer #1's protection; never default either.
 - **The billing hold IS the SUSPENDED rule** (`Project.billingHoldAt` on every project of the customer, written only by

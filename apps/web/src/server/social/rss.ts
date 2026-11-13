@@ -82,7 +82,7 @@ function requestOnce(url: URL, signal: AbortSignal, options: ConnectOptions): Pr
       agent: false,
       lookup: pinnedLookup(options) as unknown as http.RequestOptions["lookup"],
       signal,
-      headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml", "Accept-Encoding": "gzip, deflate, br", "User-Agent": "GetAssist-SocialStudio/1 (feed import)" },
+      headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml", "Accept-Encoding": "gzip, deflate, br", "User-Agent": "Chithii-SocialStudio/1 (feed import)" },
     });
     req.on("response", resolve);
     req.on("error", (err) => {

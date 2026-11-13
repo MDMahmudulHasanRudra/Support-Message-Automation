@@ -40,7 +40,7 @@ const realSender: PushSender = async (target, message) => {
       TTL: 3600,
       urgency: "high",
       timeout: 10_000,
-      vapidDetails: { subject: process.env.VAPID_SUBJECT || "mailto:support@getassist.pro", publicKey: process.env.VAPID_PUBLIC_KEY!, privateKey: process.env.VAPID_PRIVATE_KEY! },
+      vapidDetails: { subject: process.env.VAPID_SUBJECT || "mailto:support@chithii.com", publicKey: process.env.VAPID_PUBLIC_KEY!, privateKey: process.env.VAPID_PRIVATE_KEY! },
     },
   );
 };

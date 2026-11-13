@@ -619,7 +619,7 @@ const RELEASES: HistoricalRelease[] = [
   },
   {
     version: "0.25.0",
-    title: "Get Assist as a service",
+    title: "Chithii as a service",
     summary: "Customers, plans, billing and their own addresses.",
     releaseDate: "2026-10-24",
     releaseType: "MAJOR",
@@ -753,7 +753,7 @@ const RELEASES: HistoricalRelease[] = [
     ],
     whatsNew: [
       "Inbox updates the moment a message arrives",
-      "Install Get Assist on your phone, with notifications",
+      "Install Chithii on your phone, with notifications",
       "Website Chat module: live board, visitors, chat form, and install by copy and paste",
       "Invitations, routing by page or form answer, and a form for when your team is away"
     ],
