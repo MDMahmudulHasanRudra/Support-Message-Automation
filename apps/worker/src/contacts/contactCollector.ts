@@ -7,6 +7,7 @@ import {
   collectedChatKind,
   CONTACT_AI_SYSTEM_PROMPT,
   extractContactIdentifiers,
+  normalizeContactIdentifier,
   normalizePhoneNumber,
   phoneFromChatId,
   readContactAiAnswer,
@@ -210,8 +211,17 @@ async function collectFromChannels(pass: Pass, cursorAt: Date, now: Date): Promi
     where: { updatedAt: { gt: cursorAt, lte: until }, kind: { not: "GROUP" } },
     orderBy: { updatedAt: "asc" },
     take: 100,
-    select: { id: true, type: true, title: true, customerName: true, customerUsername: true, updatedAt: true },
+    select: { id: true, type: true, title: true, customerName: true, customerUsername: true, updatedAt: true, connectionId: true, externalThreadId: true },
   });
+  // Website chat: what the visitor typed in the chat form (name, email, phone) is on the visitor, not in a message.
+  const webchat = conversations.filter((c) => c.type === "WEBCHAT");
+  const visitors = webchat.length
+    ? await prisma.webChatVisitor.findMany({
+        where: { OR: webchat.map((c) => ({ id: c.externalThreadId, connectionId: c.connectionId })) },
+        select: { id: true, connectionId: true, name: true, email: true, phone: true, typedPhone: true },
+      })
+    : [];
+  const visitorOf = new Map(visitors.map((v) => [`${v.connectionId}:${v.id}`, v]));
   const linked = new Set((await prisma.contactConversationLink.findMany({ where: { channelConversationId: { in: conversations.map((c) => c.id) } }, select: { channelConversationId: true } })).map((l) => l.channelConversationId));
   const projectId = currentProjectId();
 
@@ -231,6 +241,21 @@ async function collectFromChannels(pass: Pass, cursorAt: Date, now: Date): Promi
       name = name ?? read.name;
       usedAi = usedAi || read.usedAi;
       addValues(values, read.values);
+    }
+    const visitor = conversation.type === "WEBCHAT" ? visitorOf.get(`${conversation.connectionId}:${conversation.externalThreadId}`) : undefined;
+    if (visitor) {
+      const typed: ContactIdentifierReading[] = [];
+      if (visitor.email) {
+        const email = normalizeContactIdentifier("EMAIL", visitor.email);
+        if (!("error" in email)) typed.push(email);
+      }
+      for (const raw of [visitor.phone, visitor.typedPhone]) {
+        if (!raw) continue;
+        const phone = normalizeContactIdentifier("PHONE", raw);
+        if (!("error" in phone) && !pass.ours.has(phone.normalized)) typed.push(phone);
+      }
+      addValues(values, typed);
+      name = name ?? (visitor.name?.trim() || null);
     }
     const isNew = pass.autoCreate && !linked.has(conversation.id) && messages.length > 0;
     if (values.size > 0 || isNew) {

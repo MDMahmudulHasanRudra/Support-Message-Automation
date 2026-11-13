@@ -108,6 +108,8 @@ describe("creating a project", () => {
       ProjectFeature: PROJECT_FEATURES.length,
       // Its own client code series (CLIENT_CODES.md): the project's codes start there, nothing is copied.
       ProjectClientCodeSeries: 1,
+      // Contacts collect from every conversation by default (CONTACTS.md), so a new project starts with its settings row.
+      ContactSettings: 1,
     };
     // Everything else — messages, groups, knowledge, rules, AI providers and keys, teams, members,
     // notifications, templates, WhatsApp accounts, reports' rows — is empty.
