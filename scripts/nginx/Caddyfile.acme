@@ -1,0 +1,55 @@
+{
+	on_demand_tls {
+		ask http://127.0.0.1:8668/api/platform/tls-allowed
+	}
+}
+
+# TEMPORARY (Caddy -> nginx move, Nov 2026): plain-HTTP blocks that hand ACME challenges to certbot's
+# webroot and otherwise redirect exactly as Caddy did on its own.
+http://noorvip.getassist.pro, http://admin.getassist.pro, http://zoventio.udboy.com, http://admin.udboy.com {
+	handle /.well-known/acme-challenge/* {
+		root * /var/www/certbot
+		file_server
+	}
+	handle {
+		redir https://{host}{uri} 308
+	}
+}
+
+noorvip.getassist.pro {
+	encode gzip
+	reverse_proxy 127.0.0.1:8668
+}
+
+admin.getassist.pro {
+	encode gzip
+	reverse_proxy 127.0.0.1:8668
+}
+
+zoventio.udboy.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8668
+}
+
+admin.udboy.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8668
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	encode gzip
+	reverse_proxy 127.0.0.1:8668
+}
+
+http:// {
+	handle /.well-known/acme-challenge/* {
+		root * /var/www/certbot
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8668
+	}
+}

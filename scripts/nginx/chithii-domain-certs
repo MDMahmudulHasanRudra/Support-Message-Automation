@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# chithii-domain-certs — nginx's replacement for Caddy's on-demand TLS (Nov 2026).
+# Every 5 minutes (chithii-domain-certs.timer): reads the addresses the app allows a certificate for
+# (CustomerDomain VERIFIED/ACTIVE + Platform admin hostnames — the same rule as /api/platform/tls-allowed),
+# gets a Let's Encrypt certificate for any that points at this server and has none, writes an nginx
+# server block for it in /etc/nginx/chithii-customers/, and reloads nginx only if something changed.
+# Names already in /etc/nginx/sites-available/chithii.conf are skipped. Logs: journalctl -u chithii-domain-certs
+set -uo pipefail
+APP_DIR="/home/rudra/Support-Message-Automation"
+CONF_DIR="/etc/nginx/chithii-customers"
+STATIC_CONF="/etc/nginx/sites-available/chithii.conf"
+EMAIL="support@chithii.com"
+SERVER_IP="$(curl -s -4 -m 10 https://api.ipify.org || true)"
+[ -n "$SERVER_IP" ] || SERVER_IP="201.18.218.251"
+mkdir -p "$CONF_DIR"
+
+hosts="$(cd "$APP_DIR" && docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "
+  SELECT hostname FROM \"CustomerDomain\" WHERE status IN ('"'"'VERIFIED'"'"','"'"'ACTIVE'"'"')
+  UNION SELECT unnest(\"adminHostnames\") FROM \"PlatformDomainSettings\" WHERE id = '"'"'default'"'"'"')" || { echo "database not reachable; nothing changed"; exit 0; }
+
+changed=0
+wanted=""
+for h in $hosts; do
+  h="$(echo "$h" | tr 'A-Z' 'a-z')"
+  # Only a plain hostname may ever reach a config file.
+  [[ "$h" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] || { echo "skip invalid name"; continue; }
+  grep -Eq "server_name[^;]*[[:space:]]$h([[:space:];])" "$STATIC_CONF" && continue
+  wanted="$wanted $h"
+  conf="$CONF_DIR/$h.conf"
+  if [ ! -f "/etc/letsencrypt/live/$h/fullchain.pem" ]; then
+    getent ahostsv4 "$h" | awk '{print $1}' | grep -qx "$SERVER_IP" || { echo "$h: does not point at $SERVER_IP yet"; continue; }
+    certbot certonly --webroot -w /var/www/certbot -d "$h" --cert-name "$h" --non-interactive --agree-tos \
+      --email "$EMAIL" --keep-until-expiring --quiet || { echo "$h: certificate failed"; continue; }
+    echo "$h: certificate issued"
+  fi
+  if [ ! -f "$conf" ]; then
+    cat > "$conf" <<EOF
+# Written by chithii-domain-certs for a customer address. Removed when the address is no longer allowed.
+server {
+    listen 80; listen [::]:80;
+    server_name $h;
+    include snippets/chithii-acme.conf;
+    location / { return 308 https://\$host\$request_uri; }
+}
+server {
+    listen 443 ssl; listen [::]:443 ssl; http2 on;
+    server_name $h;
+    ssl_certificate     /etc/letsencrypt/live/$h/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$h/privkey.pem;
+    location / { include snippets/chithii-proxy.conf; }
+}
+EOF
+    changed=1; echo "$h: nginx site added"
+  fi
+done
+
+# An address that is no longer allowed loses its site (its certificate is kept, and simply expires).
+for f in "$CONF_DIR"/*.conf; do
+  [ -e "$f" ] || continue
+  h="$(basename "$f" .conf)"
+  case " $wanted " in *" $h "*) ;; *) rm -f "$f"; changed=1; echo "$h: nginx site removed";; esac
+done
+
+if [ "$changed" = 1 ]; then
+  if nginx -t -q; then systemctl reload nginx; echo "nginx reloaded"; else echo "nginx -t FAILED; not reloaded"; exit 1; fi
+fi

@@ -1,0 +1,8 @@
+[Unit]
+Description=Chithii: certificates and nginx sites for customer addresses
+After=network-online.target docker.service nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/chithii-domain-certs
