@@ -10274,8 +10274,9 @@ model ContactSettings {
   project             Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
   lastSerial          Int       @default(0)
   aiCollectionEnabled Boolean   @default(false)
-  autoCreateFromChats Boolean   @default(false)
-  /// When collecting was switched on: nothing older is read, so switching it on never reprocesses history.
+  autoCreateFromChats Boolean   @default(true)
+  /// When collecting began. Every conversation is read from the oldest stored message, past ones included; a null cursor
+  /// means "start from the beginning".
   collectionStartedAt DateTime?
   whatsappCursorAt    DateTime?
   whatsappCursorId    String?

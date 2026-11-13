@@ -7,8 +7,9 @@ import { collectContactsForProject } from "../contacts/contactCollector.js";
 import { withProject } from "../project/context.js";
 
 /**
- * The contact collector (CONTACTS.md): reads only what came after it was switched on, never a team member's message or
- * an unmonitored group, the AI can only point at values really in the message, and a number is stored once.
+ * The contact collector (CONTACTS.md): reads every conversation, past ones included, never a team member's message or
+ * an unmonitored group; values are read without AI, the AI can only point at values really in the message, and a number
+ * is stored once.
  */
 
 const tag = randomUUID().replace(/-/g, "").slice(0, 8);
@@ -32,8 +33,8 @@ async function incoming(chatId: string, body: string, extra: { groupId?: string 
     } as never,
   });
 }
-async function settings(data: { ai?: boolean; auto?: boolean }) {
-  const start = new Date(Date.now() - 1000);
+async function settings(data: { ai?: boolean; auto?: boolean }, fromStart = false) {
+  const start = fromStart ? null : new Date(Date.now() - 1000);
   await rawPrisma.contactSettings.upsert({
     where: { projectId: project.id },
     create: { projectId: project.id, aiCollectionEnabled: data.ai ?? false, autoCreateFromChats: data.auto ?? false, collectionStartedAt: start, whatsappCursorAt: start, channelCursorAt: start },
@@ -64,7 +65,7 @@ afterAll(async () => {
 
 describe("what it reads", () => {
   it("does nothing while switched off", async () => {
-    await rawPrisma.contactSettings.upsert({ where: { projectId: project.id }, create: { projectId: project.id }, update: { aiCollectionEnabled: false, autoCreateFromChats: false } });
+    await rawPrisma.contactSettings.upsert({ where: { projectId: project.id }, create: { projectId: project.id, aiCollectionEnabled: false, autoCreateFromChats: false }, update: { aiCollectionEnabled: false, autoCreateFromChats: false } });
     await incoming("8801711000001@c.us", "my number 01711000001");
     const client = answer('{"keep":[1]}');
     await run(client);
@@ -72,11 +73,19 @@ describe("what it reads", () => {
     expect(await rawPrisma.contact.count({ where: { projectId: project.id } })).toBe(0);
   });
 
-  it("never reads a message from before it was switched on", async () => {
-    await settings({ auto: true });
-    await incoming("8801711000002@c.us", "hello", { createdAt: new Date(Date.now() - 3_600_000) });
+  it("reads past conversations too, from the oldest message", async () => {
+    await settings({ auto: true }, true);
+    await incoming("8801711000002@c.us", "hello", { createdAt: new Date(Date.now() - 30 * 86_400_000) });
     await run(null);
-    expect(await rawPrisma.contact.count({ where: { projectId: project.id } })).toBe(0);
+    expect(await contactsFor("8801711000002@c.us")).toHaveLength(1);
+  });
+
+  it("a project with no settings row collects by default", async () => {
+    await rawPrisma.contactSettings.deleteMany({ where: { projectId: project.id } });
+    await incoming("8801711000010@c.us", "email me at old.customer@example.com", { createdAt: new Date(Date.now() - 86_400_000) });
+    await run(null);
+    const [contact] = await contactsFor("8801711000010@c.us");
+    expect(contact!.identifiers.map((i) => i.kind).sort()).toEqual(["EMAIL", "PHONE"]);
   });
 
   it("a team member's message is not a customer's", async () => {
@@ -162,14 +171,24 @@ describe("what it saves", () => {
     expect(client.complete).not.toHaveBeenCalled();
   });
 
-  it("stops at the pass's AI budget and picks up where it stopped", async () => {
+  it("past the pass's AI budget it reads without AI, so the cursor never waits", async () => {
     await settings({ ai: true });
     for (let i = 0; i < 7; i++) await incoming(GROUP_CHAT, `number 0171100${String(100 + i)}1`, { groupId });
     const client = answer('{"keep":[1]}');
     await run(client);
     expect(client.complete).toHaveBeenCalledTimes(5);
-    await run(client);
-    expect(client.complete).toHaveBeenCalledTimes(7);
     expect((await contactsFor(GROUP_CHAT))[0]!.identifiers).toHaveLength(7);
+    await run(client);
+    expect(client.complete).toHaveBeenCalledTimes(5);
+  });
+
+  it("without AI, values in the text are saved, and an @mention is never read as a number", async () => {
+    await settings({ auto: true });
+    await incoming(GROUP_CHAT, "@190123456789012 call 01711000011, mail Rahim@Example.com, page https://fb.com/rahim", { groupId });
+    await run(null);
+    const [contact] = await contactsFor(GROUP_CHAT);
+    expect(contact!.identifiers.map((i) => `${i.kind}:${i.normalized}`).sort()).toEqual(expect.arrayContaining(["EMAIL:rahim@example.com", "PHONE:8801711000011"]));
+    expect(contact!.identifiers.some((i) => i.kind === "FACEBOOK")).toBe(true);
+    expect(contact!.identifiers.some((i) => i.normalized.includes("190123456789012"))).toBe(false);
   });
 });

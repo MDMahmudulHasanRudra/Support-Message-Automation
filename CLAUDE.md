@@ -2976,10 +2976,10 @@ Feature `MENU_BOTS`, **on by default**, every bot a DRAFT until switched on; use
 
 ### Contacts (`CONTACTS.md`, 8 Nov 2026)
 
-Feature `CONTACTS`, **on by default**; collecting from chats and campaigns are off until started. Apart from Clients and Billing: its own `CT-0001` serial, and the only tie is a `linkedClientId` a person chooses. Rules worth not undoing:
+Feature `CONTACTS`, **on by default**, and so is collecting from chats; campaigns are off until started. Apart from Clients and Billing: its own `CT-0001` serial, and the only tie is a `linkedClientId` a person chooses. Rules worth not undoing:
 - **A value is held once per project** (unique on project, kind, normalized value), and one chat belongs to one contact, keyed by the chat id alone so two of our numbers in one group are one contact. `collectContactFromChat` (packages/db) is the only way a chat becomes a contact.
 - **A LID is never a phone number**; only a `@c.us` chat id proves one. An import fills blanks only.
-- **The collector is its own loop over stored messages**, never on the message path, and starts when switched on, never reading older messages. Not a team member, our own number, or an unmonitored group. The AI can only point at numbered values found in the text; never let it return a value.
+- **The collector is its own loop over stored messages**, never on the message path. On by default (13 Nov 2026), it reads every conversation from the oldest stored message (null cursor = start), finding numbers, emails and links without AI (@mentions removed, our own numbers left out); AI, when on, reads at most 5 messages a pass and the rest are read without it, so the cursor never waits. Not a team member, our own number, or an unmonitored group. The AI can only point at numbered values found in the text; never let it return a value.
 - **Someone marked No offers is never in a campaign**, re-checked when an email sends. Only email is sent in bulk. WhatsApp and the channels stay a one-person-at-a-time worklist through the ordinary reply path: a personal chat is answered, never started.
 
 ### Support tickets (`TICKETS.md`, 8 Nov 2026)

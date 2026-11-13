@@ -402,7 +402,7 @@ export async function loadConversationContact(session: Session, ref: Conversatio
   return {
     canEdit,
     detected,
-    autoCollection: { autoCreate: settings?.autoCreateFromChats ?? false, ai: settings?.aiCollectionEnabled ?? false, canOpenSettings },
+    autoCollection: { autoCreate: settings?.autoCreateFromChats ?? true, ai: settings?.aiCollectionEnabled ?? false, canOpenSettings },
     suggestion: { name: facts.name, values: facts.values, isGroup: facts.isGroup, handleKind: facts.handleKind },
     contact: c
       ? {

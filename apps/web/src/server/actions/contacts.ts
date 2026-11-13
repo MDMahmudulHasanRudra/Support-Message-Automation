@@ -734,12 +734,10 @@ export async function saveContactSettings(_prev: ContactSettingsState, form: For
   if ("denied" in granted) return { error: granted.denied };
   const aiCollectionEnabled = form.get("aiCollectionEnabled") === "on";
   const autoCreateFromChats = form.get("autoCreateFromChats") === "on";
-  const current = await prisma.contactSettings.findFirst({ select: { aiCollectionEnabled: true, autoCreateFromChats: true } });
-  const wasOn = Boolean(current?.aiCollectionEnabled || current?.autoCreateFromChats);
+  const current = await prisma.contactSettings.findFirst({ select: { collectionStartedAt: true } });
   const isOn = aiCollectionEnabled || autoCreateFromChats;
-  const now = new Date();
-  // Switching on starts from this moment: older messages are never read, whatever was switched off in between.
-  const start = isOn && !wasOn ? { collectionStartedAt: now, whatsappCursorAt: now, whatsappCursorId: null, channelCursorAt: now } : {};
+  // Collection reads every conversation, past ones included: switching on carries on from where the scan stopped.
+  const start = isOn && !current?.collectionStartedAt ? { collectionStartedAt: new Date() } : {};
   await prisma.contactSettings.upsert({
     where: { projectId: await activeProjectId() },
     create: { aiCollectionEnabled, autoCreateFromChats, ...start },
@@ -747,6 +745,15 @@ export async function saveContactSettings(_prev: ContactSettingsState, form: For
   });
   revalidatePath(await projectPath("/settings/contacts"));
   return { success: "Saved." };
+}
+
+/** Settings → Contacts: read every conversation again from the oldest message. Saved values stay; nothing is stored twice. */
+export async function rescanContactConversations(_prev: ContactSettingsState, _form: FormData): Promise<ContactSettingsState> {
+  const granted = await checkPermission("settings.edit", FEATURE);
+  if ("denied" in granted) return { error: granted.denied };
+  await prisma.contactSettings.updateMany({ data: { whatsappCursorAt: null, whatsappCursorId: null, channelCursorAt: null } });
+  revalidatePath(await projectPath("/settings/contacts"));
+  return { success: "Every conversation will be read again, starting within a minute." };
 }
 
 /** Pasted text, read on the server as well: the browser's reading is a convenience. */
