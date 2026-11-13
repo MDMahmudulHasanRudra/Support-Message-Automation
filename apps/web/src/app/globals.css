@@ -449,14 +449,15 @@ body::before {
   --color-surface: color-mix(in oklab, var(--tide-bg) 90%, white);
   --color-surface-raised: color-mix(in oklab, var(--tide-bg) 85%, white);
   --color-surface-sunken: color-mix(in oklab, var(--tide-bg) 88%, black);
-  --color-foreground: #f1f9f8;
-  --color-muted-foreground: #b4cfd1;
-  --color-subtle-foreground: #8bb0b4;
+  /* The field's own text, tinted per colour theme; the fallbacks are Tide's (the default). */
+  --color-foreground: var(--tide-fg, #f1f9f8);
+  --color-muted-foreground: var(--tide-muted, #b4cfd1);
+  --color-subtle-foreground: var(--tide-subtle, #8bb0b4);
   --color-border: color-mix(in oklab, var(--tide-bg) 80%, white);
   --color-border-strong: color-mix(in oklab, var(--tide-bg) 68%, white);
-  --color-primary: #f1f9f8;
+  --color-primary: var(--tide-fg, #f1f9f8);
   --color-primary-hover: #ffffff;
-  --color-primary-active: #cfe3e3;
+  --color-primary-active: var(--tide-primary-active, #cfe3e3);
   --color-primary-soft: color-mix(in oklab, var(--tide-bg) 80%, white);
   --color-primary-softer: color-mix(in oklab, var(--tide-bg) 90%, white);
   --color-on-primary: var(--tide-bg);
@@ -467,7 +468,7 @@ body::before {
   --color-accent-fg: var(--tide-mark);
   --color-neutral-bg: rgb(255 255 255 / 0.09);
   --color-neutral-border: color-mix(in oklab, var(--tide-bg) 80%, white);
-  --color-neutral-fg: #cfe2e3;
+  --color-neutral-fg: var(--tide-neutral-fg, #cfe2e3);
   --color-focus-ring: var(--tide-mark);
   --color-success: #3fd08a;
   --color-success-bg: rgb(63 208 138 / 0.14);
@@ -751,4 +752,528 @@ body::before {
   .field-fill {
     width: 100%;
   }
+}
+
+/* ── Colour themes (lib/themes.ts) ─────────────────────────────────────────────────────────────────
+   `data-palette` on <html> picks one; the root layout renders it from the person's choice (My account →
+   Appearance) or the installation's default (Main Admin → Branding). "tide" is the tokens above and has no
+   block, so its look is unchanged. Only the brand families move: status colours keep their meaning on
+   every theme. In each palette the chart slot whose hue the palette takes for --chart-1 gets the tide teal,
+   so the six series stay apart.
+
+   Specificity is the whole design. A palette's base block is (0,2,0), after the default dark blocks, so it
+   would otherwise win in dark mode too — its dark blocks are (0,3,0) and restate every token the base block
+   sets except the --tide-* field, which stays the same in light and dark (like the default). A Branding
+   brand colour (accentStyleSheet) is one step above each of these, so it still wins when set. */
+
+/* Indigo — deep ink-blue field, violet-blue accent */
+:root[data-palette="indigo"] {
+  --color-background: #f4f5fb;
+  --color-surface-sunken: #eaecf6;
+  --color-foreground: #151a33;
+  --color-muted-foreground: #50567a;
+  --color-subtle-foreground: #7d82a3;
+  --color-border: #dfe2f0;
+  --color-border-strong: #c5cae2;
+  --color-primary: #1f2566;
+  --color-primary-hover: #2a3183;
+  --color-primary-active: #171b4f;
+  --color-primary-soft: #dfe2f4;
+  --color-primary-softer: #eef0fa;
+  --color-on-primary: #f4f5fe;
+  --gradient-primary: linear-gradient(180deg, #2a3183 0%, #1f2566 100%);
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-bg: #eef0fe;
+  --color-accent-border: #c7cafb;
+  --color-accent-fg: #3f37c9;
+  --color-neutral-bg: #eef0f7;
+  --color-neutral-border: #dfe2f0;
+  --color-neutral-fg: #464c6e;
+  --color-focus-ring: #4f46e5;
+  --chart-1: #5856d6;
+  --chart-6: #0e8a94;
+  --chart-grid: #e7e9f3;
+  --chart-track: #eef0f7;
+  --tide-bg: #151a46;
+  --tide-active: #3b40a8;
+  --tide-mark: #a5b4fc;
+  --tide-fg: #f3f4fd;
+  --tide-muted: #bcc2e6;
+  --tide-subtle: #9098c8;
+  --tide-primary-active: #d3d7f2;
+  --tide-neutral-fg: #d3d7ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="indigo"]:not([data-theme="light"]) {
+    --color-background: #0b0d1f;
+    --color-surface: #12152d;
+    --color-surface-raised: #181c39;
+    --color-surface-sunken: #080a18;
+    --color-foreground: #e8eaf8;
+    --color-muted-foreground: #a0a6cc;
+    --color-subtle-foreground: #6f76a0;
+    --color-border: #23284a;
+    --color-border-strong: #343b66;
+    --color-primary: #e8eaf8;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #c3c8e6;
+    --color-primary-soft: #23284a;
+    --color-primary-softer: #181c39;
+    --color-on-primary: #0b0d1f;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d6d9f0 100%);
+    --color-accent: #818cf8;
+    --color-accent-hover: #a5b4fc;
+    --color-accent-bg: #1b1f4a;
+    --color-accent-border: #333a8a;
+    --color-accent-fg: #a5b4fc;
+    --color-neutral-bg: #181c39;
+    --color-neutral-border: #2a2f55;
+    --color-neutral-fg: #a0a6cc;
+    --color-focus-ring: #a5b4fc;
+    --chart-1: #7c83f2;
+    --chart-6: #2bb3bd;
+    --chart-grid: #1c2042;
+    --chart-track: #181c39;
+  }
+}
+:root[data-palette="indigo"][data-theme="dark"] {
+  --color-background: #0b0d1f;
+  --color-surface: #12152d;
+  --color-surface-raised: #181c39;
+  --color-surface-sunken: #080a18;
+  --color-foreground: #e8eaf8;
+  --color-muted-foreground: #a0a6cc;
+  --color-subtle-foreground: #6f76a0;
+  --color-border: #23284a;
+  --color-border-strong: #343b66;
+  --color-primary: #e8eaf8;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #c3c8e6;
+  --color-primary-soft: #23284a;
+  --color-primary-softer: #181c39;
+  --color-on-primary: #0b0d1f;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d6d9f0 100%);
+  --color-accent: #818cf8;
+  --color-accent-hover: #a5b4fc;
+  --color-accent-bg: #1b1f4a;
+  --color-accent-border: #333a8a;
+  --color-accent-fg: #a5b4fc;
+  --color-neutral-bg: #181c39;
+  --color-neutral-border: #2a2f55;
+  --color-neutral-fg: #a0a6cc;
+  --color-focus-ring: #a5b4fc;
+  --chart-1: #7c83f2;
+  --chart-6: #2bb3bd;
+  --chart-grid: #1c2042;
+  --chart-track: #181c39;
+}
+
+/* Emerald — forest field, green accent */
+:root[data-palette="emerald"] {
+  --color-background: #f3f8f5;
+  --color-surface-sunken: #e8f1ec;
+  --color-foreground: #10261c;
+  --color-muted-foreground: #4a6457;
+  --color-subtle-foreground: #7a9286;
+  --color-border: #dbe7e0;
+  --color-border-strong: #c0d3c8;
+  --color-primary: #0d3b2a;
+  --color-primary-hover: #114a35;
+  --color-primary-active: #092e20;
+  --color-primary-soft: #d8e9e0;
+  --color-primary-softer: #ebf4ef;
+  --color-on-primary: #f1faf5;
+  --gradient-primary: linear-gradient(180deg, #114a35 0%, #0d3b2a 100%);
+  --color-accent: #0a7d57;
+  --color-accent-hover: #08684a;
+  --color-accent-bg: #e3f5ec;
+  --color-accent-border: #a8dcc3;
+  --color-accent-fg: #076849;
+  --color-neutral-bg: #edf4f0;
+  --color-neutral-border: #dbe7e0;
+  --color-neutral-fg: #42594d;
+  --color-focus-ring: #0a7d57;
+  --chart-1: #0b8f63;
+  --chart-3: #0e8a94;
+  --chart-grid: #e4ede8;
+  --chart-track: #edf4f0;
+  --tide-bg: #05271c;
+  --tide-active: #0f7a55;
+  --tide-mark: #fcd34d;
+  --tide-fg: #f0f9f4;
+  --tide-muted: #b2d0c1;
+  --tide-subtle: #88b09c;
+  --tide-primary-active: #cde4d8;
+  --tide-neutral-fg: #cde2d7;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="emerald"]:not([data-theme="light"]) {
+    --color-background: #05170f;
+    --color-surface: #0a2419;
+    --color-surface-raised: #0e2d20;
+    --color-surface-sunken: #03110b;
+    --color-foreground: #e5f3ec;
+    --color-muted-foreground: #91b3a3;
+    --color-subtle-foreground: #628575;
+    --color-border: #163a2b;
+    --color-border-strong: #22533e;
+    --color-primary: #e5f3ec;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #bfd8cb;
+    --color-primary-soft: #163a2b;
+    --color-primary-softer: #0e2d20;
+    --color-on-primary: #05170f;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d3e8dd 100%);
+    --color-accent: #34d399;
+    --color-accent-hover: #6ee7b7;
+    --color-accent-bg: #0a3324;
+    --color-accent-border: #13583f;
+    --color-accent-fg: #6ee7b7;
+    --color-neutral-bg: #0e2d20;
+    --color-neutral-border: #1b4332;
+    --color-neutral-fg: #91b3a3;
+    --color-focus-ring: #6ee7b7;
+    --chart-1: #2fbf87;
+    --chart-3: #2bb3bd;
+    --chart-grid: #133426;
+    --chart-track: #0e2d20;
+  }
+}
+:root[data-palette="emerald"][data-theme="dark"] {
+  --color-background: #05170f;
+  --color-surface: #0a2419;
+  --color-surface-raised: #0e2d20;
+  --color-surface-sunken: #03110b;
+  --color-foreground: #e5f3ec;
+  --color-muted-foreground: #91b3a3;
+  --color-subtle-foreground: #628575;
+  --color-border: #163a2b;
+  --color-border-strong: #22533e;
+  --color-primary: #e5f3ec;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #bfd8cb;
+  --color-primary-soft: #163a2b;
+  --color-primary-softer: #0e2d20;
+  --color-on-primary: #05170f;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d3e8dd 100%);
+  --color-accent: #34d399;
+  --color-accent-hover: #6ee7b7;
+  --color-accent-bg: #0a3324;
+  --color-accent-border: #13583f;
+  --color-accent-fg: #6ee7b7;
+  --color-neutral-bg: #0e2d20;
+  --color-neutral-border: #1b4332;
+  --color-neutral-fg: #91b3a3;
+  --color-focus-ring: #6ee7b7;
+  --chart-1: #2fbf87;
+  --chart-3: #2bb3bd;
+  --chart-grid: #133426;
+  --chart-track: #0e2d20;
+}
+
+/* Plum — aubergine field, violet accent */
+:root[data-palette="plum"] {
+  --color-background: #f8f5f9;
+  --color-surface-sunken: #f0eaf2;
+  --color-foreground: #2a1630;
+  --color-muted-foreground: #65516c;
+  --color-subtle-foreground: #927e99;
+  --color-border: #e9e0ec;
+  --color-border-strong: #d5c7da;
+  --color-primary: #3d1a4a;
+  --color-primary-hover: #4d235d;
+  --color-primary-active: #2f1339;
+  --color-primary-soft: #ecdff0;
+  --color-primary-softer: #f5eff7;
+  --color-on-primary: #fbf4fd;
+  --gradient-primary: linear-gradient(180deg, #4d235d 0%, #3d1a4a 100%);
+  --color-accent: #8b3fb0;
+  --color-accent-hover: #763497;
+  --color-accent-bg: #f5ebfa;
+  --color-accent-border: #dcc0ea;
+  --color-accent-fg: #742e96;
+  --color-neutral-bg: #f3edf5;
+  --color-neutral-border: #e9e0ec;
+  --color-neutral-fg: #5b4762;
+  --color-focus-ring: #8b3fb0;
+  --chart-1: #9a4fc4;
+  --chart-grid: #efe8f1;
+  --chart-track: #f3edf5;
+  --tide-bg: #2a1233;
+  --tide-active: #7a3b8f;
+  --tide-mark: #f9a8d4;
+  --tide-fg: #fbf3fd;
+  --tide-muted: #d6bfdf;
+  --tide-subtle: #b294bd;
+  --tide-primary-active: #ead8f0;
+  --tide-neutral-fg: #e4d3ea;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="plum"]:not([data-theme="light"]) {
+    --color-background: #150a19;
+    --color-surface: #1f1125;
+    --color-surface-raised: #27162e;
+    --color-surface-sunken: #100714;
+    --color-foreground: #f3e9f6;
+    --color-muted-foreground: #b9a2c2;
+    --color-subtle-foreground: #876f91;
+    --color-border: #3a2343;
+    --color-border-strong: #52325e;
+    --color-primary: #f3e9f6;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #d6c4dd;
+    --color-primary-soft: #3a2343;
+    --color-primary-softer: #27162e;
+    --color-on-primary: #150a19;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e6d7ec 100%);
+    --color-accent: #c084fc;
+    --color-accent-hover: #d8b4fe;
+    --color-accent-bg: #2e1640;
+    --color-accent-border: #5b2f7a;
+    --color-accent-fg: #d8b4fe;
+    --color-neutral-bg: #27162e;
+    --color-neutral-border: #3f2649;
+    --color-neutral-fg: #b9a2c2;
+    --color-focus-ring: #d8b4fe;
+    --chart-1: #b77fe0;
+    --chart-grid: #2b1832;
+    --chart-track: #27162e;
+  }
+}
+:root[data-palette="plum"][data-theme="dark"] {
+  --color-background: #150a19;
+  --color-surface: #1f1125;
+  --color-surface-raised: #27162e;
+  --color-surface-sunken: #100714;
+  --color-foreground: #f3e9f6;
+  --color-muted-foreground: #b9a2c2;
+  --color-subtle-foreground: #876f91;
+  --color-border: #3a2343;
+  --color-border-strong: #52325e;
+  --color-primary: #f3e9f6;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #d6c4dd;
+  --color-primary-soft: #3a2343;
+  --color-primary-softer: #27162e;
+  --color-on-primary: #150a19;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #e6d7ec 100%);
+  --color-accent: #c084fc;
+  --color-accent-hover: #d8b4fe;
+  --color-accent-bg: #2e1640;
+  --color-accent-border: #5b2f7a;
+  --color-accent-fg: #d8b4fe;
+  --color-neutral-bg: #27162e;
+  --color-neutral-border: #3f2649;
+  --color-neutral-fg: #b9a2c2;
+  --color-focus-ring: #d8b4fe;
+  --chart-1: #b77fe0;
+  --chart-grid: #2b1832;
+  --chart-track: #27162e;
+}
+
+/* Sunset — warm umber field, terracotta accent */
+:root[data-palette="sunset"] {
+  --color-background: #faf6f3;
+  --color-surface-sunken: #f3ebe5;
+  --color-foreground: #2e1a12;
+  --color-muted-foreground: #6b5348;
+  --color-subtle-foreground: #9a8277;
+  --color-border: #ece2db;
+  --color-border-strong: #d9c8bd;
+  --color-primary: #4a2015;
+  --color-primary-hover: #5c291c;
+  --color-primary-active: #3a1810;
+  --color-primary-soft: #f1e0d8;
+  --color-primary-softer: #f8efea;
+  --color-on-primary: #fdf5f1;
+  --gradient-primary: linear-gradient(180deg, #5c291c 0%, #4a2015 100%);
+  --color-accent: #c2410c;
+  --color-accent-hover: #a8380a;
+  --color-accent-bg: #fdf0e8;
+  --color-accent-border: #f4c9ae;
+  --color-accent-fg: #a3390b;
+  --color-neutral-bg: #f5eee9;
+  --color-neutral-border: #ece2db;
+  --color-neutral-fg: #604a40;
+  --color-focus-ring: #c2410c;
+  --chart-1: #d4572c;
+  --chart-2: #0e8a94;
+  --chart-grid: #f0e8e2;
+  --chart-track: #f5eee9;
+  --tide-bg: #2f1710;
+  --tide-active: #a3472c;
+  --tide-mark: #fdba74;
+  --tide-fg: #fdf4ef;
+  --tide-muted: #e0c3b6;
+  --tide-subtle: #bb998a;
+  --tide-primary-active: #f0dcd2;
+  --tide-neutral-fg: #ead6cc;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="sunset"]:not([data-theme="light"]) {
+    --color-background: #170c08;
+    --color-surface: #22130d;
+    --color-surface-raised: #2b1911;
+    --color-surface-sunken: #110805;
+    --color-foreground: #f7ebe5;
+    --color-muted-foreground: #c2a596;
+    --color-subtle-foreground: #8f7365;
+    --color-border: #402619;
+    --color-border-strong: #5a3624;
+    --color-primary: #f7ebe5;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #dcc6bb;
+    --color-primary-soft: #402619;
+    --color-primary-softer: #2b1911;
+    --color-on-primary: #170c08;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #eedbd1 100%);
+    --color-accent: #fb8a5c;
+    --color-accent-hover: #fdab87;
+    --color-accent-bg: #3a1a0e;
+    --color-accent-border: #7a3518;
+    --color-accent-fg: #fdab87;
+    --color-neutral-bg: #2b1911;
+    --color-neutral-border: #452a1c;
+    --color-neutral-fg: #c2a596;
+    --color-focus-ring: #fdab87;
+    --chart-1: #ec7148;
+    --chart-2: #2bb3bd;
+    --chart-grid: #2f1c13;
+    --chart-track: #2b1911;
+  }
+}
+:root[data-palette="sunset"][data-theme="dark"] {
+  --color-background: #170c08;
+  --color-surface: #22130d;
+  --color-surface-raised: #2b1911;
+  --color-surface-sunken: #110805;
+  --color-foreground: #f7ebe5;
+  --color-muted-foreground: #c2a596;
+  --color-subtle-foreground: #8f7365;
+  --color-border: #402619;
+  --color-border-strong: #5a3624;
+  --color-primary: #f7ebe5;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #dcc6bb;
+  --color-primary-soft: #402619;
+  --color-primary-softer: #2b1911;
+  --color-on-primary: #170c08;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #eedbd1 100%);
+  --color-accent: #fb8a5c;
+  --color-accent-hover: #fdab87;
+  --color-accent-bg: #3a1a0e;
+  --color-accent-border: #7a3518;
+  --color-accent-fg: #fdab87;
+  --color-neutral-bg: #2b1911;
+  --color-neutral-border: #452a1c;
+  --color-neutral-fg: #c2a596;
+  --color-focus-ring: #fdab87;
+  --chart-1: #ec7148;
+  --chart-2: #2bb3bd;
+  --chart-grid: #2f1c13;
+  --chart-track: #2b1911;
+}
+
+/* Graphite — slate field, blue accent */
+:root[data-palette="graphite"] {
+  --color-background: #f5f6f8;
+  --color-surface-sunken: #ebedf1;
+  --color-foreground: #0f172a;
+  --color-muted-foreground: #475569;
+  --color-subtle-foreground: #7b8798;
+  --color-border: #e2e5ea;
+  --color-border-strong: #cbd1da;
+  --color-primary: #1e293b;
+  --color-primary-hover: #273449;
+  --color-primary-active: #151d2b;
+  --color-primary-soft: #e2e6ec;
+  --color-primary-softer: #f0f2f5;
+  --color-on-primary: #f8fafc;
+  --gradient-primary: linear-gradient(180deg, #273449 0%, #1e293b 100%);
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-bg: #eaf1fe;
+  --color-accent-border: #bcd0fb;
+  --color-accent-fg: #1d4fd0;
+  --color-neutral-bg: #eef0f3;
+  --color-neutral-border: #e2e5ea;
+  --color-neutral-fg: #3f4a5c;
+  --color-focus-ring: #2563eb;
+  --chart-1: #2f6fe0;
+  --chart-6: #0e8a94;
+  --chart-grid: #e8ebef;
+  --chart-track: #eef0f3;
+  --tide-bg: #121821;
+  --tide-active: #334256;
+  --tide-mark: #60a5fa;
+  --tide-fg: #f1f5f9;
+  --tide-muted: #b8c2d0;
+  --tide-subtle: #8b97a8;
+  --tide-primary-active: #d3dae4;
+  --tide-neutral-fg: #d0d8e2;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="graphite"]:not([data-theme="light"]) {
+    --color-background: #0b0f16;
+    --color-surface: #121821;
+    --color-surface-raised: #18202b;
+    --color-surface-sunken: #080b10;
+    --color-foreground: #e8edf3;
+    --color-muted-foreground: #9aa6b6;
+    --color-subtle-foreground: #6b7788;
+    --color-border: #232c39;
+    --color-border-strong: #34404f;
+    --color-primary: #e8edf3;
+    --color-primary-hover: #ffffff;
+    --color-primary-active: #c3ccd7;
+    --color-primary-soft: #232c39;
+    --color-primary-softer: #18202b;
+    --color-on-primary: #0b0f16;
+    --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d8dee6 100%);
+    --color-accent: #60a5fa;
+    --color-accent-hover: #93c5fd;
+    --color-accent-bg: #12223d;
+    --color-accent-border: #1f3f73;
+    --color-accent-fg: #93c5fd;
+    --color-neutral-bg: #18202b;
+    --color-neutral-border: #29323f;
+    --color-neutral-fg: #9aa6b6;
+    --color-focus-ring: #93c5fd;
+    --chart-1: #4f8ef0;
+    --chart-6: #2bb3bd;
+    --chart-grid: #1a222d;
+    --chart-track: #18202b;
+  }
+}
+:root[data-palette="graphite"][data-theme="dark"] {
+  --color-background: #0b0f16;
+  --color-surface: #121821;
+  --color-surface-raised: #18202b;
+  --color-surface-sunken: #080b10;
+  --color-foreground: #e8edf3;
+  --color-muted-foreground: #9aa6b6;
+  --color-subtle-foreground: #6b7788;
+  --color-border: #232c39;
+  --color-border-strong: #34404f;
+  --color-primary: #e8edf3;
+  --color-primary-hover: #ffffff;
+  --color-primary-active: #c3ccd7;
+  --color-primary-soft: #232c39;
+  --color-primary-softer: #18202b;
+  --color-on-primary: #0b0f16;
+  --gradient-primary: linear-gradient(180deg, #ffffff 0%, #d8dee6 100%);
+  --color-accent: #60a5fa;
+  --color-accent-hover: #93c5fd;
+  --color-accent-bg: #12223d;
+  --color-accent-border: #1f3f73;
+  --color-accent-fg: #93c5fd;
+  --color-neutral-bg: #18202b;
+  --color-neutral-border: #29323f;
+  --color-neutral-fg: #9aa6b6;
+  --color-focus-ring: #93c5fd;
+  --chart-1: #4f8ef0;
+  --chart-6: #2bb3bd;
+  --chart-grid: #1a222d;
+  --chart-track: #18202b;
 }

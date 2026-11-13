@@ -2,12 +2,15 @@ import type { Metadata, Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { connection } from "next/server";
+import { cookies } from "next/headers";
 import { Suspense } from "react";
 import { ToastProvider } from "@/components/ui";
 import { BrandingProvider } from "@/components/BrandingProvider";
 import { NavigationProgress } from "@/components/NavigationProgress";
 import { accentStyleSheet } from "@/lib/branding";
 import { getBranding } from "@/server/branding";
+import { getSession } from "@/server/auth";
+import { PALETTE_COOKIE, resolvePalette } from "@/lib/themes";
 import "./globals.css";
 
 // Inter (headline/body) + JetBrains Mono (labels, tabular data) — the console's
@@ -38,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
       template: `%s · ${brand.productName}`,
     },
     description:
-      "Rule-based WhatsApp support automation — message triage, escalation timers, and team notifications from one dashboard.",
+      "Every customer conversation in one place: WhatsApp, Messenger, Instagram, Telegram and website chat, answered by your team and AI.",
     applicationName: brand.productName,
     robots: { index: false, follow: false },
     icons: { icon: brand.iconUrl, apple: brand.hasCustomIcon ? brand.iconUrl : "/app-icon-192.png" },
@@ -67,11 +70,21 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   await connection();
-  const brand = await getBranding();
+  const [brand, session, cookieStore] = await Promise.all([getBranding(), getSession().catch(() => null), cookies()]);
+  // The colour theme (lib/themes.ts), rendered on the server so there is no flash: the person's own
+  // choice (carried by the session row, no extra query), else this device's cookie when signed out,
+  // else the installation's default. Every value is checked against the catalogue before it is used.
+  const palette = resolvePalette({
+    signedIn: Boolean(session),
+    personal: session?.themePalette,
+    cookie: cookieStore.get(PALETTE_COOKIE)?.value,
+    installationDefault: brand.themePalette,
+  });
   return (
     <html
       lang="en"
       className={`${sansFace.variable} ${monoFace.variable} h-full antialiased`}
+      data-palette={palette}
       suppressHydrationWarning
     >
       <head>

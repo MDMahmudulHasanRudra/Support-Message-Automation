@@ -1,9 +1,9 @@
 /**
- * Social Studio (SOCIAL_STUDIO.md): Get Assist's own social publishing. The rules of the workflow and of
+ * Social Studio (SOCIAL_STUDIO.md): Chithii's own social publishing. The rules of the workflow and of
  * the publishing engine, independent of any platform. Pure functions only — the web app's server code
  * applies them, the tests pin them, and the browser uses them to explain why a button is not offered.
  *
- * A post is written, reviewed and approved in Get Assist; each chosen account is one publish TARGET
+ * A post is written, reviewed and approved in Chithii; each chosen account is one publish TARGET
  * (a job with its own status, attempts and outcome), published by the engine when it is due. Nothing
  * is published without a person holding `social.approve` having approved exactly what is sent, and a
  * publication whose outcome was not seen is never repeated by the engine.

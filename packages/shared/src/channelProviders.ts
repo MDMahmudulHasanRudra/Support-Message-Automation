@@ -35,7 +35,7 @@ export const CHANNEL_PROVIDERS: Record<ChannelProviderId, ChannelProviderDefinit
   META_MESSENGER: { label: "Facebook Messenger (Meta)", implemented: true, payloadProvider: "META" },
   META_INSTAGRAM: { label: "Instagram DM (Meta)", implemented: true, payloadProvider: "META" },
   TELEGRAM: { label: "Telegram Bot API", implemented: true, payloadProvider: "TELEGRAM" },
-  WEBCHAT: { label: "Website chat (Get Assist)", implemented: true, payloadProvider: "WEBCHAT" },
+  WEBCHAT: { label: "Website chat (Chithii)", implemented: true, payloadProvider: "WEBCHAT" },
   WHATSAPP_CLOUD: { label: "WhatsApp (Official API)", implemented: true, payloadProvider: "WHATSAPP_CLOUD" },
 };
 

@@ -55,7 +55,7 @@ export default async function SocialAccountsPage({ searchParams }: { searchParam
       {sp.connected ? <Alert tone="success" title={`Connected: ${sp.connected} account(s) ready${Number(sp.attention) ? `, ${sp.attention} need attention (see below)` : ""}.`} /> : null}
       {canManage && !ready.ok ? (
         <Alert tone="warning" title="Meta publishing is not available in this workspace yet.">
-          <p className="text-sm">Connecting Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Get Assist platform to enable it.</p>
+          <p className="text-sm">Connecting Facebook and Instagram is not switched on for this workspace yet. Ask whoever runs your Chithii platform to enable it.</p>
         </Alert>
       ) : null}
 
@@ -127,7 +127,7 @@ export default async function SocialAccountsPage({ searchParams }: { searchParam
       </section>
 
       <section>
-        <SectionHeader title="Other networks" description="Each needs its own developer approval and a Get Assist adapter. Not available yet." />
+        <SectionHeader title="Other networks" description="Each needs its own developer approval and a Chithii adapter. Not available yet." />
         <ul className="grid gap-2 text-sm md:grid-cols-2">
           {Object.values(SOCIAL_PLATFORMS)
             .filter((p) => !p.implemented)

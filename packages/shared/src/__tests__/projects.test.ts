@@ -166,21 +166,21 @@ describe("which feature a page or action belongs to", () => {
 });
 
 describe("nextDefaultProjectName", () => {
-  it("offers Get Assist Project 1 on an install with no Get Assist projects", () => {
-    expect(nextDefaultProjectName([])).toBe("Get Assist Project 1");
-    expect(nextDefaultProjectName([{ name: "ISP Digital", slug: "isp-digital" }])).toBe("Get Assist Project 1");
+  it("offers Chithii Project 1 on an install with no Chithii projects", () => {
+    expect(nextDefaultProjectName([])).toBe("Chithii Project 1");
+    expect(nextDefaultProjectName([{ name: "ISP Digital", slug: "isp-digital" }])).toBe("Chithii Project 1");
   });
   it("offers the next free number, skipping a name or a slug already used", () => {
-    expect(nextDefaultProjectName([{ name: "Get Assist Project 1", slug: "get-assist-project-1" }])).toBe("Get Assist Project 2");
+    expect(nextDefaultProjectName([{ name: "Chithii Project 1", slug: "chithii-project-1" }])).toBe("Chithii Project 2");
     expect(
       nextDefaultProjectName([
-        { name: "Get Assist Project 1", slug: "get-assist-project-1" },
-        { name: "get assist project 2", slug: "custom" },
-        { name: "Something", slug: "get-assist-project-3" },
+        { name: "Chithii Project 1", slug: "chithii-project-1" },
+        { name: "chithii project 2", slug: "custom" },
+        { name: "Something", slug: "chithii-project-3" },
       ]),
-    ).toBe("Get Assist Project 4");
+    ).toBe("Chithii Project 4");
   });
   it("fills a gap rather than always counting up", () => {
-    expect(nextDefaultProjectName([{ name: "Get Assist Project 2", slug: "get-assist-project-2" }])).toBe("Get Assist Project 1");
+    expect(nextDefaultProjectName([{ name: "Chithii Project 2", slug: "chithii-project-2" }])).toBe("Chithii Project 1");
   });
 });

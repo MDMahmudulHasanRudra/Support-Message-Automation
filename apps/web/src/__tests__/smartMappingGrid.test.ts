@@ -8,7 +8,7 @@ import { previewRow, type PreviewSourceRow } from "@/lib/smartMappingPreview";
 
 /**
  * Smart Import V5 §1 — the approved Visual Mapping grid is the permanent DEFAULT Advanced Mapping screen.
- * These tests pin its shape: Get Assist's fields across the TOP, the Excel-column picker directly BELOW each,
+ * These tests pin its shape: Chithii's fields across the TOP, the Excel-column picker directly BELOW each,
  * and the file's real rows BELOW that, aligned row by row, recomputed from the mapping on every change.
  */
 
@@ -41,7 +41,7 @@ const render = (p: MappingGridProps) => renderToStaticMarkup(createElement(Mappi
 describe("Visual Mapping grid: the approved layout", () => {
   const html = render(props());
 
-  it("puts Get Assist's fields across the top, the Excel picker below them, and the rows below that", () => {
+  it("puts Chithii's fields across the top, the Excel picker below them, and the rows below that", () => {
     const groups = html.indexOf('data-row="groups"');
     const fields = html.indexOf('data-row="fields"');
     const sources = html.indexOf('data-row="sources"');

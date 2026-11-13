@@ -14,7 +14,7 @@ export interface AiAdminChatResult {
 }
 
 /** The product name is the installation's own (BRANDING.md): a white-labelled dashboard's assistant must not introduce itself by another name. */
-const systemPrompt = (productName: string) => `You are the AI Admin Assistant for ${productName}, a WhatsApp support automation dashboard.
+const systemPrompt = (productName: string) => `You are the AI Admin Assistant for ${productName}, a customer support platform for WhatsApp, Messenger, Instagram, Telegram and website chat.
 
 Rules:
 - Only state facts you got back from a tool call. If a tool doesn't give you what you need, say the information isn't available — never invent numbers, group names, statuses, or settings.

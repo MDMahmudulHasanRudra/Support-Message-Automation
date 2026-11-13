@@ -7,7 +7,7 @@ import { getAiSettings } from "../ai/settings.js";
 
 /**
  * Social Studio's AI Content Studio (SOCIAL_STUDIO.md §AI), answered in the worker because that is where
- * Get Assist's AI client lives: `resolveAiClient("RESPONSE")` — the project's own provider, model,
+ * Chithii's AI client lives: `resolveAiClient("RESPONSE")` — the project's own provider, model,
  * credentials and usage, exactly as every other AI feature. It writes only the SocialAiRequest row: no
  * post, no message, no notification. The answer is a suggestion a person puts into a draft, which still
  * needs approval.

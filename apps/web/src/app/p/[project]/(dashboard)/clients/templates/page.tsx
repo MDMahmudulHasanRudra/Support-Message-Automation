@@ -62,7 +62,7 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Se
               <p>Write {"{{client_name}}"}, {"{{invoice_number}}"} and so on; each is filled from the client&apos;s own records when a message is prepared. A line whose only content is a variable with no value is left out, never shown half-empty.</p>
             </HelpSection>
             <HelpSection title="Nothing is sent by a template">
-              <p>Only Active templates are offered when preparing a message. Email is sent by Get Assist after a person presses Send (or, in bulk, after a second person approves). WhatsApp wording is prepared for a person to send.</p>
+              <p>Only Active templates are offered when preparing a message. Email is sent by Chithii after a person presses Send (or, in bulk, after a second person approves). WhatsApp wording is prepared for a person to send.</p>
             </HelpSection>
             <HelpSection title="Versions">
               <p>Each save is a new version and messages record the version they used, so what a client was sent stays answerable after the wording changes.</p>

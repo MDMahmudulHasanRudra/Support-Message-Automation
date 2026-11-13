@@ -131,7 +131,7 @@ export function TemplateEditor({ initial, canEdit }: { initial: TemplateInitial;
                 ))}
               </Select>
             </Field>
-            <Field label="Channel" hint="Email is sent by Get Assist; the others are prepared for a person to send.">
+            <Field label="Channel" hint="Email is sent by Chithii; the others are prepared for a person to send.">
               <Select name="channel" value={fields.channel} onChange={(e) => set("channel", e.target.value)}>
                 {MESSAGE_TEMPLATE_CHANNELS.map((c) => (
                   <option key={c} value={c}>

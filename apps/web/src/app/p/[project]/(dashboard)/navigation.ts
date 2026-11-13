@@ -1,4 +1,4 @@
-import { Code2 as InstallIcon, RadioTower as LiveBoardIcon, UsersRound as VisitorsIcon } from "lucide-react";
+import { BadgeCheck, Code2 as InstallIcon, RadioTower as LiveBoardIcon, UsersRound as VisitorsIcon } from "lucide-react";
 import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
@@ -389,9 +389,9 @@ export function reportPagesFor(granted: ReadonlySet<string>, disabledFeatures: R
   return REPORT_PAGES.filter((page) => canOffer(page.href, granted, disabledFeatures, pages));
 }
 
-// Ordered for day-to-day frequency: live/operational areas checked constantly (messages,
-// escalations, team activity) first, setup/config areas checked occasionally next, advanced
-// analytical modules and system admin — checked rarely — last.
+// Ordered for day-to-day use (owner's order, 13 Nov 2026): the conversations and the website chat first, then
+// the people (contacts, clients), the work being watched, the team and its reports, then setup and the rarer
+// modules, administration last.
 export const NAV_GROUPS: NavGroup[] = [
   {
     // Every place a customer is answered, one entry per channel (OMNICHANNEL.md). The Omnichannel
@@ -400,13 +400,13 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "All Conversations",
     icon: MessageCircleMore,
     links: [
+      { href: "/conversations/website", label: "Website Chat", icon: Globe },
       { href: "/conversations/all", label: "Unified Inbox", icon: Inbox },
       { href: "/chat", label: "WhatsApp Chat", icon: MessageCircleMore },
-      { href: "/conversations/whatsapp-official", label: "WhatsApp", icon: MessageCircleMore },
       { href: "/conversations/messenger", label: "Facebook Messenger", icon: MessagesSquare },
       { href: "/conversations/instagram", label: "Instagram DM", icon: Camera },
       { href: "/conversations/telegram", label: "Telegram", icon: Send },
-      { href: "/conversations/website", label: "Website Chat", icon: Globe },
+      { href: "/conversations/whatsapp-official", label: "WhatsApp Official API", icon: BadgeCheck },
     ],
   },
   // The website chat widget's own module (WEBSITE_CHAT.md); its conversations are under All Conversations.
@@ -417,6 +417,16 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/website-chat", label: "Live Board", icon: LiveBoardIcon },
       { href: "/website-chat/visitors", label: "Visitors", icon: VisitorsIcon },
       { href: "/website-chat/widgets", label: "Widgets & Install", icon: InstallIcon },
+    ],
+  },
+  {
+    // Contacts (CONTACTS.md): everyone met in the chats, apart from Clients and Billing.
+    label: "Contacts",
+    icon: BookUser,
+    links: [
+      { href: "/contacts", label: "All Contacts", icon: BookUser },
+      { href: "/contacts/campaigns", label: "Campaigns", icon: ContactCampaignIcon },
+      { href: "/contacts/import", label: "Import", icon: ContactImportIcon },
     ],
   },
   {
@@ -457,16 +467,6 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // Contacts (CONTACTS.md): everyone met in the chats, apart from Clients and Billing.
-    label: "Contacts",
-    icon: BookUser,
-    links: [
-      { href: "/contacts", label: "All Contacts", icon: BookUser },
-      { href: "/contacts/campaigns", label: "Campaigns", icon: ContactCampaignIcon },
-      { href: "/contacts/import", label: "Import", icon: ContactImportIcon },
-    ],
-  },
-  {
     // Client Management (CLIENT_CENTER.md): the one client database. A project feature that ships off.
     id: "clients",
     label: "Client Management",
@@ -502,49 +502,6 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // Commerce (COMMERCE.md): catalogue and stock, orders, the sales pipeline. Each is its own project
-    // feature, off by default and on for the E-commerce business type.
-    id: "commerce",
-    label: "Sales & Commerce",
-    icon: ShoppingCart,
-    links: [
-      { href: "/commerce/orders", label: "Orders", icon: ShoppingCart },
-      { href: "/commerce/products", label: "Products", icon: Package },
-      { href: "/commerce/shipments", label: "Shipments", icon: Truck },
-      { href: "/sales", label: "Sales Pipeline", icon: KanbanSquare },
-    ],
-  },
-  {
-    // Social Studio (SOCIAL_STUDIO.md): Get Assist's own social publishing. Its own project feature,
-    // off by default and never switched on by a plan.
-    label: "Social Studio",
-    icon: Megaphone,
-    links: [
-      { href: "/social", label: "Overview", icon: Megaphone },
-      { href: "/social/calendar", label: "Calendar", icon: CalendarRange },
-      {
-        href: "/social/posts",
-        label: "Posts",
-        icon: PenSquare,
-        tabs: [
-          { href: "/social/posts?view=drafts", label: "Drafts", icon: PenSquare },
-          { href: "/social/posts?view=approvals", label: "Approvals", icon: CheckCheck },
-          { href: "/social/posts?view=scheduled", label: "Scheduled", icon: CalendarRange },
-          { href: "/social/posts?view=published", label: "Published", icon: Megaphone },
-          { href: "/social/posts?view=failed", label: "Failed", icon: AlertTriangle },
-          { href: "/social/posts?view=all", label: "All", icon: FileText },
-        ],
-      },
-      { href: "/social/media", label: "Media Library", icon: Images },
-      { href: "/social/campaigns", label: "Campaigns", icon: Flag },
-      { href: "/social/templates", label: "Templates", icon: FileText },
-      { href: "/social/analytics", label: "Analytics", icon: BarChart3 },
-      { href: "/social/ai", label: "AI Content", icon: Sparkles },
-      { href: "/social/automation", label: "Automation", icon: Rss },
-      { href: "/social/accounts", label: "Accounts", icon: Share2 },
-    ],
-  },
-  {
     // Support Activity's two people-pages joined Team Management's three: both answer "what is the
     // team doing" — one from the schedule, one from the messages.
     id: "team",
@@ -568,37 +525,16 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [TEAM_REPORT_LINK, REPORTS_LINK],
   },
   {
-    // Bulk Messaging lives here: broadcasting to groups and adding a number to groups are WhatsApp
-    // work done with the same accounts and groups. Shown as "WhatsApp QR" (the OpenWA engine); the id
-    // keeps the module id it always had.
-    id: "whatsapp",
-    label: LEGACY_WHATSAPP_LABEL,
-    icon: Smartphone,
+    // Commerce (COMMERCE.md): catalogue and stock, orders, the sales pipeline. Each is its own project
+    // feature, off by default and on for the E-commerce business type.
+    id: "commerce",
+    label: "Sales & Commerce",
+    icon: ShoppingCart,
     links: [
-      { href: "/accounts", label: "Accounts", icon: Smartphone },
-      { href: "/groups", label: "Groups", icon: Users },
-      {
-        href: "/group-message-sender",
-        label: "Broadcast",
-        icon: Send,
-        tabs: [
-          { href: "/group-message-sender", label: "New broadcast", icon: Send },
-          { href: "/group-message-sender/history", label: "Broadcast history", icon: History },
-        ],
-      },
-      { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
-      { href: "/group-admin-maker", label: "Groups Admin Maker", icon: UserCog },
-    ],
-  },
-  {
-    // GOOGLE_SHEETS.md. Its account connections and settings live under Settings → Google Sheets.
-    label: "Google Sheets",
-    icon: FileSpreadsheet,
-    links: [
-      { href: "/google-sheets", label: "Spreadsheets", icon: FileSpreadsheet },
-      { href: "/google-sheets/activity", label: "Activity", icon: Activity },
-      { href: "/google-sheets/reports", label: "Work Reports", icon: BarChart3 },
-      { href: "/google-sheets/identity", label: "My Google Identity", icon: Fingerprint },
+      { href: "/commerce/orders", label: "Orders", icon: ShoppingCart },
+      { href: "/commerce/products", label: "Products", icon: Package },
+      { href: "/commerce/shipments", label: "Shipments", icon: Truck },
+      { href: "/sales", label: "Sales Pipeline", icon: KanbanSquare },
     ],
   },
   {
@@ -613,10 +549,10 @@ export const NAV_GROUPS: NavGroup[] = [
         tabs: [
           { href: "/rules", label: "Rules", icon: ListChecks },
           { href: "/rules/tester", label: "Rule Tester", icon: FlaskConical },
-          { href: "/rules/templates", label: "Templates", icon: LayoutTemplate },
         ],
       },
       // Numbered menus customers answer by typing a number (MENU_BOTS.md).
+      { href: "/rules/templates", label: "Rule Templates", icon: LayoutTemplate },
       { href: "/menu-bots", label: "Menu Bots", icon: ListTree },
       { href: "/automation-control", label: "Automation Control", icon: Power },
     ],
@@ -659,6 +595,70 @@ export const NAV_GROUPS: NavGroup[] = [
         ],
       },
       { href: "/conversation-learning/rule-proposals", label: "Rule Proposals", icon: ClipboardCheck },
+    ],
+  },
+  {
+    // Bulk Messaging lives here: broadcasting to groups and adding a number to groups are WhatsApp
+    // work done with the same accounts and groups. Shown as "WhatsApp QR" (the OpenWA engine); the id
+    // keeps the module id it always had.
+    id: "whatsapp",
+    label: LEGACY_WHATSAPP_LABEL,
+    icon: Smartphone,
+    links: [
+      { href: "/accounts", label: "Accounts", icon: Smartphone },
+      { href: "/groups", label: "Groups", icon: Users },
+      {
+        href: "/group-message-sender",
+        label: "Broadcast",
+        icon: Send,
+        tabs: [
+          { href: "/group-message-sender", label: "New broadcast", icon: Send },
+          { href: "/group-message-sender/history", label: "Broadcast history", icon: History },
+        ],
+      },
+      { href: "/group-member-adder", label: "Add Number to Groups", icon: UserPlus },
+      { href: "/group-admin-maker", label: "Groups Admin Maker", icon: UserCog },
+    ],
+  },
+  {
+    // Social Studio (SOCIAL_STUDIO.md): Chithii's own social publishing. Its own project feature,
+    // off by default and never switched on by a plan.
+    label: "Social Studio",
+    icon: Megaphone,
+    links: [
+      { href: "/social", label: "Overview", icon: Megaphone },
+      { href: "/social/calendar", label: "Calendar", icon: CalendarRange },
+      {
+        href: "/social/posts",
+        label: "Posts",
+        icon: PenSquare,
+        tabs: [
+          { href: "/social/posts?view=drafts", label: "Drafts", icon: PenSquare },
+          { href: "/social/posts?view=approvals", label: "Approvals", icon: CheckCheck },
+          { href: "/social/posts?view=scheduled", label: "Scheduled", icon: CalendarRange },
+          { href: "/social/posts?view=published", label: "Published", icon: Megaphone },
+          { href: "/social/posts?view=failed", label: "Failed", icon: AlertTriangle },
+          { href: "/social/posts?view=all", label: "All", icon: FileText },
+        ],
+      },
+      { href: "/social/media", label: "Media Library", icon: Images },
+      { href: "/social/campaigns", label: "Campaigns", icon: Flag },
+      { href: "/social/templates", label: "Templates", icon: FileText },
+      { href: "/social/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/social/ai", label: "AI Content", icon: Sparkles },
+      { href: "/social/automation", label: "Automation", icon: Rss },
+      { href: "/social/accounts", label: "Accounts", icon: Share2 },
+    ],
+  },
+  {
+    // GOOGLE_SHEETS.md. Its account connections and settings live under Settings → Google Sheets.
+    label: "Google Sheets",
+    icon: FileSpreadsheet,
+    links: [
+      { href: "/google-sheets", label: "Spreadsheets", icon: FileSpreadsheet },
+      { href: "/google-sheets/activity", label: "Activity", icon: Activity },
+      { href: "/google-sheets/reports", label: "Work Reports", icon: BarChart3 },
+      { href: "/google-sheets/identity", label: "My Google Identity", icon: Fingerprint },
     ],
   },
   {

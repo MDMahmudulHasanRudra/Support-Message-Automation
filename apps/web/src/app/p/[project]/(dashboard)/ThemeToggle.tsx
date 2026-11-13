@@ -1,11 +1,12 @@
 "use client";
 
 import { Monitor, Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { THEME_MODE_STORAGE_KEY, type ThemeMode } from "@/lib/themes";
+import { applyThemeMode, useThemeMode } from "@/lib/themeMode";
 
-export const THEME_STORAGE_KEY = "sa-theme";
+export const THEME_STORAGE_KEY = THEME_MODE_STORAGE_KEY;
 
-type ThemePreference = "light" | "system" | "dark";
+type ThemePreference = ThemeMode;
 
 const OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Sun }> = [
   { value: "light", label: "Light", icon: Sun },
@@ -21,39 +22,13 @@ const OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Sun }
  * prefers-color-scheme media query take over again.
  *
  * A tiny inline script in the root layout applies the stored value before first
- * paint. This component only re-reads it after mount, so the server and client
- * render the same markup and hydration stays quiet.
+ * paint. The stored value is read through `useThemeMode` (lib/themeMode.ts), which
+ * renders "system" on the server so hydration stays quiet, and which My account →
+ * Appearance shares, so the two controls always agree.
  */
 export function ThemeToggle() {
-  const [preference, setPreference] = useState<ThemePreference>("system");
-
-  useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    } catch {
-      // Private mode / blocked storage — the default "system" is already correct.
-    }
-    if (stored !== "light" && stored !== "dark") return;
-    // Deferred via a microtask (fires before the next paint, so no visible delay)
-    // rather than called directly in the effect body — matches the convention used
-    // in DashboardShell/Dialog and satisfies react-hooks/set-state-in-effect.
-    queueMicrotask(() => setPreference(stored as ThemePreference));
-  }, []);
-
-  function apply(next: ThemePreference) {
-    setPreference(next);
-    if (next === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    } else {
-      document.documentElement.setAttribute("data-theme", next);
-    }
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, next);
-    } catch {
-      // Preference just won't survive a reload; the current page is still themed.
-    }
-  }
+  const preference = useThemeMode();
+  const apply = applyThemeMode;
 
   return (
     <div

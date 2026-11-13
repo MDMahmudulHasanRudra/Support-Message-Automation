@@ -61,10 +61,10 @@ describe("TOTP (RFC 6238)", () => {
   });
 
   it("builds an otpauth address apps can read", () => {
-    const uri = otpauthUri("JBSWY3DPEHPK3PXP", "rudra", "Get Assist");
-    expect(uri.startsWith("otpauth://totp/Get%20Assist%3Arudra?")).toBe(true);
+    const uri = otpauthUri("JBSWY3DPEHPK3PXP", "rudra", "Chithii");
+    expect(uri.startsWith("otpauth://totp/Chithii%3Arudra?")).toBe(true);
     expect(uri).toContain("secret=JBSWY3DPEHPK3PXP");
-    expect(uri).toContain("issuer=Get+Assist");
+    expect(uri).toContain("issuer=Chithii");
   });
 });
 

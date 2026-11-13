@@ -167,7 +167,7 @@ export function ThisDevicePanel({ disabled }: { disabled: boolean }) {
         ) : disabled ? (
           <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">Not available in a support session.</p>
         ) : !available ? (
-          <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">Notifications are not switched on for this installation yet. Ask whoever runs your Get Assist platform.</p>
+          <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">Notifications are not switched on for this installation yet. Ask whoever runs your Chithii platform.</p>
         ) : !supported ? (
           <p className="mt-2 text-sm text-[color:var(--color-muted-foreground)]">{ios ? "On iPhone, install the app first, then open it from your home screen and come back here." : "This browser does not support notifications."}</p>
         ) : permission === "denied" ? (

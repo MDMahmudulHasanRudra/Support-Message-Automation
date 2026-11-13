@@ -2,12 +2,12 @@ import type { SocialMediaKind } from "./socialStudio.js";
 
 /**
  * Social Studio's platform catalogue (SOCIAL_STUDIO.md §Platforms): what each network accepts through
- * its OFFICIAL publishing API, which Get Assist adapter exists for it, and what it needs from the person
+ * its OFFICIAL publishing API, which Chithii adapter exists for it, and what it needs from the person
  * who connects it. The rules are written from each platform's public documentation, not taken from any
  * other product. A platform with `implemented: false` is listed so the product can say what is coming;
  * it can never be connected or chosen.
  *
- * Capabilities are what Get Assist's own adapter does — never what a platform might allow in theory.
+ * Capabilities are what Chithii's own adapter does — never what a platform might allow in theory.
  */
 
 export const SOCIAL_CAPABILITIES = [
@@ -43,7 +43,7 @@ export interface SocialPlatformRules {
   key: SocialPlatform;
   label: string;
   network: SocialNetwork;
-  /** A Get Assist adapter exists and was mock-tested. NOT a claim of live verification. */
+  /** A Chithii adapter exists and was mock-tested. NOT a claim of live verification. */
   implemented: boolean;
   capabilities: readonly SocialCapability[];
   maxText: number;
@@ -119,7 +119,7 @@ export const SOCIAL_PLATFORMS: Readonly<Record<SocialPlatform, SocialPlatformRul
     allowsMixed: true,
     maxImageBytes: 8 * MB,
     scopes: ["threads_basic", "threads_content_publish"],
-    requirement: "A Threads use case on a Meta app, threads_content_publish approval, and a Get Assist adapter (not built yet).",
+    requirement: "A Threads use case on a Meta app, threads_content_publish approval, and a Chithii adapter (not built yet).",
   },
   LINKEDIN: {
     key: "LINKEDIN",
@@ -137,7 +137,7 @@ export const SOCIAL_PLATFORMS: Readonly<Record<SocialPlatform, SocialPlatformRul
     allowsMixed: false,
     maxImageBytes: 8 * MB,
     scopes: ["w_member_social", "w_organization_social"],
-    requirement: "A LinkedIn app with the Community Management API approved, and a Get Assist adapter (not built yet).",
+    requirement: "A LinkedIn app with the Community Management API approved, and a Chithii adapter (not built yet).",
   },
   YOUTUBE: {
     key: "YOUTUBE",
@@ -155,7 +155,7 @@ export const SOCIAL_PLATFORMS: Readonly<Record<SocialPlatform, SocialPlatformRul
     allowsMixed: false,
     maxImageBytes: 0,
     scopes: ["https://www.googleapis.com/auth/youtube.upload"],
-    requirement: "A verified Google Cloud OAuth app (restricted scope audit for public use), API quota, and a Get Assist adapter (not built yet).",
+    requirement: "A verified Google Cloud OAuth app (restricted scope audit for public use), API quota, and a Chithii adapter (not built yet).",
   },
   TIKTOK: {
     key: "TIKTOK",
@@ -173,7 +173,7 @@ export const SOCIAL_PLATFORMS: Readonly<Record<SocialPlatform, SocialPlatformRul
     allowsMixed: false,
     maxImageBytes: 8 * MB,
     scopes: ["video.publish"],
-    requirement: "TikTok's Content Posting API audit (unaudited apps can only post privately), and a Get Assist adapter (not built yet).",
+    requirement: "TikTok's Content Posting API audit (unaudited apps can only post privately), and a Chithii adapter (not built yet).",
   },
   PINTEREST: {
     key: "PINTEREST",
@@ -191,7 +191,7 @@ export const SOCIAL_PLATFORMS: Readonly<Record<SocialPlatform, SocialPlatformRul
     allowsMixed: false,
     maxImageBytes: 8 * MB,
     scopes: ["pins:write", "boards:read"],
-    requirement: "Pinterest API standard access, and a Get Assist adapter (not built yet).",
+    requirement: "Pinterest API standard access, and a Chithii adapter (not built yet).",
   },
 };
 

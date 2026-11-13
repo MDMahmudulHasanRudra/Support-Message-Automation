@@ -97,7 +97,7 @@ export default async function ForgeIntegrationPage() {
       {!configured ? (
         <div className="mb-5">
           <Alert tone="warning">
-            Product Knowledge is not connected for this installation yet. Ask whoever runs your Get Assist
+            Product Knowledge is not connected for this installation yet. Ask whoever runs your Chithii
             platform to connect it, then this page can sync.
           </Alert>
         </div>

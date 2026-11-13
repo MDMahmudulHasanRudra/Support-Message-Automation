@@ -1,7 +1,7 @@
 import type { PublishOutcome, RecentPublication, SocialMediaKind, SocialMetricValue, SocialPlatform } from "@support-automation/shared";
 
 /**
- * A Social Studio platform adapter (SOCIAL_STUDIO.md §Adapters): Get Assist's own code for ONE platform's
+ * A Social Studio platform adapter (SOCIAL_STUDIO.md §Adapters): Chithii's own code for ONE platform's
  * official publishing API. An adapter does HTTP and nothing else — no database, no project, no retry
  * policy. It reports each attempt as a `PublishOutcome`; the engine decides what that means for the job.
  *

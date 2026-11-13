@@ -922,6 +922,9 @@ model User {
   /// The last TOTP time step accepted, so one code cannot be replayed inside its window.
   mfaLastUsedStep            BigInt?
   avatar                     UserAvatar?
+  /// My account → Appearance: the colour theme this person chose (lib/themes.ts ids). Null = the
+  /// installation's default theme (PlatformBranding.themePalette).
+  themePalette               String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -6018,6 +6021,8 @@ model PlatformBranding {
   loginSubheading   String?
   /// The brand colour (#rrggbb): links, active navigation, focus rings — the app's accent.
   accentColor       String?
+  /// The default colour theme (lib/themes.ts ids) for everybody who has not chosen one. Null = "tide".
+  themePalette      String?
   /// Wide logo (wordmark), shown on the sign-in page.
   logo              Bytes?
   logoMimeType      String?

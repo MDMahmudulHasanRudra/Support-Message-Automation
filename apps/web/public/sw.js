@@ -1,4 +1,4 @@
-// Get Assist's service worker (AGENT_APP.md). It shows notifications and an offline page, and deliberately
+// Chithii's service worker (AGENT_APP.md). It shows notifications and an offline page, and deliberately
 // caches nothing else: customer data must never sit in a browser cache.
 const CACHE = "get-assist-offline-v1";
 const OFFLINE = "/offline.html";
@@ -30,7 +30,7 @@ self.addEventListener("push", (event) => {
     data = {};
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "Get Assist", {
+    self.registration.showNotification(data.title || "Chithii", {
       body: data.body || "",
       icon: "/app-icon-192.png",
       badge: "/app-icon-192.png",

@@ -43,7 +43,7 @@ export const isMessageTemplateCategory = (v: unknown): v is MessageTemplateCateg
 
 /**
  * Where a template is meant to be used. ANY = a plain message for whichever channel the person picks. Email is the
- * only channel Get Assist SENDS client messages through in this version; WhatsApp, Messenger and Instagram wording
+ * only channel Chithii SENDS client messages through in this version; WhatsApp, Messenger and Instagram wording
  * is prepared (copied, or opened in WhatsApp's own click-to-chat) and sent by a person.
  */
 export const MESSAGE_TEMPLATE_CHANNELS = ["ANY", "EMAIL", "WHATSAPP", "MESSENGER", "INSTAGRAM"] as const;
@@ -202,7 +202,7 @@ export function renderMessageTemplate(template: { subject: string | null; body: 
 /**
  * WhatsApp's official click-to-chat link (https://wa.me/<number>?text=…), or null when the number cannot be used.
  * The number is international digits only (no "+", no leading zeros). Opening it opens WhatsApp on the person's own
- * device with the text typed in; it sends nothing, and Get Assist never records it as sent.
+ * device with the text typed in; it sends nothing, and Chithii never records it as sent.
  */
 export function whatsappClickToChatUrl(e164OrDigits: string, text?: string): string | null {
   const digits = e164OrDigits.replace(/\D/g, "").replace(/^0+/, "");
@@ -277,7 +277,7 @@ export function batchApprovalRefusal(batch: { status: string; submittedById: str
 export const CLIENT_MESSAGE_STATES = ["PREPARED", "WAITING_APPROVAL", "QUEUED", "SENDING", "ACCEPTED", "FAILED", "UNKNOWN", "SKIPPED", "CANCELLED"] as const;
 export type ClientMessageState = (typeof CLIENT_MESSAGE_STATES)[number];
 export const CLIENT_MESSAGE_STATE_LABELS: Record<ClientMessageState, string> = {
-  PREPARED: "Prepared (not sent by Get Assist)",
+  PREPARED: "Prepared (not sent by Chithii)",
   WAITING_APPROVAL: "Waiting for approval",
   QUEUED: "Queued",
   SENDING: "Sending",

@@ -294,9 +294,9 @@ the same. Kill switch for the page side only: `PROJECT_ROLE_PAGES_DISABLED=true`
 
 **White labeling** (`BRANDING.md`, Main Admin → Branding). One platform row (`PlatformBranding`, no
 `projectId`) holds the product name, sign-in wording, brand colour, logo and app icon; NULL = the
-built-in default (`lib/branding.ts`: **Get Assist** since 26 Oct 2026, RELQIVO 21–26 Oct; existing installs had their old name stored by
+built-in default (`lib/branding.ts`: **Chithii** (chithii.com) since 13 Nov 2026, Get Assist 26 Oct–13 Nov, RELQIVO 21–26 Oct; existing installs had their old name stored by
 migration `20261021090000_relqivo_white_label_defaults`, so they look unchanged — BRANDING.md §Defaults). A fresh
-install's first project is "RELQIVO Project 1" (set by an applied migration, so unchanged), and new projects are offered "Get Assist Project N".
+install's first project is "RELQIVO Project 1" (set by an applied migration, so unchanged), and new projects are offered "Chithii Project N". **Colour themes** (`lib/themes.ts`, `data-palette` on `<html>`): the Main Admin picks the default on Branding (`PlatformBranding.themePalette`), each person may override it in My Account → Appearance (`User.themePalette`, null = the default); a brand colour still wins over any palette. Technical ids that installed widgets and integrations use (`GetAssistChat`, `X-GetAssist-Signature`, `getassist-chat` keys) are deliberately not renamed.
 Internal identifiers that still say relqivo (cookie `relqivo_platform_session`, header `x-relqivo-host`, hash salts, System Log
 message keys `RELQIVO_SUPPORT_*`, support usernames) are deliberately NOT renamed: changing them signs everyone out, breaks
 stored hashes and splits log history. Never hard-code the product

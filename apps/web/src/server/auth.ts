@@ -39,6 +39,8 @@ export interface Session {
   tenant?: string | null;
   /** Set when this is a RELQIVO operator's audited support session (§12): visible, time-limited, revocable. */
   support?: SupportAccessInfo | null;
+  /** My account → Appearance (lib/themes.ts); null = the installation's default theme. Read with the session row, so it costs no query. */
+  themePalette?: string | null;
 }
 
 export interface SupportAccessInfo {
@@ -154,6 +156,7 @@ const loadSession = cache(async (secret: string, host: string | null): Promise<S
     email: record.user.email ?? "",
     name: record.user.name,
     tenant: record.user.customerId ?? null,
+    themePalette: record.user.themePalette ?? null,
     support: access
       ? { id: access.id, operatorUsername: access.operatorUsername, customerId: access.customerId, reason: access.reason, expiresAt: access.expiresAt }
       : null,

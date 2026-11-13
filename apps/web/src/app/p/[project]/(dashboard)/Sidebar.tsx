@@ -3,7 +3,7 @@
 import { enumLabel } from "@/lib/displayLabels";
 import { Badge } from "@/components/ui";
 import { navIconClass, navItemClass } from "@/components/shell/ShellParts";
-import { Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard,  ShieldCheck, X } from "lucide-react";
+import { Blocks, Building2, ChevronDown, ChevronsLeft, ChevronsRight, FolderKanban, LayoutDashboard, Palette, ShieldCheck, UserRound, X } from "lucide-react";
 import Link, { useProjectHref } from "@/components/ProjectLink";
 import { useNavHighlight } from "@/lib/navigationPending";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -134,12 +134,19 @@ export const MAIN_ADMIN_LINKS: Array<NavLink & { key: string | null }> = [
   { href: "/admin/configuration", label: "Organization", icon: Building2, key: "configuration.view" },
 ];
 
+/** The portal's own pages drawn AFTER the global modules, so the order matches the Main Admin sidebar. */
+export const MAIN_ADMIN_TAIL_LINKS: Array<NavLink & { key: string | null }> = [
+  { href: "/admin/branding", label: "Branding Settings", icon: Palette, key: null },
+  { href: "/admin/module-templates", label: "Project Templates", icon: Blocks, key: null },
+  { href: "/admin/account", label: "My Account", icon: UserRound, key: null },
+];
+
 /**
  * The Main Admin Portal's own "Users & Permissions" overview (every login, its employee, role and
  * projects). In the workspace it heads the Users & Permissions group, beside App Users and Permission
  * Modules, so all three are in one place under Main Admin.
  */
-export const ADMIN_USERS_OVERVIEW_LINK: NavLink = { href: "/admin/users", label: "Users & Access Overview", icon: ShieldCheck };
+export const ADMIN_USERS_OVERVIEW_LINK: NavLink = { href: "/admin/users", label: "Overview", icon: ShieldCheck };
 
 function SectionLabel({ children, collapsed }: { children: string; collapsed: boolean }) {
   if (collapsed) return <div className="mx-2 my-1.5 border-t border-[var(--color-border)]" />;
@@ -163,7 +170,7 @@ export function Sidebar({
    * global modules first, then every project module under WORKSPACE. One sidebar; the project is
    * chosen by the tabs above the page, not by a second navigation.
    */
-  workspace?: { globalGroups: NavGroup[]; mainAdminLinks: NavLink[] } | null;
+  workspace?: { globalGroups: NavGroup[]; mainAdminLinks: NavLink[]; mainAdminTailLinks?: NavLink[] } | null;
   automationEnabled: boolean;
   automationMode: string;
   mobileOpen: boolean;
@@ -280,26 +287,32 @@ export function Sidebar({
 
         <nav aria-label="Main" className="flex min-h-0 flex-1 flex-col">
           {workspace ? (
-            <div className="px-2.5 pb-1">
+            // In the workspace the Main Admin menu is long, so it scrolls WITH the modules below it: a fixed top
+            // part left only the bottom of the sidebar scrolling.
+            <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto px-2.5 pb-6">
               <SectionLabel collapsed={collapsed}>Main Admin</SectionLabel>
               {workspace.mainAdminLinks.map((link) => (
                 <NavItem key={link.href} link={link} active={false} collapsed={collapsed} />
               ))}
               <div className="space-y-0.5">{renderGroups(workspace.globalGroups, 100)}</div>
+              {(workspace.mainAdminTailLinks ?? []).map((link) => (
+                <NavItem key={link.href} link={link} active={false} collapsed={collapsed} />
+              ))}
               <SectionLabel collapsed={collapsed}>Workspace</SectionLabel>
+              <NavItem link={{ ...OVERVIEW_LINK, label: "Project Overview" }} active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)} collapsed={collapsed} />
+              <div className="space-y-0.5 pt-2">{renderGroups(navGroups, 0)}</div>
             </div>
-          ) : null}
-          <div className="px-2.5 pb-1">
-            <NavItem
-              link={workspace ? { ...OVERVIEW_LINK, label: "Project Overview" } : OVERVIEW_LINK}
-              active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)}
-              collapsed={collapsed}
-            />
-          </div>
+          ) : (
+            <>
+              <div className="px-2.5 pb-1">
+                <NavItem link={OVERVIEW_LINK} active={isNavActive(pathname, searchParams, OVERVIEW_LINK.href)} collapsed={collapsed} />
+              </div>
 
-          <div className="scroll-quiet min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
-            {renderGroups(navGroups, 0)}
-          </div>
+              <div className="scroll-quiet min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pt-3 pb-6">
+                {renderGroups(navGroups, 0)}
+              </div>
+            </>
+          )}
         </nav>
 
         {/* Desktop-only collapse control — a floating rail toggle, the ERP-console convention,

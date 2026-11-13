@@ -16,7 +16,7 @@ export function ConnectChannelForm({ type, connectionId }: { type: ChannelType; 
   const router = useRouter();
   const [state, formAction, pending] = useActionState<ChannelActionResult, FormData>(connectionId ? updateChannelCredentialsAction : connectChannelAction, {});
   // Website chat: the addresses as typed, kept in state so a refused submit does not clear them and the
-  // normalised result ("getassist.pro → https://getassist.pro") shows before saving.
+  // normalised result ("chithii.com → https://chithii.com") shows before saving.
   const [origins, setOrigins] = useState("");
 
   useEffect(() => {

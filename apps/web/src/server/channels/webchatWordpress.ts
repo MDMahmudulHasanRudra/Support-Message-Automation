@@ -14,7 +14,7 @@ const php = (value: string) => value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
 export function wordpressPluginFiles(input: { scriptUrl: string; widgetKey: string; widgetName: string }): Array<{ name: string; data: Buffer }> {
   const main = `<?php
 /**
- * Plugin Name: Get Assist Chat
+ * Plugin Name: Chithii Chat
  * Description: Adds the "${input.widgetName.replace(/\*\//g, "")}" website chat widget to every page.
  * Version: 1.1.0
  * Requires PHP: 7.4
@@ -75,7 +75,7 @@ function getassist_chat_hidden_here() {
 }
 
 add_action('admin_menu', function () {
-    add_options_page('Get Assist Chat', 'Get Assist Chat', 'manage_options', 'getassist-chat', 'getassist_chat_settings_page');
+    add_options_page('Chithii Chat', 'Chithii Chat', 'manage_options', 'getassist-chat', 'getassist_chat_settings_page');
 });
 
 add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
@@ -89,7 +89,7 @@ function getassist_chat_settings_page() {
     }
     ?>
     <div class="wrap">
-        <h1>Get Assist Chat</h1>
+        <h1>Chithii Chat</h1>
         <form method="post" action="options.php">
             <?php settings_fields('getassist_chat'); ?>
             <table class="form-table" role="presentation">
@@ -104,14 +104,14 @@ function getassist_chat_settings_page() {
                     <th scope="row"><label for="getassist_chat_hide_paths">Hide on these pages</label></th>
                     <td>
                         <textarea id="getassist_chat_hide_paths" name="getassist_chat_hide_paths" rows="4" class="large-text code"><?php echo esc_textarea(get_option('getassist_chat_hide_paths')); ?></textarea>
-                        <p class="description">One per line: <code>/about</code> hides that page, <code>/blog/*</code> the blog and everything under it. The look, greeting and other page rules are set in Get Assist.</p>
+                        <p class="description">One per line: <code>/about</code> hides that page, <code>/blog/*</code> the blog and everything under it. The look, greeting and other page rules are set in Chithii.</p>
                     </td>
                 </tr>
                 <tr>
                     <th scope="row"><label for="getassist_chat_secret">Identity secret</label></th>
                     <td>
                         <input type="password" id="getassist_chat_secret" name="getassist_chat_secret" class="regular-text" value="<?php echo esc_attr(get_option('getassist_chat_secret')); ?>" autocomplete="off" />
-                        <p class="description">From Get Assist: Settings &rarr; Messaging Channels &rarr; this widget &rarr; Identity secret. Optional.</p>
+                        <p class="description">From Chithii: Settings &rarr; Messaging Channels &rarr; this widget &rarr; Identity secret. Optional.</p>
                     </td>
                 </tr>
                 <tr>
@@ -152,19 +152,19 @@ add_action('wp_footer', function () {
     printf('<script src="%s" data-key="%s" async></script>', esc_url(GETASSIST_CHAT_SCRIPT), esc_attr(GETASSIST_CHAT_KEY));
 }, 100);
 `;
-  const readme = `=== Get Assist Chat ===
+  const readme = `=== Chithii Chat ===
 Stable tag: 1.1.0
 Requires PHP: 7.4
 Requires at least: 5.8
 
-Adds the Get Assist website chat widget to every page.
+Adds the Chithii website chat widget to every page.
 
 == Installation ==
 1. Plugins > Add New > Upload Plugin, choose this zip, Install, Activate.
-2. Make sure this site's address is listed under the widget's "Security & domains" in Get Assist.
-3. Optional: Settings > Get Assist Chat, paste the identity secret and tick "Show logged-in customers as verified".
+2. Make sure this site's address is listed under the widget's "Security & domains" in Chithii.
+3. Optional: Settings > Chithii Chat, paste the identity secret and tick "Show logged-in customers as verified".
    WooCommerce customers' billing phone is signed too, so the team can see their orders.
-4. In Get Assist, press "Verify installation" on the widget's Installation tab.
+4. In Chithii, press "Verify installation" on the widget's Installation tab.
 
 == Changelog ==
 = 1.1.0 =

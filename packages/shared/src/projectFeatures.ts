@@ -358,7 +358,7 @@ export const PROJECT_FEATURES = [
     key: "SOCIAL_STUDIO",
     label: "Social Studio",
     description:
-      "Get Assist's own social media publishing: connect Facebook Pages and Instagram accounts, write, approve, schedule and follow posts, with a calendar, media library, campaigns, templates and AI help (SOCIAL_STUDIO.md). Nothing is published without a person's approval.",
+      "Chithii's own social media publishing: connect Facebook Pages and Instagram accounts, write, approve, schedule and follow posts, with a calendar, media library, campaigns, templates and AI help (SOCIAL_STUDIO.md). Nothing is published without a person's approval.",
     defaultEnabled: true,
     // It publishes to a business's public channels: switched on by a person, never by a plan.
     manualOnly: true,
