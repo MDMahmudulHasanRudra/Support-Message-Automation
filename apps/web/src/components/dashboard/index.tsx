@@ -367,3 +367,27 @@ export { ClosableGuide } from "./ClosableGuide";
 export function setupGuideCookie(place: string, userId: string): string {
   return `ga_setup_closed_${place}_${userId}`.replace(/[^A-Za-z0-9_-]/g, "_");
 }
+
+/** A section heading between groups of cards: both overviews use it, so they read as one product. */
+export function SectionTitle({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="mb-3 mt-8 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+      <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">{title}</h2>
+      {hint ? <p className="text-[12.5px] text-[color:var(--color-muted-foreground)]">{hint}</p> : null}
+    </div>
+  );
+}
+
+/** "9,399 minutes" as "6 days 12 hours": a length of time somebody can take in at a glance. */
+export function humanDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"}`;
+  const hours = Math.floor(m / 60);
+  if (hours < 24) {
+    const rest = m % 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}${rest ? ` ${rest} min` : ""}`;
+  }
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return `${days} day${days === 1 ? "" : "s"}${restHours ? ` ${restHours} hour${restHours === 1 ? "" : "s"}` : ""}`;
+}

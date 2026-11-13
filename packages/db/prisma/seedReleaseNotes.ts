@@ -1008,6 +1008,22 @@ const RELEASES: HistoricalRelease[] = [
     improvements: ["The setup guide fits on one row and takes less room on a phone"],
     bugFixes: [],
   },
+  {
+    version: "0.44.0",
+    title: "A fuller project dashboard",
+    summary: "Each project dashboard now shows messages in and out, your open work, and when customers write.",
+    releaseDate: "2026-11-13",
+    releaseType: "IMPROVEMENT",
+    affectedModules: ["Overview"],
+    whatsNew: [
+      "Messages received and sent on one chart",
+      "A Support desk summary: open and overdue tickets, follow-ups, contacts and payment links",
+      "When customers write: a weekday by hour chart to plan shifts around",
+      "Clear sections: Conversations and health, Your business, Performance",
+    ],
+    improvements: ["How long the worker has been silent reads as days and hours, not minutes"],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

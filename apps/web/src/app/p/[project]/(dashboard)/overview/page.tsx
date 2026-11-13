@@ -11,6 +11,7 @@ import {
   HelpCircle,
   History,
   Inbox,
+  LifeBuoy,
   ListChecks,
   MessageCircle,
   MessagesSquare,
@@ -32,7 +33,7 @@ import { countMyAttention } from "@/server/followUps";
 import { getGrantedPermissionKeys } from "@/server/permissions";
 import { cookies } from "next/headers";
 import { activeProjectId } from "@/server/projectContext";
-import { ActionList, ActivityFeed, ChartEmpty, ClosableGuide, GettingStarted, HealthList, ModuleSummary, QuickActions, setupGuideCookie, type ActionItem, type ActivityEntry, type HealthRow, type QuickAction } from "@/components/dashboard";
+import { ActionList, ActivityFeed, ChartEmpty, ClosableGuide, GettingStarted, HealthList, humanDuration, ModuleSummary, QuickActions, SectionTitle, setupGuideCookie, type ActionItem, type ActivityEntry, type HealthRow, type QuickAction } from "@/components/dashboard";
 import { CHANNEL_PRESENTATION } from "../conversations/ChannelMark";
 import { navPermissionFor } from "../navigation";
 import { requireSession } from "@/server/auth";
@@ -52,7 +53,7 @@ import {
 import type { ModuleHealthStatus } from "@/components/ui/DashboardModuleCard";
 import { getGroupsAwaitingReply } from "@/server/supportActivityReports";
 import { softCached } from "@/server/softCache";
-import { getClientOverview, getCommerceOverview, getGettingStarted, getSetupChecklist } from "@/server/moduleOverview";
+import { getClientOverview, getCommerceOverview, getDeskOverview, getGettingStarted, getSetupChecklist } from "@/server/moduleOverview";
 import {
   AreaChart,
   BarList,
@@ -62,6 +63,8 @@ import {
   DonutChart,
   StackedBar,
   formatCount,
+  Heatmap,
+  TrafficChart,
 } from "@/components/charts";
 import {
   getAccountsRoutingSummary,
@@ -84,6 +87,8 @@ import {
   getDecisionMix,
   getDeliveryOutcomes,
   getExecutiveLoad,
+  getOutgoingDaily,
+  getWeekHeat,
   getMessageLoadSeries,
   getResponseTimeSeries,
   getSupportActorMix,
@@ -206,6 +211,12 @@ export default async function OverviewPage({
     return (key === null || granted.has(key)) && pathAllowedByFeatures(href, disabledFeatures) && Boolean(link(href));
   };
   const followUps = disabledFeatures.has("FOLLOW_UPS") ? null : await countMyAttention(session, new Date(nowMs));
+  const [outgoingDaily, weekHeat, desk] = await Promise.all([
+    softCached("overview:outgoing-daily", () => getOutgoingDaily(nowMs)),
+    softCached("overview:week-heat", () => getWeekHeat(nowMs, !disabledFeatures.has("OMNICHANNEL"))),
+    getDeskOverview(session, new Date(nowMs)),
+  ]);
+  const traffic = messageLoad.daily.map((d, i) => ({ label: d.label, incoming: d.value, outgoing: outgoingDaily[i] ?? 0 }));
 
 
   const disconnectedAccounts = accountsRouting.accounts.filter((a) => a.status !== "CONNECTED");
@@ -256,7 +267,7 @@ export default async function OverviewPage({
       text:
         workerLiveness.lastHeartbeatAt === null
           ? "The worker has never checked in — nothing on this dashboard can change until it starts."
-          : `The worker has been silent for ${workerLiveness.silentForMinutes} minute(s) — reconnects, sends and every background job are stopped.`,
+          : `The worker has been silent for ${humanDuration(workerLiveness.silentForMinutes ?? 0)}. Reconnects, sends and every background job are stopped.`,
       href: "/accounts",
       linkLabel: "Check accounts",
     });
@@ -566,27 +577,28 @@ export default async function OverviewPage({
         </>
       ) : null}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
+      <SectionTitle title="Conversations and health" hint="How busy it is, whether everything is working, and what needs a person." />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
         {show("dashboard:metrics") ? (
           <ChartCard
             className="lg:col-span-2 xl:col-span-5"
             icon={TrendingUp}
             href={link("/messages?within=14d")}
-            title="Incoming messages"
-            description="Daily totals for the last 14 days."
+            title="Messages in and out"
+            description="WhatsApp messages per day, last 14 days."
             headline={
               <ChartHeadline
                 value={formatCount(messageLoad.lastSeven)}
                 delta={messageLoad.weekOverWeekPercent === null ? undefined : `${messageLoad.weekOverWeekPercent >= 0 ? "+" : ""}${messageLoad.weekOverWeekPercent}% vs prior 7 days`}
                 deltaTone={messageLoad.weekOverWeekPercent === null || messageLoad.weekOverWeekPercent === 0 ? "neutral" : messageLoad.weekOverWeekPercent > 0 ? "up" : "down"}
-                caption="last 7 days"
+                caption="received, last 7 days"
               />
             }
           >
             {messageLoad.windowTotal === 0 ? (
               <ChartEmpty text="Nothing has arrived in the last 14 days. Messages start counting as soon as a connected number receives one." href={link("/accounts")} action="Check WhatsApp numbers" />
             ) : (
-              <AreaChart data={messageLoad.daily} ariaLabel="Incoming messages per day, last 14 days" />
+              <TrafficChart data={traffic} ariaLabel="WhatsApp messages received and sent per day, last 14 days" height={168} />
             )}
           </ChartCard>
         ) : null}
@@ -631,8 +643,35 @@ export default async function OverviewPage({
         </div>
       </div>
 
-      {show("dashboard:tiles") && (clients || commerce) ? (
-        <div className="mt-4 space-y-4">
+      {show("dashboard:tiles") && (clients || commerce || desk) ? (
+        <>
+        <SectionTitle title="Your business" hint="Customers, open work and sales kept in this project." />
+        <div className="space-y-4">
+          {desk ? (
+            <ModuleSummary
+              title="Support desk"
+              icon={LifeBuoy}
+              action={desk.tickets && link("/tickets") ? { href: "/tickets", label: "View tickets" } : desk.followUps && link("/follow-ups") ? { href: "/follow-ups", label: "View follow-ups" } : undefined}
+              figures={[
+                ...(desk.tickets
+                  ? [
+                      { key: "t-open", label: "Open tickets", value: formatCount(desk.tickets.open), href: link("/tickets"), hint: desk.tickets.unassigned > 0 ? `${formatCount(desk.tickets.unassigned)} with no owner` : "Every one has an owner" },
+                      { key: "t-overdue", label: "Tickets past due", value: formatCount(desk.tickets.overdue), tone: desk.tickets.overdue > 0 ? ("danger" as const) : undefined, href: link("/tickets") },
+                    ]
+                  : []),
+                ...(desk.followUps
+                  ? [
+                      { key: "f-today", label: "Follow-ups due today", value: formatCount(desk.followUps.dueToday), href: link("/follow-ups"), hint: `${formatCount(desk.followUps.open)} open in all` },
+                      { key: "f-overdue", label: "Follow-ups overdue", value: formatCount(desk.followUps.overdue), tone: desk.followUps.overdue > 0 ? ("warning" as const) : undefined, href: link("/follow-ups") },
+                    ]
+                  : []),
+                ...(desk.contacts ? [{ key: "contacts", label: "Contacts", value: formatCount(desk.contacts.total), href: link("/contacts"), hint: `${formatCount(desk.contacts.thisWeek)} added this week` }] : []),
+                ...(desk.payments
+                  ? [{ key: "pay", label: "Payment links waiting", value: formatCount(desk.payments.awaiting), tone: desk.payments.awaiting > 0 ? ("warning" as const) : undefined, href: link("/payments"), hint: `${formatCount(desk.payments.paidThisWeek)} paid this week` }]
+                  : []),
+              ]}
+            />
+          ) : null}
           {clients && link("/clients") ? (
             clients.total === 0 ? (
               <ChartEmpty text="No clients yet. Add them one by one or import a spreadsheet, and renewals and dues will show here." href="/clients" action="Open Clients" />
@@ -686,14 +725,12 @@ export default async function OverviewPage({
             />
           ) : null}
         </div>
+        </>
       ) : null}
 
       {show("dashboard:metrics") ? (
-        <section className="mt-8" aria-label="Performance">
-          <div className="mb-3">
-            <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">Performance</h2>
-            <p className="mt-0.5 text-[12.5px] text-[color:var(--color-muted-foreground)]">Live figures, computed on every visit. Days are Asia/Dhaka days.</p>
-          </div>
+        <section aria-label="Performance">
+          <SectionTitle title="Performance" hint="Live figures, computed on every visit. Days are Asia/Dhaka days." />
           {/* Fixed pairs, one per row: a wide chart beside the narrow card answering the same kind of question. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <ChartCard
@@ -777,6 +814,16 @@ export default async function OverviewPage({
                 <BarList items={executiveLoad.people} emptyMessage="No support activity in the last 7 days." />
               </ChartCard>
             ) : null}
+
+            <ChartCard
+              className="lg:col-span-3"
+              icon={CalendarClock}
+              title="When customers write"
+              description="Customer messages by weekday and hour (Dhaka time), last 4 weeks. Darker means busier: plan shifts around it."
+              headline={weekHeat.busiestLabel ? <ChartHeadline value={weekHeat.busiestLabel} caption="busiest hour" /> : undefined}
+            >
+              {weekHeat.total === 0 ? <ChartEmpty text="No customer messages in the last 4 weeks yet." /> : <Heatmap grid={weekHeat.grid} unitLabel="messages" ariaLabel="Customer messages by weekday and hour, last 4 weeks" />}
+            </ChartCard>
           </div>
         </section>
       ) : null}

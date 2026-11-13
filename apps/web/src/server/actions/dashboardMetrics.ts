@@ -465,3 +465,67 @@ export async function getChannelMix(nowMs: number, tints: Record<string, { label
   const slices = rows.filter((r) => r.value > 0).sort((a, b) => b.value - a.value).map((r) => ({ key: r.key, label: tints[r.key]?.label ?? r.key, value: r.value, color: tints[r.key]?.color ?? "var(--chart-4)" }));
   return { slices, total: slices.reduce((sum, s) => sum + s.value, 0) };
 }
+
+/**
+ * What went OUT per Dhaka day over the same fourteen days as the incoming series, so the Overview's first
+ * chart can draw both on one scale. Each message once, however many of our numbers stored a copy.
+ */
+export async function getOutgoingDaily(nowMs: number): Promise<number[]> {
+  const todayStartMs = getDhakaDayRange(new Date(nowMs)).start.getTime();
+  const dayWindowStartMs = todayStartMs - (VOLUME_DAYS - 1) * DAY_MS;
+  const buckets = await prisma.$queryRaw<Array<{ bucketStart: Date; messageCount: bigint }>>`
+    SELECT date_trunc('hour', m."timestampWa") AS "bucketStart", COUNT(DISTINCT (m."chatId", ${messageKeySql()})) AS "messageCount"
+    FROM "Message" m
+    WHERE m."direction" = 'OUTGOING'::"MessageDirection"
+      AND m."projectId" = ${await activeProjectId()}
+      AND m."timestampWa" >= ${new Date(dayWindowStartMs)}
+    GROUP BY 1
+  `;
+  const daily = Array<number>(VOLUME_DAYS).fill(0);
+  for (const bucket of buckets) {
+    const dayIndex = Math.floor((bucket.bucketStart.getTime() - dayWindowStartMs) / DAY_MS);
+    if (dayIndex >= 0 && dayIndex < VOLUME_DAYS) daily[dayIndex]! += Number(bucket.messageCount);
+  }
+  return daily;
+}
+
+const HEAT_DAYS = 28;
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/**
+ * Customer messages by weekday and hour (Dhaka time) over four weeks: when to have people on. WhatsApp and,
+ * when the channels are on, every other channel. Counts stored rows, so two of our numbers in one group
+ * count a message twice here; it shows the shape of the week, and no figure elsewhere is derived from it.
+ */
+export async function getWeekHeat(nowMs: number, includeChannels: boolean) {
+  const since = new Date(nowMs - HEAT_DAYS * DAY_MS);
+  const projectId = await activeProjectId();
+  const [whatsapp, channels] = await Promise.all([
+    prisma.$queryRaw<Array<{ dow: number; hour: number; count: bigint }>>`
+      SELECT extract(dow FROM (m."timestampWa" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'))::int AS dow,
+             extract(hour FROM (m."timestampWa" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'))::int AS hour, COUNT(*)::bigint AS count
+      FROM "Message" m
+      WHERE m."direction" = 'INCOMING'::"MessageDirection" AND m."isFromTeamMember" = false
+        AND m."projectId" = ${projectId} AND m."timestampWa" >= ${since}
+      GROUP BY 1, 2`,
+    includeChannels
+      ? prisma.$queryRaw<Array<{ dow: number; hour: number; count: bigint }>>`
+          SELECT extract(dow FROM (c."occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'))::int AS dow,
+                 extract(hour FROM (c."occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Dhaka'))::int AS hour, COUNT(*)::bigint AS count
+          FROM "ChannelMessage" c
+          WHERE c."direction" = 'INBOUND' AND c."projectId" = ${projectId} AND c."occurredAt" >= ${since}
+          GROUP BY 1, 2`
+      : [],
+  ]);
+  const grid = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
+  let total = 0;
+  let busiest: { dow: number; hour: number; value: number } | null = null;
+  for (const r of [...whatsapp, ...channels]) {
+    if (r.dow < 0 || r.dow > 6 || r.hour < 0 || r.hour > 23) continue;
+    grid[r.dow]![r.hour]! += Number(r.count);
+    total += Number(r.count);
+  }
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) if (grid[d]![h]! > (busiest?.value ?? 0)) busiest = { dow: d, hour: h, value: grid[d]![h]! };
+  const hourLabel = (h: number) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? "AM" : "PM"}`;
+  return { grid, total, busiestLabel: busiest ? `${WEEKDAYS[busiest.dow]} ${hourLabel(busiest.hour)}` : null };
+}

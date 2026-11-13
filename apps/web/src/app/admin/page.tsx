@@ -35,7 +35,7 @@ import {
 import { PROJECT_STATUS_LABELS, type ProjectStatusValue } from "@support-automation/shared";
 import { Badge, ButtonLink, Card, HeroKpi, PageHeader, Sparkline, StatTile, Table, Td, Th } from "@/components/ui";
 import { BarList, ChartCard, ChartHeadline, DonutChart, formatCount, Heatmap, StackedBar, TrafficChart } from "@/components/charts";
-import { ActionList, ActivityFeed, ChartEmpty, ClosableGuide, GettingStarted, QuickActions, setupGuideCookie, type ActionItem, type ActivityEntry, type QuickAction, type SetupStep } from "@/components/dashboard";
+import { ActionList, ActivityFeed, ChartEmpty, ClosableGuide, GettingStarted, QuickActions, SectionTitle, setupGuideCookie, type ActionItem, type ActivityEntry, type QuickAction, type SetupStep } from "@/components/dashboard";
 import { combineKpis, getProjectSummaries, requireMainAdminPage, type ProjectSummary } from "@/server/mainAdmin";
 import { getAdminActivity, getAdminInsights, getAdminPeople } from "@/server/mainAdminInsights";
 import { getGrantedPermissionKeys } from "@/server/permissions";
@@ -79,15 +79,6 @@ function healthOf(project: ProjectSummary): { label: string; color: "green" | "y
 }
 
 const ACTIVITY_ICON: Record<string, LucideIcon> = { projects: FolderKanban, users: UserCog, configuration: Building2, permissions: ShieldCheck, branding: Palette };
-
-function SectionTitle({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="mb-3 mt-8 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-      <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">{title}</h2>
-      {hint ? <p className="text-[12.5px] text-[color:var(--color-muted-foreground)]">{hint}</p> : null}
-    </div>
-  );
-}
 
 /**
  * Main Admin Dashboard (MULTI_PROJECT_PLAN.md §8; the Premium Tide Board, apps/web/DESIGN.md): this customer's
