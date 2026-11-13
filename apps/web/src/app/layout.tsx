@@ -11,6 +11,7 @@ import { accentStyleSheet } from "@/lib/branding";
 import { getBranding } from "@/server/branding";
 import { getSession } from "@/server/auth";
 import { PALETTE_COOKIE, resolvePalette } from "@/lib/themes";
+import { PaletteCookieSync } from "@/components/theme/PaletteCookieSync";
 import "./globals.css";
 
 // Inter (headline/body) + JetBrains Mono (labels, tabular data) — the console's
@@ -100,6 +101,7 @@ export default async function RootLayout({
           </Suspense>
           <ToastProvider>{children}</ToastProvider>
           <ServiceWorkerRegistrar />
+          {session && !session.support ? <PaletteCookieSync palette={palette} /> : null}
         </BrandingProvider>
       </body>
     </html>
