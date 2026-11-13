@@ -1,5 +1,6 @@
 "use client";
 
+import { TypingNotice } from "../inbox/ConversationPresence";
 import { ArrowRight, SendHorizontal, Smartphone } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useActionState, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -238,6 +239,8 @@ export function Composer({
         <strong className="font-semibold text-[color:var(--color-foreground)]">{accountLabel}</strong>
         {accountPhone ? <span className="tabular">· +{accountPhone.replace(/^\+/, "")}</span> : null}
       </p>
+
+      <TypingNotice />
 
       <form ref={formRef} action={formAction} className="flex items-end gap-2">
         <label htmlFor="chat-body" className="sr-only">

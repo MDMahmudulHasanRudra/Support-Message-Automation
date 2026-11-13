@@ -19,7 +19,18 @@ import { refreshWhatsAppOperations, useWhatsAppOperations } from "./operationsSt
  *
  * It never owns or drives a job. Closing it, navigating or refreshing changes nothing about the work.
  */
-export function WhatsAppJobCenter({ projectSlug, besideAiChat, overInbox = false }: { projectSlug: string; besideAiChat: boolean; overInbox?: boolean }) {
+export function WhatsAppJobCenter({
+  projectSlug,
+  besideAiChat = false,
+  overInbox = false,
+  placement = "floating",
+}: {
+  projectSlug: string;
+  besideAiChat?: boolean;
+  overInbox?: boolean;
+  /** "header": a small pill in the top bar, its list opening under it, so nothing floats over a page. */
+  placement?: "floating" | "header";
+}) {
   const { ops } = useWhatsAppOperations(projectSlug);
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
@@ -45,14 +56,15 @@ export function WhatsAppJobCenter({ projectSlug, besideAiChat, overInbox = false
   const leadPercent = lead && lead.total > 0 ? Math.floor((lead.processed / lead.total) * 100) : null;
   // Beside the AI assistant's button rather than on top of it.
   // Over the inbox it sits on the conversation list's corner, never on the composer and its Send button.
-  const right = overInbox ? "lg:left-[calc(var(--sidebar-width-collapsed)+0.75rem)] right-6 lg:right-auto" : besideAiChat ? "right-[5.25rem]" : "right-6";
+  const inHeader = placement === "header";
+  const right = inHeader ? "right-3 sm:right-4" : overInbox ? "lg:left-[calc(var(--sidebar-width-collapsed)+0.75rem)] right-6 lg:right-auto" : besideAiChat ? "right-[5.25rem]" : "right-6";
 
   return (
     <>
       {open ? (
         <section
           aria-label="WhatsApp operations"
-          className={`animate-scale-in fixed bottom-20 left-4 z-[var(--z-floating)] flex max-h-[70vh] origin-bottom-right flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] sm:left-auto sm:w-[380px] ${right}`}
+          className={`animate-scale-in fixed ${inHeader ? "top-14 origin-top-right" : "bottom-20 origin-bottom-right"} left-4 z-[var(--z-floating)] flex max-h-[70vh] flex-col overflow-hidden rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-xl)] sm:left-auto sm:w-[380px] ${right}`}
         >
           <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
             <div>
@@ -82,7 +94,12 @@ export function WhatsAppJobCenter({ projectSlug, besideAiChat, overInbox = false
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-label={label}
-        className={`fixed bottom-6 z-[var(--z-floating)] flex h-12 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] pr-4 pl-3.5 text-[13px] font-medium text-[color:var(--color-foreground)] shadow-[var(--shadow-lg)] transition-[box-shadow,transform] duration-[var(--duration-base)] hover:shadow-[var(--shadow-xl)] active:scale-[0.98] ${right}`}
+        title={label}
+        className={
+          inHeader
+            ? "flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-[var(--color-border)] px-3 text-[12.5px] font-medium text-[color:var(--color-foreground)] transition-colors hover:bg-white/[0.08]"
+            : `fixed bottom-6 z-[var(--z-floating)] flex h-12 cursor-pointer items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] pr-4 pl-3.5 text-[13px] font-medium text-[color:var(--color-foreground)] shadow-[var(--shadow-lg)] transition-[box-shadow,transform] duration-[var(--duration-base)] hover:shadow-[var(--shadow-xl)] active:scale-[0.98] ${right}`
+        }
       >
         {working ? (
           <Loader2 className="size-4 animate-spin text-[color:var(--color-primary)]" aria-hidden />

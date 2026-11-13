@@ -84,3 +84,18 @@ export function togglePanel() {
   if (isDesktopPanel()) writePanelCollapsed(!readPanelCollapsed());
   else setPanelSheetOpen(!sheetOpen);
 }
+
+// Who else has this conversation open (Inbox V3 presence). The panel's heartbeat publishes it, and the reply
+// box shows "Rahim is typing…" right above where the answer is written, so two people do not answer one chat.
+export type PresencePeerInfo = { userId: string; name: string; typing: boolean };
+const NO_PEERS: PresencePeerInfo[] = [];
+let peersPublished: PresencePeerInfo[] = NO_PEERS;
+export function publishPresencePeers(peers: PresencePeerInfo[]) {
+  const next = peers.length ? peers : NO_PEERS;
+  if (JSON.stringify(next) === JSON.stringify(peersPublished)) return;
+  peersPublished = next;
+  emit();
+}
+export function usePresencePeers(): PresencePeerInfo[] {
+  return useSyncExternalStore(subscribe, () => peersPublished, () => NO_PEERS);
+}

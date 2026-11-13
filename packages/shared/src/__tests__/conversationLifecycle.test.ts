@@ -67,3 +67,14 @@ describe("snooze, channel storage and conversation type", () => {
     expect(whatsAppConversationType("status@broadcast")).toBeNull();
   });
 });
+
+describe("presenceKey", () => {
+  it("is one key for a WhatsApp group whichever of our numbers opened it, and per number for a personal chat", async () => {
+    const { presenceKey } = await import("../conversationLifecycle");
+    const group = "120363000000000001@g.us";
+    expect(presenceKey({ kind: "whatsapp", accountId: "a1", chatId: group })).toBe(presenceKey({ kind: "whatsapp", accountId: "a2", chatId: group }));
+    const person = "8801700000000@c.us";
+    expect(presenceKey({ kind: "whatsapp", accountId: "a1", chatId: person })).not.toBe(presenceKey({ kind: "whatsapp", accountId: "a2", chatId: person }));
+    expect(presenceKey({ kind: "channel", conversationId: "c1" })).toBe("ch:c1");
+  });
+});
