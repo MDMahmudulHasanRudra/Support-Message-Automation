@@ -1,5 +1,6 @@
 "use client";
 
+import { TypingNotice } from "../../inbox/ConversationPresence";
 import { ArrowRight, AtSign, CornerUpLeft, SendHorizontal, Smartphone, Smile, X } from "lucide-react";
 import Link from "@/components/ProjectLink";
 import { useContext, useActionState, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -325,6 +326,8 @@ export function ComposerV2({
           A quoted reply cannot also tag people on this WhatsApp connection. Remove the quote or the tags to send.
         </p>
       ) : null}
+
+      <TypingNotice />
 
       <form ref={formRef} action={formAction} className="flex items-end gap-1.5 sm:gap-2">
         <label htmlFor="chat-body-v2" className="sr-only">

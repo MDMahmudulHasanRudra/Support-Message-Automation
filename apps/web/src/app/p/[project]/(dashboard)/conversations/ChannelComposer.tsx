@@ -1,5 +1,6 @@
 "use client";
 
+import { TypingNotice } from "../inbox/ConversationPresence";
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { registerComposer } from "@/lib/composerBridge";
 import { ImagePlus, Lock, SendHorizontal, Smile, X } from "lucide-react";
@@ -180,6 +181,7 @@ export function ChannelComposer({
         send();
       }}
     >
+      <TypingNotice className="pt-1" />
       {humanAgentReply ? (
         <p className="mb-2 rounded-[var(--radius-sm)] bg-[var(--color-info-bg)] px-2.5 py-1.5 text-[11.5px] text-[color:var(--color-info-fg)]">
           More than 24 hours have passed, so this reply goes out tagged as a person&apos;s (Meta&apos;s Human Agent tag). Only a person may send it.

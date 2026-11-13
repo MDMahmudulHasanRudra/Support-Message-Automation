@@ -8,7 +8,7 @@ import Link, { useProjectHref } from "@/components/ProjectLink";
 import { useNavHighlight } from "@/lib/navigationPending";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { OVERVIEW_LINK, isGroupActive, isLinkActive, isNavActive, type NavGroup, type NavLink } from "./navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -181,14 +181,10 @@ export function Sidebar({
   const pathname = stripProjectPrefix(usePathname());
   const searchParams = useSearchParams();
   const storedCollapsed = useSyncExternalStore(subscribeCollapse, collapseSnapshot, collapseServerSnapshot);
-  // The inbox needs the width for the conversation, so the navigation stays icons there until somebody opens it.
-  const inInbox = pathname === "/chat" || pathname.startsWith("/chat/") || pathname === "/conversations" || pathname.startsWith("/conversations/");
-  const [inboxNavOpen, setInboxNavOpen] = useState(false);
-  const collapsed = !mobileOpen && (inInbox ? !inboxNavOpen : storedCollapsed);
-  const toggleCollapsed = () => {
-    if (inInbox) setInboxNavOpen((v) => !v);
-    else writeCollapse(!collapseSnapshot());
-  };
+  // Open or icons-only is the person's own choice, everywhere: the conversations no longer fold it by themselves
+  // (owner, 13 Nov 2026). The collapse button is the only control, and it is remembered in this browser.
+  const collapsed = !mobileOpen && storedCollapsed;
+  const toggleCollapsed = () => writeCollapse(!collapseSnapshot());
   const openGroupsRaw = useSyncExternalStore(subscribeOpenGroups, openGroupsSnapshot, openGroupsServerSnapshot);
   const openGroups = useMemo(() => parseOpenGroups(openGroupsRaw), [openGroupsRaw]);
 

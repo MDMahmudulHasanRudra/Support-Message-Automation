@@ -219,6 +219,10 @@ export function DashboardShell({
         {/* My overdue + due-today follow-ups (FOLLOW_UPS.md); in-app only, renders nothing at zero. */}
         {granted.has("messages.view") && !featuresOff.has("FOLLOW_UPS") ? <FollowUpBadge /> : null}
 
+        {/* Long-running WhatsApp jobs (Add Number to Groups, Groups Admin Maker) as a small pill in the top bar,
+            never floating over a page, and not shown at all in the conversations, where the reply box needs the room. */}
+        {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") && !isChatPage ? <WhatsAppJobCenter projectSlug={project.slug} placement="header" /> : null}
+
         <ShellUserMenu username={username} role={granted.has("projects.manage") ? "Main Admin" : undefined} onLogout={onLogout} avatarUrl={avatarUrl} />
       </header>
 
@@ -314,11 +318,7 @@ export function DashboardShell({
       ) : null}
       {/* Long-running WhatsApp jobs stay visible on every page (Add Number to Groups, Groups Admin
           Maker). Offered to whoever may see those modules; the reader refuses everyone else anyway. */}
-      {granted.has("bulk_messaging.view") && !featuresOff.has("BULK_MESSAGING") ? (
-        <div className={isChatPage ? "max-sm:hidden" : undefined}>
-          <WhatsAppJobCenter projectSlug={project.slug} besideAiChat={granted.has("ai_learning.view")} overInbox={isChatPage} />
-        </div>
-      ) : null}
+
     </div>
     </WorkspaceModeContext.Provider>
   );

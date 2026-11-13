@@ -5,6 +5,7 @@ import {
   CONVERSATION_STATUSES,
   decideTransition,
   DEFAULT_LIFECYCLE_POLICY,
+  presenceKey,
   snoozeHasEnded,
   statusAfterCustomerMessage,
   whatsAppConversationType,
@@ -65,5 +66,15 @@ describe("snooze, channel storage and conversation type", () => {
     expect(whatsAppConversationType("8801711000000@c.us")).toBe("PERSONAL");
     expect(whatsAppConversationType("12345678901234@lid")).toBe("PERSONAL");
     expect(whatsAppConversationType("status@broadcast")).toBeNull();
+  });
+});
+
+describe("presenceKey", () => {
+  it("is one key for a WhatsApp group whichever of our numbers opened it, and per number for a personal chat", () => {
+    const group = "120363000000000001@g.us";
+    expect(presenceKey({ kind: "whatsapp", accountId: "a1", chatId: group })).toBe(presenceKey({ kind: "whatsapp", accountId: "a2", chatId: group }));
+    const person = "8801700000000@c.us";
+    expect(presenceKey({ kind: "whatsapp", accountId: "a1", chatId: person })).not.toBe(presenceKey({ kind: "whatsapp", accountId: "a2", chatId: person }));
+    expect(presenceKey({ kind: "channel", conversationId: "c1" })).toBe("ch:c1");
   });
 });

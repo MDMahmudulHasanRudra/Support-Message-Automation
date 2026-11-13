@@ -107,12 +107,17 @@ export function whatsAppConversationType(chatId: string): "GROUP" | "PERSONAL" |
   return null;
 }
 
-/** Inbox V3 agent presence (V3-05): one key per conversation, the same in every reader and writer. */
+/**
+ * Inbox V3 agent presence (V3-05): one key per conversation, the same in every reader and writer. A WhatsApp GROUP is
+ * one key whichever of our numbers it is opened on, so two people answering the same group from two numbers still
+ * see each other typing; a personal chat stays per number (the same customer on two numbers is two chats).
+ */
 export function presenceKey(ref: { kind: "whatsapp"; accountId: string; chatId: string } | { kind: "channel"; conversationId: string }): string {
-  return ref.kind === "whatsapp" ? `wa:${ref.accountId}:${ref.chatId}` : `ch:${ref.conversationId}`;
+  if (ref.kind === "channel") return `ch:${ref.conversationId}`;
+  return ref.chatId.endsWith("@g.us") ? `wa:group:${ref.chatId}` : `wa:${ref.accountId}:${ref.chatId}`;
 }
 /** Someone counts as viewing for this long after their last heartbeat, and as typing for this long after a keystroke. */
 export const PRESENCE_VIEWING_MS = 30_000;
 export const PRESENCE_TYPING_MS = 8_000;
 /** How often an open conversation sends its heartbeat. Well inside the viewing window, so a live viewer never flickers. */
-export const PRESENCE_HEARTBEAT_MS = 10_000;
+export const PRESENCE_HEARTBEAT_MS = 5_000;
