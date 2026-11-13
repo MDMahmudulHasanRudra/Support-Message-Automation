@@ -2,7 +2,7 @@ import { SOCIAL_PLATFORMS, isSocialPlatform, type SocialPlatform } from "./socia
 
 /**
  * Social Studio's AI Content Studio (SOCIAL_STUDIO.md §AI): the pure half. It describes a request, builds
- * the prompt and reads the answer. The worker sends it through Get Assist's existing AI path —
+ * the prompt and reads the answer. The worker sends it through Chithii's existing AI path —
  * `resolveAiClient("RESPONSE")`, the project's own providers, credentials and usage — so there is no
  * second AI system.
  *

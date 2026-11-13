@@ -18,7 +18,7 @@ export const metadata = { title: "Open WhatsApp" };
  *   A. a linked personal conversation → straight into this project's WhatsApp Chat, where the ordinary composer replies;
  *   B. an existing conversation with the client's exact number on one of this project's accounts, not linked to anyone
  *      → offered to an admin to confirm and link (never linked automatically; an ambiguous match is not offered);
- *   C. a usable number and no conversation → WhatsApp's own click-to-chat, clearly external: Get Assist does not start
+ *   C. a usable number and no conversation → WhatsApp's own click-to-chat, clearly external: Chithii does not start
  *      conversations, and opening the link sends nothing;
  *   D. no usable number → say so, and where to fix it.
  */
@@ -97,7 +97,7 @@ export default async function ClientWhatsAppPage({ params }: { params: Promise<{
             <ExternalLink className="size-4" aria-hidden /> Open in WhatsApp
           </h2>
           <p className="text-sm text-[color:var(--color-muted-foreground)]">
-            {match || free.length ? "Or open" : "No conversation with this client is in Get Assist yet. Open"} WhatsApp on this device at +{route.clickToChatNumber}. This uses WhatsApp&apos;s own click-to-chat link: it opens WhatsApp, sends nothing, and the chat is not part of Get Assist until the client writes to one of this project&apos;s numbers.
+            {match || free.length ? "Or open" : "No conversation with this client is in Chithii yet. Open"} WhatsApp on this device at +{route.clickToChatNumber}. This uses WhatsApp&apos;s own click-to-chat link: it opens WhatsApp, sends nothing, and the chat is not part of Chithii until the client writes to one of this project&apos;s numbers.
           </p>
           <a href={external} target="_blank" rel="noopener noreferrer" className="inline-flex h-9.5 items-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-primary)] px-4 text-sm font-medium text-[var(--color-on-primary)]">
             <ExternalLink className="size-4" aria-hidden /> Open WhatsApp

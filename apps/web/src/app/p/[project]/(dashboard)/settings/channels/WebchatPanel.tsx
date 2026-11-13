@@ -1049,7 +1049,7 @@ export function OriginsEditor({ value, onChange }: { value: string; onChange: (v
   const offers = [...new Set(origins.map(wwwVariant).filter((o): o is string => Boolean(o) && !origins.includes(o as string)))];
   return (
     <div className="space-y-2 text-[12.5px]">
-      <Field label="Websites it runs on" htmlFor="origins" required hint="One per line. A domain like getassist.pro is enough — it is read as https://getassist.pro. The widget refuses every other site.">
+      <Field label="Websites it runs on" htmlFor="origins" required hint="One per line. A domain like chithii.com is enough — it is read as https://getassist.pro. The widget refuses every other site.">
         <textarea id="origins" rows={3} value={value} onChange={(e) => onChange(e.target.value)} className={`${inputClass} h-auto py-2 font-mono text-[12px]`} />
       </Field>
       {read.length ? (

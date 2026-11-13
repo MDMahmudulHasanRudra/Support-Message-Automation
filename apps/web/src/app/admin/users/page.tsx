@@ -1,14 +1,15 @@
 import NextLink from "next/link";
-import { Plus } from "lucide-react";
+import { KeyRound, Plus, ShieldCheck, UserCheck, UserX, Users } from "lucide-react";
 import { PROJECT_ACCESS_LEVEL_LABELS } from "@support-automation/shared";
 import { platformPrisma } from "@/server/db";
 import { requireAdminSection } from "@/server/mainAdmin";
 import { countAdminUsers, listAdminUsers } from "@/server/adminUsers";
-import { Alert, Badge, ButtonLink, PageHeader, Pagination, SearchField, Td, Th } from "@/components/ui";
+import { Alert, Badge, ButtonLink, PageHeader, Pagination, SearchField, StatTile, Td, Th } from "@/components/ui";
+import { formatDate } from "@/lib/date";
 import { LIST_SCROLL_BOX } from "@/lib/listPageSizes";
 import { ADMIN_LIST_DEFAULT_SIZE, ADMIN_LIST_PAGE_SIZES, listHref, readListPaging, SCROLL_TABLE_CLASS } from "../listPaging";
 
-export const metadata = { title: "Users & Permissions" };
+export const metadata = { title: "Users & Access" };
 
 /**
  * Main Admin → Users & Permissions (MAIN_ADMIN_WORKSPACE.md §5): every login on the installation with
@@ -22,7 +23,7 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
   if (!allowed) {
     return (
       <div>
-        <PageHeader title="Users & Permissions" />
+        <PageHeader title="Users & Access" />
         <Alert tone="warning" title="Your role does not include App Users">
           It needs View App Users. An administrator can add it to your role on Permission Modules.
         </Alert>
@@ -31,11 +32,15 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
   }
   const total = await countAdminUsers(platformPrisma, q);
   const { page, size, skip } = readListPaging(params, total);
-  const [users, canCreate, canPermissions, projectCount] = await Promise.all([
+  const [users, canCreate, canPermissions, projectCount, everyone, active, twoStep, roles] = await Promise.all([
     listAdminUsers(platformPrisma, q, { skip, take: size }),
     can("users.create"),
     can("permissions.view"),
     platformPrisma.project.count({ where: { status: { not: "ARCHIVED" } } }),
+    platformPrisma.user.count(),
+    platformPrisma.user.count({ where: { isActive: true } }),
+    platformPrisma.user.count({ where: { isActive: true, mfaEnabledAt: { not: null } } }),
+    platformPrisma.permissionModule.count(),
   ]);
   const term = q.trim();
   const href = (next: { page?: number; size?: number }) => listHref("/admin/users", { q: term, page: next.page, size: next.size ?? size });
@@ -43,13 +48,14 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
   return (
     <div>
       <PageHeader
-        title="Users & Permissions"
-        description="Each login, the employee it belongs to, its role (what it may do — the same in every project) and the projects it may enter, with a level that can only narrow the role."
+        title="Users & Access"
+        description="Every login, the employee behind it, its role (what it may do, the same in every project) and the projects it may enter."
         actions={
           <div className="flex gap-2">
             {canPermissions ? (
               <ButtonLink href="/admin/workspace?to=%2Fpermissions" variant="secondary" size="md">
-                Roles (Permission Modules)
+                <KeyRound className="size-4" aria-hidden />
+                Roles & Permissions
               </ButtonLink>
             ) : null}
             {canCreate ? (
@@ -61,6 +67,12 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
           </div>
         }
       />
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile icon={Users} label="Logins" value={everyone} hint={`${active} can sign in`} />
+        <StatTile icon={everyone - active > 0 ? UserX : UserCheck} label="Deactivated" value={everyone - active} tone={everyone - active > 0 ? "warning" : "neutral"} hint="Kept with their history" />
+        <StatTile icon={ShieldCheck} label="Two-step sign-in" value={`${twoStep} of ${active}`} tone={active > 0 && twoStep === active ? "success" : "neutral"} hint="Active logins with a code app" />
+        <StatTile icon={KeyRound} label="Roles" value={roles} href={canPermissions ? "/admin/workspace?to=%2Fpermissions" : undefined} hint="What each login may do" />
+      </div>
       <div className="mb-4">
         <SearchField name="q" defaultValue={q} placeholder="Search username, name or email" preserve={{ size: size === ADMIN_LIST_DEFAULT_SIZE ? undefined : String(size) }} width="w-72 max-w-full" />
       </div>
@@ -72,13 +84,14 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
             <Th>Employee</Th>
             <Th>Role</Th>
             <Th>Projects</Th>
+            <Th>Last sign-in</Th>
             <Th>Status</Th>
           </tr>
         </thead>
         <tbody>
           {users.length === 0 ? (
             <tr>
-              <Td colSpan={5} className="py-8 text-center text-[13px] text-[color:var(--color-muted-foreground)]">
+              <Td colSpan={6} className="py-8 text-center text-[13px] text-[color:var(--color-muted-foreground)]">
                 {term ? `No user matches “${term}”. Check the spelling, or search by username, name or email.` : "There are no users yet."}
               </Td>
             </tr>
@@ -86,10 +99,17 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
           {users.map((user) => (
             <tr key={user.id} data-user={user.username}>
               <Td>
-                <NextLink href={`/admin/users/${user.id}`} className="font-medium text-[color:var(--color-foreground)] hover:underline">
-                  {user.name}
-                </NextLink>
-                <div className="font-mono text-xs text-[color:var(--color-muted-foreground)]">@{user.username}</div>
+                <div className="flex items-center gap-2.5">
+                  <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent-bg)] text-[12px] font-semibold text-[color:var(--color-accent-fg)]">
+                    {(user.name || user.username).trim().charAt(0).toUpperCase()}
+                  </span>
+                  <span className="min-w-0">
+                    <NextLink href={`/admin/users/${user.id}`} className="font-medium text-[color:var(--color-foreground)] hover:underline">
+                      {user.name}
+                    </NextLink>
+                    <span className="block font-mono text-xs text-[color:var(--color-muted-foreground)]">@{user.username}</span>
+                  </span>
+                </div>
               </Td>
               <Td>
                 {user.employee ? (
@@ -123,6 +143,7 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
                   </div>
                 )}
               </Td>
+              <Td className="whitespace-nowrap text-[13px] text-[color:var(--color-muted-foreground)]">{user.lastLoginAt ? formatDate(user.lastLoginAt) : "Never"}</Td>
               <Td>{user.isActive ? <Badge color="green">Active</Badge> : <Badge color="gray">Deactivated</Badge>}</Td>
             </tr>
           ))}

@@ -32,9 +32,9 @@ import { clientEmails, clientWhatsAppRoute, emailChannelReady, readMessageContex
  *
  *   - Choosing or previewing a template sends NOTHING (`clients.view`).
  *   - WhatsApp, Messenger and Instagram wording is PREPARED: copied, or opened in WhatsApp's own click-to-chat on
- *     the person's device. It is recorded as prepared — never as sent — and Get Assist's WhatsApp engine is not
+ *     the person's device. It is recorded as prepared — never as sent — and Chithii's WhatsApp engine is not
  *     involved at all (`clients.send_messages`).
- *   - Email is the one channel Get Assist sends through, via the existing EmailOutbox queue and worker:
+ *   - Email is the one channel Chithii sends through, via the existing EmailOutbox queue and worker:
  *     one message on a person's press (`clients.send_messages`), or a bulk batch that ANOTHER person approves
  *     within 24 hours (`clients.approve_messages`, CLIENT_CENTER_PLAN.md decisions 8, 9, 11).
  *   - Opted-out clients are never emailed; a bulk email needs recorded consent; the worker re-checks the opt-out
@@ -142,7 +142,7 @@ async function templateRef(templateId: string | null): Promise<{ id: string; ver
 
 /**
  * Records that a person prepared a WhatsApp / Messenger / Instagram message (copied it, or opened WhatsApp's
- * click-to-chat). It is recorded as PREPARED: Get Assist did not send it and does not claim it was sent.
+ * click-to-chat). It is recorded as PREPARED: Chithii did not send it and does not claim it was sent.
  */
 export async function recordPreparedMessage(input: OneMessageInput & { channel: string }): Promise<MessageActionResult> {
   const granted = await checkPermission("clients.send_messages");
@@ -174,10 +174,10 @@ export async function recordPreparedMessage(input: OneMessageInput & { channel: 
       },
     });
     const where = channel === "COPY" ? "copied" : `prepared for ${channel === "WHATSAPP" ? "WhatsApp" : channel === "MESSENGER" ? "Messenger" : "Instagram"}`;
-    await recordClientActivity(tx, input.clientId, granted.session.userId, { type: "MESSAGE_PREPARED", summary: `Message ${where} (not sent by Get Assist)` });
+    await recordClientActivity(tx, input.clientId, granted.session.userId, { type: "MESSAGE_PREPARED", summary: `Message ${where} (not sent by Chithii)` });
   });
   await refreshClient(input.clientId);
-  return { ok: true, message: "Recorded as prepared. Get Assist did not send it." };
+  return { ok: true, message: "Recorded as prepared. Chithii did not send it." };
 }
 
 /**

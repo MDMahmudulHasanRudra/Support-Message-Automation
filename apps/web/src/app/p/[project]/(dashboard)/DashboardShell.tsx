@@ -30,7 +30,8 @@ import {
 } from "./navigation";
 import { SubNavTabs } from "./SubNavTabs";
 import { SettingsNav } from "./SettingsNav";
-import { ADMIN_USERS_OVERVIEW_LINK, MAIN_ADMIN_LINKS, Sidebar } from "./Sidebar";
+import { ADMIN_USERS_OVERVIEW_LINK, MAIN_ADMIN_LINKS, MAIN_ADMIN_TAIL_LINKS, Sidebar } from "./Sidebar";
+import { UsersAccessTabs, usersAccessTabFor } from "@/components/shell/UsersAccessTabs";
 import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
@@ -238,6 +239,7 @@ export function DashboardShell({
                   g.id === "users-permissions" && granted.has("users.view") ? { ...g, links: [ADMIN_USERS_OVERVIEW_LINK, ...g.links] } : g,
                 ),
                 mainAdminLinks: MAIN_ADMIN_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
+                mainAdminTailLinks: MAIN_ADMIN_TAIL_LINKS.filter((l) => l.key === null || granted.has(l.key)).map(({ href, label, icon }) => ({ href, label, icon })),
               }
             : null
         }
@@ -279,6 +281,9 @@ export function DashboardShell({
                   {project.status === "SUSPENDED" ? " and nothing is sent until a Main Admin makes the project active again." : "."}
                 </Alert>
               </div>
+            ) : null}
+            {inWorkspace && usersAccessTabFor(pathname) ? (
+              <UsersAccessTabs active={usersAccessTabFor(pathname)!} canViewRoles={granted.has("permissions.view")} />
             ) : null}
             {tabSet ? <SubNavTabs tabs={tabSet.tabs} activeHref={tabSet.activeHref} /> : null}
             {/* Every configuration page gets the Settings rail beside it, whatever route it lives

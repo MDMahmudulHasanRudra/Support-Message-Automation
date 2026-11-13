@@ -32,7 +32,7 @@ export const PROJECT_TYPE_LABELS: Record<ProjectType, string> = {
 };
 
 export const PROJECT_TYPE_DESCRIPTIONS: Record<ProjectType, string> = {
-  DEFAULT: "The original Get Assist: WhatsApp support, AI answers, team reports and support tracking.",
+  DEFAULT: "The original Chithii: WhatsApp support, AI answers, team reports and support tracking.",
   ECOMMERCE: "Selling and supporting customers across channels: inbox, clients, AI and (as they ship) catalogue, orders and couriers.",
   CUSTOM_MIX: "Any combination of modules. Dependencies are added for you; nothing is copied from another project.",
 };

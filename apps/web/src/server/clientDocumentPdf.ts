@@ -123,8 +123,8 @@ export async function renderDocumentPdf(branding: DocumentBranding, doc: Invoice
   const title = doc.kind === "INVOICE" ? b.invoiceTitle : b.receiptTitle;
   pdf.setTitle(clean(`${title} ${doc.number}`));
   pdf.setAuthor(clean(b.displayName));
-  pdf.setProducer("Get Assist");
-  pdf.setCreator("Get Assist");
+  pdf.setProducer("Chithii");
+  pdf.setCreator("Chithii");
   const [regular, bold] = await Promise.all([pdf.embedFont(StandardFonts.Helvetica), pdf.embedFont(StandardFonts.HelveticaBold)]);
   const w = new Writer(pdf, PAGE[b.paperSize === "LETTER" ? "LETTER" : "A4"], regular, bold);
   const accent = hexToRgb(b.accentColor);

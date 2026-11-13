@@ -1040,6 +1040,27 @@ const RELEASES: HistoricalRelease[] = [
     improvements: ["Saving a rule as Active now needs the permission to switch rules on"],
     bugFixes: [],
   },
+  {
+    version: "0.46.0",
+    title: "Chithii: a new name, colour themes and a tidier menu",
+    summary: "The product is now Chithii. Pick a colour theme, find your daily pages first, and move between users and roles in one press.",
+    releaseDate: "2026-11-13",
+    releaseType: "FEATURE",
+    affectedModules: ["Branding", "My Account", "Main Admin", "Users & Access", "Automation Rules"],
+    whatsNew: [
+      "The product is now called Chithii, and the sign-in page speaks for every channel, not WhatsApp alone",
+      "Colour themes: each person picks one under My Account → Appearance, and the Main Admin sets the default in Branding",
+      "Website Chat is first under All Conversations, and the WhatsApp Official API is last",
+      "Contacts now sits right after Website Chat in the menu",
+      "Six more ready-made rule templates, and Rule Templates has its own menu entry",
+    ],
+    improvements: [
+      "Users & Access: Overview, All Users and Roles & Permissions are tabs on each of the three pages",
+      "The Main Admin menu stays whole on What's New and other shared pages, My Account included, and it scrolls as one",
+      "Projects page: summary figures and clearer project cards",
+    ],
+    bugFixes: ["The top of the Main Admin menu no longer stays stuck while the rest scrolls"],
+  },
 ];
 
 async function main() {

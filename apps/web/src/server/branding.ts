@@ -3,6 +3,7 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 import { platformPrisma } from "@/server/db";
 import { currentTenantOrNone } from "@/server/tenant";
 import { brandAssetUrl, defaultPublicBranding, DEFAULT_BRANDING, type BrandAssetKind, type PublicBranding } from "@/lib/branding";
+import { DEFAULT_THEME_PALETTE, isThemePalette, type ThemePaletteId } from "@/lib/themes";
 
 /**
  * Reading the installation's brand (BRANDING.md). Platform data — one row, no project — so it goes
@@ -17,6 +18,7 @@ const TEXT_SELECT = {
   loginHeadline: true,
   loginSubheading: true,
   accentColor: true,
+  themePalette: true,
   logoMimeType: true,
   iconMimeType: true,
   assetVersion: true,
@@ -51,6 +53,8 @@ export const getBranding = cache(async (): Promise<PublicBranding> => {
       logoUrl: row.logoMimeType ? brandAssetUrl("logo", row.assetVersion) : null,
       iconUrl: brandAssetUrl("icon", row.assetVersion),
       hasCustomIcon: Boolean(row.iconMimeType),
+      // A value this build does not know (a palette removed later) falls back rather than reaching the page.
+      themePalette: isThemePalette(row.themePalette) ? row.themePalette : DEFAULT_THEME_PALETTE,
     };
   } catch (err) {
     console.warn("[branding] could not read the brand — showing the built-in one", err);
@@ -64,6 +68,8 @@ export interface BrandingSettings {
   loginHeadline: string | null;
   loginSubheading: string | null;
   accentColor: string | null;
+  /** Null = Tide, the built-in. */
+  themePalette: ThemePaletteId | null;
   logoUrl: string | null;
   iconUrl: string | null;
   updatedAt: Date | null;
@@ -77,6 +83,7 @@ export async function getBrandingSettings(): Promise<BrandingSettings> {
     loginHeadline: row?.loginHeadline ?? null,
     loginSubheading: row?.loginSubheading ?? null,
     accentColor: row?.accentColor ?? null,
+    themePalette: isThemePalette(row?.themePalette) ? row.themePalette : null,
     logoUrl: row?.logoMimeType ? brandAssetUrl("logo", row.assetVersion) : null,
     iconUrl: row?.iconMimeType ? brandAssetUrl("icon", row.assetVersion) : null,
     updatedAt: row?.updatedAt ?? null,

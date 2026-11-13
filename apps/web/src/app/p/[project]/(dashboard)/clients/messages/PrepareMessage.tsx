@@ -15,7 +15,7 @@ const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? 
 
 /**
  * "Message client" (CLIENT_CRM_V7.md §6): choose a template, see it filled with this client's own details, adjust
- * the words, then EITHER queue it as an email (the one channel Get Assist sends through), OR open WhatsApp's own
+ * the words, then EITHER queue it as an email (the one channel Chithii sends through), OR open WhatsApp's own
  * click-to-chat / the linked conversation, OR copy it. Choosing a template sends nothing; WhatsApp and copy are
  * recorded as prepared, never as sent.
  */
@@ -199,7 +199,7 @@ export function PrepareMessageDialog({ clientId, context, category, onClose }: {
             ) : null}
             {waUrl ? (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3">
-                <span className="max-w-[46ch]">Opens WhatsApp on this device with the text typed in. Nothing is sent until you press send there; Get Assist records it as prepared, not sent.</span>
+                <span className="max-w-[46ch]">Opens WhatsApp on this device with the text typed in. Nothing is sent until you press send there; Chithii records it as prepared, not sent.</span>
                 <a
                   href={waUrl}
                   target="_blank"

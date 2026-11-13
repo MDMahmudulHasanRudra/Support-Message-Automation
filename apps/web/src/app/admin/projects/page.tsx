@@ -1,6 +1,6 @@
 import NextLink from "next/link";
-import { Plus } from "lucide-react";
-import { ButtonLink, EmptyState, PageHeader } from "@/components/ui";
+import { AlertTriangle, Bot, FolderKanban, MessagesSquare, Plus } from "lucide-react";
+import { ButtonLink, EmptyState, PageHeader, StatTile } from "@/components/ui";
 import { getProjectSummaries, requireMainAdminPage } from "@/server/mainAdmin";
 import { ProjectCard } from "../ProjectCard";
 import { getBranding } from "@/server/branding";
@@ -34,6 +34,21 @@ export default async function ProjectsPage({ searchParams }: { searchParams: Pro
           </>
         }
       />
+
+      {projects.length > 0 ? (
+        <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile icon={FolderKanban} label="Projects" value={projects.length} hint={`${projects.filter((p) => p.status === "ACTIVE").length} active`} />
+          <StatTile icon={MessagesSquare} label="Messages today" value={projects.reduce((n, p) => n + p.messagesToday, 0).toLocaleString()} hint="Across every project" />
+          <StatTile icon={Bot} label="AI answers today" value={projects.reduce((n, p) => n + p.aiRepliesToday, 0).toLocaleString()} tone="accent" hint="Questions answered without a person" />
+          <StatTile
+            icon={AlertTriangle}
+            label="Need attention"
+            value={projects.filter((p) => p.attention.length > 0).length}
+            tone={projects.some((p) => p.attention.length > 0) ? "warning" : "success"}
+            hint={projects.some((p) => p.attention.length > 0) ? "See the yellow notes below" : "Everything is working"}
+          />
+        </div>
+      ) : null}
 
       {projects.length === 0 ? (
         includeArchived ? (

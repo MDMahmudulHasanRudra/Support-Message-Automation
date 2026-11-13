@@ -17,7 +17,7 @@ const CHANNEL: Record<string, string> = { EMAIL: "Email", WHATSAPP: "WhatsApp", 
 
 /**
  * Messages to a client (or about one record), as they are known: an email by its outbox state — accepted by the
- * mail server, never "delivered"; anything else as prepared, because Get Assist did not send it.
+ * mail server, never "delivered"; anything else as prepared, because Chithii did not send it.
  */
 export function MessageHistory({ messages, empty }: { messages: ClientMessageView[]; empty: string }) {
   if (messages.length === 0) return <p className="text-sm text-[color:var(--color-muted-foreground)]">{empty}</p>;

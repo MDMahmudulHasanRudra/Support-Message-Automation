@@ -119,7 +119,7 @@ export async function sendTestWebhook(id: string): Promise<HubResult> {
   if (!endpoint) return { error: "That endpoint no longer exists." };
   const eventId = `evt_${randomUUID().replace(/-/g, "")}`;
   await prisma.webhookDelivery.create({
-    data: { endpointId: id, event: "ping", eventId, payload: { id: eventId, event: "ping", createdAt: new Date().toISOString(), data: { message: "Test from Get Assist" } } as Prisma.InputJsonValue },
+    data: { endpointId: id, event: "ping", eventId, payload: { id: eventId, event: "ping", createdAt: new Date().toISOString(), data: { message: "Test from Chithii" } } as Prisma.InputJsonValue },
   });
   await revalidate();
   return { success: "Test queued. It is sent within a minute; its result appears in the delivery list." };

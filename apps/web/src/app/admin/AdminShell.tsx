@@ -13,6 +13,7 @@ import { CommandPalette } from "@/app/p/[project]/(dashboard)/CommandPalette";
 import { navIconClass, navItemClass, ShellSearch, ShellUserMenu } from "@/components/shell/ShellParts";
 import { navGroupsFor, type NavLink } from "@/app/p/[project]/(dashboard)/navigation";
 import { isGlobalPage, workspaceOpenHref } from "@/lib/workspace";
+import { UsersAccessTabs, usersAccessTabFor } from "@/components/shell/UsersAccessTabs";
 
 /**
  * The Main Admin Portal's frame. Deliberately small, and deliberately the same visual language as
@@ -232,7 +233,10 @@ export function AdminShell({
         </aside>
 
         <main id="main-content" className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--color-background)] lg:rounded-tl-[22px]">
-          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7"><PageEpoch>{children}</PageEpoch></div>
+          <div className="mx-auto w-full max-w-[var(--space-content-max)] px-4 py-6 sm:px-7 sm:py-7">
+            {usersAccessTabFor(pathname) ? <UsersAccessTabs active={usersAccessTabFor(pathname)!} canViewRoles={grantedKeys.includes("permissions.view")} /> : null}
+            <PageEpoch>{children}</PageEpoch>
+          </div>
         </main>
       </div>
       {paletteOpen ? <CommandPalette onClose={closePalette} links={sections.flatMap((section) => section.items.map(({ href, label, icon }) => ({ href, label, icon, group: section.title })))} /> : null}

@@ -15,6 +15,7 @@ import {
   svgLooksUnsafe,
   type BrandAssetKind,
 } from "@/lib/branding";
+import { normalizeDefaultPalette } from "@/lib/themes";
 
 /**
  * White labeling (BRANDING.md): saving the installation's name, sign-in wording, colour, logo and
@@ -25,7 +26,7 @@ import {
 
 export interface BrandingFormState {
   error?: string;
-  fieldErrors?: Partial<Record<"productName" | "loginHeadline" | "loginSubheading" | "accentColor", string>>;
+  fieldErrors?: Partial<Record<"productName" | "loginHeadline" | "loginSubheading" | "accentColor" | "themePalette", string>>;
   savedAt?: number;
 }
 
@@ -60,9 +61,16 @@ export async function saveBranding(_prev: BrandingFormState, formData: FormData)
   const colour = normalizeAccentColor(formData.get("accentColor"));
   if ("error" in colour) fieldErrors.accentColor = colour.error;
   else values.accentColor = colour.value;
+  // The default theme: only when the form carries the field, so an older form never resets it.
+  let themePalette: { themePalette: string | null } | Record<string, never> = {};
+  if (formData.has("themePalette")) {
+    const palette = normalizeDefaultPalette(formData.get("themePalette"));
+    if ("error" in palette) fieldErrors.themePalette = palette.error;
+    else themePalette = { themePalette: palette.value };
+  }
   if (Object.keys(fieldErrors).length > 0) return { fieldErrors };
 
-  const data = { ...values, updatedByUsername: access.session.username };
+  const data = { ...values, ...themePalette, updatedByUsername: access.session.username };
   await platformPrisma.platformBranding.upsert({
     where: { id: BRANDING_ID },
     create: { id: BRANDING_ID, ...data },
@@ -72,6 +80,7 @@ export async function saveBranding(_prev: BrandingFormState, formData: FormData)
   await logSystemEvent("INFO", "branding", "Branding updated", {
     productName: values.productName ?? "(default)",
     accentColor: values.accentColor ?? "(default)",
+    ...("themePalette" in themePalette ? { themePalette: themePalette.themePalette ?? "(default)" } : {}),
     changedBy: access.session.username,
   });
   revalidateEverything();

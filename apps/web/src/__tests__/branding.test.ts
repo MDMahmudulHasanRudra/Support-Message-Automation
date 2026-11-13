@@ -10,6 +10,7 @@ import {
   sniffBrandImage,
   svgLooksUnsafe,
 } from "@/lib/branding";
+import { normalizeDefaultPalette, normalizePersonalPalette, resolvePalette, THEME_PALETTE_IDS, THEME_PALETTES } from "@/lib/themes";
 
 /** White labeling's pure rules (lib/branding.ts). No database. */
 
@@ -55,9 +56,10 @@ describe("brand colour", () => {
 
   it("outranks the default tokens in all three theme states", () => {
     const css = accentStyleSheet("#0d9488");
-    expect(css).toContain(":root:root{--color-accent:#0d9488");
-    expect(css).toContain('@media (prefers-color-scheme: dark){:root:root:not([data-theme="light"]){');
-    expect(css).toContain(':root:root[data-theme="dark"]{');
+    // One step above the colour themes too: `:root[data-palette]` is (0,2,0) and its dark blocks (0,3,0).
+    expect(css).toContain(":root:root:root{--color-accent:#0d9488");
+    expect(css).toContain('@media (prefers-color-scheme: dark){:root:root:root:not([data-theme="light"]){');
+    expect(css).toContain(':root:root:root[data-theme="dark"]{');
     expect(css).toContain("--color-focus-ring:#0d9488");
     // Only the accent moves; the ink primary that buttons and the sidebar use is never touched.
     expect(css).not.toContain("--color-primary");
@@ -94,14 +96,46 @@ describe("image type from the bytes", () => {
 describe("the built-in brand", () => {
   it("is the product as it always looked, with the icon served from the same address as a custom one", () => {
     expect(defaultPublicBranding()).toEqual({
-      productName: "Get Assist",
+      productName: "Chithii",
       loginHeadline: DEFAULT_BRANDING.loginHeadline,
       loginSubheading: DEFAULT_BRANDING.loginSubheading,
       accentColor: null,
       logoUrl: null,
       iconUrl: "/api/brand/icon?v=0",
       hasCustomIcon: false,
+      themePalette: "tide",
     });
     expect(brandAssetUrl("logo", 7)).toBe("/api/brand/logo?v=7");
+  });
+});
+
+describe("colour themes", () => {
+  it("offers one catalogue, with Tide first as the built-in default", () => {
+    expect(THEME_PALETTES.map((p) => p.id)).toEqual([...THEME_PALETTE_IDS]);
+    expect(THEME_PALETTES[0].id).toBe("tide");
+    for (const p of THEME_PALETTES) expect(Object.values(p.swatch).every((c) => /^#[0-9a-f]{6}$/.test(c)), p.id).toBe(true);
+  });
+
+  it("stores only a known palette; Tide as the installation default is 'use the built-in'", () => {
+    expect(normalizeDefaultPalette("indigo")).toEqual({ value: "indigo" });
+    expect(normalizeDefaultPalette("tide")).toEqual({ value: null });
+    expect(normalizeDefaultPalette("")).toEqual({ value: null });
+    expect(normalizePersonalPalette("tide")).toEqual({ value: "tide" });
+    expect(normalizePersonalPalette("default")).toEqual({ value: null });
+    for (const bad of ["Indigo", "neon", '"><script>', "tide;"]) {
+      expect(normalizePersonalPalette(bad), String(bad)).toHaveProperty("error");
+      expect(normalizeDefaultPalette(bad), String(bad)).toHaveProperty("error");
+    }
+  });
+
+  it("resolves the person's choice, then the device, then the installation default", () => {
+    const base = { personal: null, cookie: null, installationDefault: null };
+    expect(resolvePalette({ ...base, signedIn: false })).toBe("tide");
+    expect(resolvePalette({ ...base, signedIn: false, installationDefault: "plum" })).toBe("plum");
+    expect(resolvePalette({ ...base, signedIn: false, cookie: "sunset", installationDefault: "plum" })).toBe("sunset");
+    expect(resolvePalette({ ...base, signedIn: true, personal: "emerald", cookie: "sunset" })).toBe("emerald");
+    // Signed in with no choice: the default, never a cookie somebody else left on this browser.
+    expect(resolvePalette({ ...base, signedIn: true, cookie: "sunset", installationDefault: "plum" })).toBe("plum");
+    expect(resolvePalette({ ...base, signedIn: false, cookie: "bogus", installationDefault: "nope" })).toBe("tide");
   });
 });

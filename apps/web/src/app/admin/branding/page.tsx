@@ -20,7 +20,7 @@ export default async function BrandingPage() {
     <div>
       <PageHeader
         title="Branding"
-        description="Make this installation your own: its name, sign-in page, brand colour, logo and app icon. Changes apply to every project and every page as soon as they are saved."
+        description="Make this installation your own: its default theme, name, sign-in page, brand colour, logo and app icon. Changes apply to every project and every page as soon as they are saved."
       />
       {canManage ? null : (
         <div className="mb-6">
@@ -37,6 +37,7 @@ export default async function BrandingPage() {
           loginHeadline: settings.loginHeadline,
           loginSubheading: settings.loginSubheading,
           accentColor: settings.accentColor,
+          themePalette: settings.themePalette,
           logoUrl: settings.logoUrl,
           iconUrl: settings.iconUrl,
           updatedAt: settings.updatedAt ? settings.updatedAt.toISOString() : null,

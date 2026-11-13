@@ -17,7 +17,7 @@ import { previewRow, type PreviewCell, type PreviewSourceRow } from "@/lib/smart
 
 /**
  * The Visual Mapping grid — the DEFAULT Advanced Mapping screen (Smart Import V5 §1). Laid out like the
- * spreadsheet it maps: Get Assist's fields across the TOP, directly below each one the picker for the Excel
+ * spreadsheet it maps: Chithii's fields across the TOP, directly below each one the picker for the Excel
  * column that feeds it, and below that the file's real rows, one client per row, each cell showing what the
  * file says and, under it, the value after normalization or the value derived for it. Changing a picker
  * re-renders the column at once: the preview is computed here from the rows already loaded.
@@ -68,7 +68,7 @@ export function MappingGrid(props: MappingGridProps) {
         <thead className="sticky top-0 z-20">
           <tr data-row="groups">
             <th rowSpan={2} scope="col" className="sticky left-0 z-30 min-w-[104px] border-b border-r border-[var(--color-border)] bg-[var(--color-neutral-bg)] px-3 py-2 text-left align-bottom text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">
-              Get Assist field
+              Chithii field
             </th>
             {groups.map((g) => (
               <th key={g.title} colSpan={g.fields.length} scope="colgroup" className="border-b border-r border-[var(--color-border)] bg-[var(--color-neutral-bg)] px-3 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-[color:var(--color-muted-foreground)]">

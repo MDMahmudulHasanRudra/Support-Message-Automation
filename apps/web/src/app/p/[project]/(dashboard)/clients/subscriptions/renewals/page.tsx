@@ -88,7 +88,7 @@ export default async function RenewalsPage({ searchParams }: { searchParams: Sea
             <p>An expiring term, a prepared offer and even an accepted one create no due and no balance. Only an invoice is owed.</p>
           </HelpSection>
           <HelpSection title="Messages">
-            <p>Message client fills a Renewal offer or Renewal reminder template with the offer&apos;s details. Email is sent by Get Assist; WhatsApp is prepared for you to send. Record the contact on the offer afterwards.</p>
+            <p>Message client fills a Renewal offer or Renewal reminder template with the offer&apos;s details. Email is sent by Chithii; WhatsApp is prepared for you to send. Record the contact on the offer afterwards.</p>
           </HelpSection>
         </HelpButton>
       </div>

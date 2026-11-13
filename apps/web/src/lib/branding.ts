@@ -11,12 +11,13 @@
  */
 
 import { DEFAULT_PRODUCT_NAME } from "@support-automation/shared";
+import { DEFAULT_THEME_PALETTE, type ThemePaletteId } from "@/lib/themes";
 
 export const DEFAULT_BRANDING = {
   productName: DEFAULT_PRODUCT_NAME,
-  loginHeadline: "WhatsApp support that answers before anyone has to.",
+  loginHeadline: "Every customer conversation, in one place.",
   loginSubheading:
-    "Rules and AI answer what they can, your team gets the rest, and every decision is recorded for every message.",
+    "WhatsApp, Messenger, Instagram, Telegram and your website chat, answered by your team and AI together, with every reply recorded.",
 } as const;
 
 export const BRANDING_LIMITS = {
@@ -45,6 +46,8 @@ export interface PublicBranding {
   /** Always set: the uploaded icon, or the built-in one served from the same address. */
   iconUrl: string;
   hasCustomIcon: boolean;
+  /** The installation's default colour theme (lib/themes.ts) for anybody who has not chosen their own. */
+  themePalette: ThemePaletteId;
 }
 
 /** The URL an image is served from. The version makes a new upload a new URL. */
@@ -61,6 +64,7 @@ export function defaultPublicBranding(): PublicBranding {
     logoUrl: null,
     iconUrl: brandAssetUrl("icon", 0),
     hasCustomIcon: false,
+    themePalette: DEFAULT_THEME_PALETTE,
   };
 }
 
@@ -136,9 +140,10 @@ export function accentStyleSheet(hex: string): string {
   ].join(";");
   // Same three-state structure as globals.css: light by default, dark by OS preference unless the
   // user chose light, and dark when the user chose dark. Each selector is one step MORE specific
-  // than its globals.css counterpart (`:root:root`), so it wins wherever the browser happens to put
-  // this sheet relative to the stylesheet.
-  return `:root:root{${light}}@media (prefers-color-scheme: dark){:root:root:not([data-theme="light"]){${dark}}}:root:root[data-theme="dark"]{${dark}}`;
+  // than its globals.css counterpart — including the colour-theme blocks (`:root[data-palette]` is
+  // (0,2,0), its dark blocks (0,3,0)) — so a brand colour wins over every theme, wherever the browser
+  // happens to put this sheet relative to the stylesheet.
+  return `:root:root:root{${light}}@media (prefers-color-scheme: dark){:root:root:root:not([data-theme="light"]){${dark}}}:root:root:root[data-theme="dark"]{${dark}}`;
 }
 
 /** Image types accepted for a logo or icon. */

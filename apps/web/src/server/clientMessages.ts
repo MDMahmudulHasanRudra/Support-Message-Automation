@@ -145,7 +145,7 @@ export interface WhatsAppRoute {
   /** This project's own WhatsApp Chat conversation, when one is linked to the client. */
   linkedChatHref: string | null;
   linkedAccountLabel: string | null;
-  /** WhatsApp's own click-to-chat, opened on the person's device — never a send by Get Assist. */
+  /** WhatsApp's own click-to-chat, opened on the person's device — never a send by Chithii. */
   clickToChatNumber: string | null;
   /** Why neither exists, in a sentence. */
   reason: string | null;
