@@ -477,11 +477,12 @@ export function InboxWorkspace({
                       aria-label={title}
                       title={title}
                       style={tint && active ? { background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint } : undefined}
-                      className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? "w-8" : "px-2.5"} ${
+                      className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? (active ? "gap-1.5 px-2.5" : "w-8") : "px-2.5"} ${
                         active ? (s.channel ? "" : "bg-[var(--color-primary)] text-[var(--color-on-primary)]") : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
                       }`}
                     >
-                      {Icon ? <Icon className="size-3.5" strokeWidth={2.2} aria-hidden /> : "All"}
+                      {Icon ? <Icon className="size-3.5 shrink-0" strokeWidth={2.2} aria-hidden /> : "All"}
+                    {s.channel && active ? <span className="whitespace-nowrap">{CHANNEL_PRESENTATION[s.channel].short}</span> : null}
                     </button>
                   );
                 }
@@ -493,11 +494,12 @@ export function InboxWorkspace({
                     aria-label={title}
                     title={title}
                     style={tint && active ? { background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint } : undefined}
-                    className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? "w-8" : "px-2.5"} ${
+                    className={`flex h-7 shrink-0 items-center justify-center rounded-full text-[11.5px] font-medium transition-colors ${s.channel ? (active ? "gap-1.5 px-2.5" : "w-8") : "px-2.5"} ${
                       active ? (s.channel ? "" : "bg-[var(--color-primary)] text-[var(--color-on-primary)]") : "text-[color:var(--color-muted-foreground)] hover:bg-[var(--color-neutral-bg)] hover:text-[color:var(--color-foreground)]"
                     }`}
                   >
-                    {Icon ? <Icon className="size-3.5" strokeWidth={2.2} aria-hidden /> : "All"}
+                    {Icon ? <Icon className="size-3.5 shrink-0" strokeWidth={2.2} aria-hidden /> : "All"}
+                    {s.channel && active ? <span className="whitespace-nowrap">{CHANNEL_PRESENTATION[s.channel].short}</span> : null}
                   </Link>
                 );
               })}
