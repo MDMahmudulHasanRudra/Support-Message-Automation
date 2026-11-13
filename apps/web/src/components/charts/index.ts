@@ -6,3 +6,4 @@ export * from "./DonutChart";
 export * from "./StackedBar";
 export * from "./Heatmap";
 export * from "./chartUtils";
+export * from "./TrafficChart";

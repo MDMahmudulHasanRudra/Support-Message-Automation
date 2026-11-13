@@ -183,3 +183,48 @@ export async function getGettingStarted(): Promise<Array<{ key: string; title: s
     { key: "rules", title: "Create your first rule", detail: "Decide what gets an instant reply and what goes to a person.", done: activeRules > 0, href: "/rules", action: "Open rules" },
   ];
 }
+
+export interface DeskOverview {
+  tickets: { open: number; unassigned: number; overdue: number } | null;
+  followUps: { overdue: number; dueToday: number; open: number } | null;
+  contacts: { total: number; thisWeek: number } | null;
+  payments: { awaiting: number; paidThisWeek: number } | null;
+}
+
+/**
+ * The support desk's own modules on the Overview: tickets, follow-ups, contacts and payment links. Each part
+ * is null when its module is off or this viewer cannot open its page, so nobody sees a figure for a page they
+ * cannot reach. Null altogether when nothing is left. Counts only, project-wide.
+ */
+export async function getDeskOverview(session: Session, now = new Date()): Promise<DeskOverview | null> {
+  const off = await activeDisabledFeatures();
+  const [canMessages, canContacts, canPayments] = await Promise.all([hasPermission(session, "messages.view"), hasPermission(session, "contacts.view"), hasPermission(session, "payments.view")]);
+  const midnight = dhakaMidnight(now);
+  const tomorrow = new Date(midnight.getTime() + 86_400_000);
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
+  const openTicket = { status: { in: ["OPEN", "IN_PROGRESS", "WAITING_CUSTOMER"] as ("OPEN" | "IN_PROGRESS" | "WAITING_CUSTOMER")[] } };
+
+  const [tickets, followUps, contacts, payments] = await Promise.all([
+    !off.has("TICKETS") && canMessages
+      ? Promise.all([
+          prisma.ticket.count({ where: openTicket }),
+          prisma.ticket.count({ where: { ...openTicket, assignedUserId: null, assignedTeamId: null } }),
+          prisma.ticket.count({ where: { ...openTicket, dueAt: { lt: now } } }),
+        ]).then(([open, unassigned, overdue]) => ({ open, unassigned, overdue }))
+      : null,
+    !off.has("FOLLOW_UPS") && canMessages
+      ? Promise.all([
+          prisma.followUp.count({ where: { status: "OPEN", dueAt: { lt: midnight } } }),
+          prisma.followUp.count({ where: { status: "OPEN", dueAt: { gte: midnight, lt: tomorrow } } }),
+          prisma.followUp.count({ where: { status: "OPEN" } }),
+        ]).then(([overdue, dueToday, open]) => ({ overdue, dueToday, open }))
+      : null,
+    !off.has("CONTACTS") && canContacts
+      ? Promise.all([prisma.contact.count(), prisma.contact.count({ where: { createdAt: { gte: weekAgo } } })]).then(([total, thisWeek]) => ({ total, thisWeek }))
+      : null,
+    !off.has("PAYMENT_LINKS") && canPayments
+      ? Promise.all([prisma.paymentLink.count({ where: { status: "OPEN" } }), prisma.paymentLink.count({ where: { status: "PAID", paidAt: { gte: weekAgo } } })]).then(([awaiting, paidThisWeek]) => ({ awaiting, paidThisWeek }))
+      : null,
+  ]);
+  return tickets || followUps || contacts || payments ? { tickets, followUps, contacts, payments } : null;
+}

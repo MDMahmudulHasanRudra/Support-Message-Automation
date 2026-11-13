@@ -323,7 +323,7 @@ export function GettingStarted({ title = "Get set up", steps }: { title?: string
           <div className="h-full rounded-full bg-[var(--color-accent)]" style={{ width: `${percent}%` }} />
         </div>
       </div>
-      <ol className="grid gap-px overflow-hidden rounded-b-[var(--radius-xl)] border-t border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 xl:grid-cols-4">
+      <ol className={`grid gap-px overflow-hidden rounded-b-[var(--radius-xl)] border-t border-[var(--color-border)] bg-[var(--color-border)] sm:grid-cols-2 ${steps.length === 5 ? "xl:grid-cols-5" : steps.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4"}`}>
         {steps.map((s, i) => (
           <li key={s.key} className="flex gap-3 bg-[var(--color-surface)] px-5 py-3.5">
             <span aria-hidden className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${s.done ? "bg-[var(--color-success-bg)] text-[color:var(--color-success-fg)]" : "bg-[var(--color-neutral-bg)] text-[color:var(--color-neutral-fg)]"}`}>
@@ -331,7 +331,7 @@ export function GettingStarted({ title = "Get set up", steps }: { title?: string
             </span>
             <span className="min-w-0">
               <span className={`block text-[13px] font-medium ${s.done ? "text-[color:var(--color-muted-foreground)] line-through" : "text-[color:var(--color-foreground)]"}`}>{s.title}</span>
-              <span className="mt-0.5 block text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">{s.detail}</span>
+              <span className={`mt-0.5 block text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)] ${s.done ? "max-sm:hidden" : ""}`}>{s.detail}</span>
               {!s.done && s.href ? (
                 <Link href={s.href} className="mt-1.5 inline-flex items-center gap-1 text-[12.5px] font-medium text-[color:var(--color-accent-fg)] hover:underline">
                   {s.action ?? "Start"}
@@ -366,4 +366,28 @@ export { ClosableGuide } from "./ClosableGuide";
 /** The cookie that says this person closed this guide. Ids only, so it is always a valid cookie name. */
 export function setupGuideCookie(place: string, userId: string): string {
   return `ga_setup_closed_${place}_${userId}`.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+/** A section heading between groups of cards: both overviews use it, so they read as one product. */
+export function SectionTitle({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="mb-3 mt-8 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+      <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">{title}</h2>
+      {hint ? <p className="text-[12.5px] text-[color:var(--color-muted-foreground)]">{hint}</p> : null}
+    </div>
+  );
+}
+
+/** "9,399 minutes" as "6 days 12 hours": a length of time somebody can take in at a glance. */
+export function humanDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"}`;
+  const hours = Math.floor(m / 60);
+  if (hours < 24) {
+    const rest = m % 60;
+    return `${hours} hour${hours === 1 ? "" : "s"}${rest ? ` ${rest} min` : ""}`;
+  }
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return `${days} day${days === 1 ? "" : "s"}${restHours ? ` ${restHours} hour${restHours === 1 ? "" : "s"}` : ""}`;
 }

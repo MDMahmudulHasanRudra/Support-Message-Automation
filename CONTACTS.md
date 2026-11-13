@@ -1,7 +1,7 @@
 # Contacts
 
-Feature `CONTACTS`, **on by default**, because it is a list of people and sends nothing by itself. Collecting from chats and
-every campaign stay off until somebody starts them. Keys: `contacts.view`, `contacts.edit`, `contacts.delete`,
+Feature `CONTACTS`, **on by default**, because it is a list of people and sends nothing by itself. Collecting from chats is on
+too (it only saves); every campaign stays off until somebody starts it. Keys: `contacts.view`, `contacts.edit`, `contacts.delete`,
 `contacts.import`, `contacts.export`, `contacts.campaign`. Pages: `/contacts`, `/contacts/<id>`, `/contacts/import`,
 `/contacts/campaigns`, `/contacts/campaigns/<id>`, `/settings/contacts`, and a Contact tab beside every conversation.
 
@@ -26,15 +26,22 @@ write to a client, a due or a subscription.
 
 ## Collecting by itself (`apps/worker/src/contacts/contactCollector.ts`, Settings → Contacts)
 
-Its own 30-second loop over stored messages after a cursor, so the message path never waits for it. Two switches, both off:
+Its own 30-second loop over stored messages after a cursor, so the message path never waits for it. **On by default in every
+project** (migration `20261113090000_contacts_collect_all_history`, and `createProjectWithDefaults` for new ones; a project
+with no settings row gets one from the collector), and it reads **every conversation, past ones included**: a null cursor
+means "start from the oldest stored message". Up to 1,000 WhatsApp messages per pass, and each updated channel
+conversation's latest 200 customer messages. "Scan all conversations again" on Settings → Contacts clears the cursors.
 
-- **AI.** Needs the AI engine on. A message holding a number, email or link goes to the model, which can only point at the
-  numbered values found in the text, so it cannot invent one (`readContactAiAnswer`). A name must be written in the message. At
-  most 5 calls per project per pass; the cursor stops before what is left. A message with nothing in it costs no call.
-- **Every new personal chat.** No AI. Saves what the platform proves.
+- **Without AI.** Every customer message is read with `extractContactIdentifiers`: numbers, emails, website and social links.
+  @mentions are removed first (a LID mention is never a number), and our own and the team's numbers are left out. A bare
+  @handle names no app, so it is left alone. Every personal chat and channel conversation becomes a contact, with what the
+  platform itself proves; a monitored group is one contact holding the values found in it.
+- **AI** (switch, off by default, needs the AI engine). For at most 5 messages per project per pass, the model reads the
+  message instead and can only point at the numbered values found in the text, so it cannot invent one
+  (`readContactAiAnswer`); a name must be written in the message. Past the 5 calls, or when the answer is unreadable, the
+  plain reading is used: the cursor never waits for AI. A message with nothing in it costs no call.
 
-Both start at the moment they are switched on and never read older messages. Never a team member's message, our own numbers,
-or a group nobody monitors. It only saves; it never sends.
+Never a team member's message, our own numbers, or a group nobody monitors. It only saves; it never sends.
 
 ## Campaigns
 

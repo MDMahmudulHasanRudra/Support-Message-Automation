@@ -5,6 +5,7 @@ import { Plus } from "lucide-react";
 import { Alert, Button, Dialog, Field, Input, Textarea } from "@/components/ui";
 import { useProjectRouter } from "@/components/ProjectLink";
 import { PasteValues, usePastedValues } from "@/components/contacts/contactDisplay";
+import { collectValues, useValueBoxes, ValueBoxes } from "@/components/contacts/ValueBoxes";
 import { createContact } from "@/server/actions/contacts";
 
 export function NewContactButton() {
@@ -13,6 +14,7 @@ export function NewContactButton() {
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const paste = usePastedValues();
+  const boxes = useValueBoxes();
   const name = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -21,7 +23,12 @@ export function NewContactButton() {
 
   const submit = (form: FormData) =>
     start(async () => {
-      const result = await createContact({ name: form.get("name"), company: form.get("company"), code: form.get("code"), tags: form.get("tags"), notes: form.get("notes"), values: paste.values });
+      if (boxes.invalid) {
+        boxes.touchAll();
+        setError("Fix the box marked in red, or clear it.");
+        return;
+      }
+      const result = await createContact({ name: form.get("name"), company: form.get("company"), code: form.get("code"), tags: form.get("tags"), notes: form.get("notes"), values: collectValues(boxes, paste.values) });
       if ("error" in result) {
         setError(result.error);
         return;
@@ -40,7 +47,8 @@ export function NewContactButton() {
           <Field label="Name">
             <Input ref={name} name="name" maxLength={200} />
           </Field>
-          <Field label="Numbers, emails, social links" hint="Paste as many as you have.">
+          <ValueBoxes boxes={boxes} />
+          <Field label="Or paste several at once" hint="Every number, email and link in the text is picked up and sorted for you.">
             <PasteValues paste={paste} placeholder="01711 000000, name@example.com, facebook.com/name" />
           </Field>
           <div className="grid grid-cols-2 gap-3">

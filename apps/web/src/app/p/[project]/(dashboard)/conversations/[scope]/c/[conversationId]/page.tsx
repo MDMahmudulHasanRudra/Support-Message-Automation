@@ -4,7 +4,7 @@ import { ConversationQuickActions, PanelToggle } from "../../../../inbox/Convers
 import { getSavedReplies } from "@/server/chatInbox";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
-import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, Globe, Paperclip, Settings2, ShieldCheck, Users } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bot, Check, CheckCheck, Clock, CornerDownRight, Globe, Mail, Megaphone, Monitor, MousePointerClick, Paperclip, Phone, Repeat2, Settings2, ShieldCheck, UserRound, Users } from "lucide-react";
 import { CHANNELS, channelContentLabel, DELIVERY_STATUS_LABEL, isInboxRouteScope } from "@support-automation/shared";
 import Link from "@/components/ProjectLink";
 import { pageAccess, requireProjectPage } from "@/server/authorize";
@@ -246,43 +246,68 @@ function Bubble({ message: m, channelLabel, deliveryReceipts, attachmentBase, sh
  * only when the site signed it; otherwise the name and email are what the visitor typed, and a client or
  * order found through a typed email is a POSSIBLE match, never who they are.
  */
+function VisitorChip({ icon: Icon, tone, title, children }: { icon?: typeof Globe; tone?: "success"; title?: string; children: React.ReactNode }) {
+  return (
+    <span
+      title={title}
+      className={`inline-flex max-w-full items-center gap-1 rounded-full px-2 py-0.5 ring-1 [overflow-wrap:anywhere] ${
+        tone === "success" ? "bg-[var(--color-success-bg)] font-medium text-[color:var(--color-success-fg)] ring-transparent" : "bg-[var(--color-surface)] ring-[var(--color-border)]"
+      }`}
+    >
+      {Icon ? <Icon className="size-3 shrink-0" aria-hidden /> : null}
+      <span className="min-w-0">{children}</span>
+    </span>
+  );
+}
+
 function VisitorStrip({ card }: { card: WebchatVisitorCard }) {
   const possible = "possible match: the visitor typed this email, check who they are before sharing details";
   return (
-    <section aria-label="Website visitor" className="shrink-0 space-y-1 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-2 text-[11.5px] text-[color:var(--color-muted-foreground)] sm:px-6">
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+    <section aria-label="Website visitor" className="shrink-0 space-y-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-sunken)] px-4 py-2 text-[11.5px] text-[color:var(--color-muted-foreground)] sm:px-6">
+      <div className="flex flex-wrap items-center gap-1.5">
         {card.verified ? (
-          <span className="inline-flex items-center gap-1 font-medium text-[color:var(--color-success-fg)]">
-            <ShieldCheck className="size-3.5" aria-hidden />
+          <VisitorChip icon={ShieldCheck} tone="success">
             Signed in on the website
-          </span>
+          </VisitorChip>
         ) : (
-          <span>Not signed in: name and email are as the visitor typed them</span>
+          <VisitorChip icon={UserRound} title="The name and email are as the visitor typed them">
+            Not signed in · details as typed
+          </VisitorChip>
         )}
-        {card.email ? <span className="[overflow-wrap:anywhere]">{card.email}</span> : null}
-        {card.phone ? <span className="tabular">+{card.phone}</span> : null}
-        {!card.phone && card.typedPhone ? <span className="tabular" title="As the visitor typed it">+{card.typedPhone}</span> : null}
-        {card.visitCount > 1 ? <span>{card.visitCount} visits</span> : null}
-        {card.startedFrom ? <span>Answered invitation: {card.startedFrom}</span> : null}
-        {card.seenOn ? <span>{card.seenOn}</span> : null}
-        {card.arrived.campaign ? <span>Campaign: {card.arrived.campaign}</span> : null}
-        {card.arrived.referrer ? <span>From {card.arrived.referrer.replace(/^https?:\/\//, "")}</span> : null}
+        {card.email ? <VisitorChip icon={Mail}>{card.email}</VisitorChip> : null}
+        {card.phone ? <VisitorChip icon={Phone}>+{card.phone}</VisitorChip> : null}
+        {!card.phone && card.typedPhone ? (
+          <VisitorChip icon={Phone} title="As the visitor typed it">
+            +{card.typedPhone}
+          </VisitorChip>
+        ) : null}
+        {card.visitCount > 1 ? <VisitorChip icon={Repeat2}>{card.visitCount} visits</VisitorChip> : null}
+        {card.startedFrom ? <VisitorChip icon={MousePointerClick}>Answered invitation: {card.startedFrom}</VisitorChip> : null}
+        {card.seenOn ? <VisitorChip icon={Monitor}>{card.seenOn}</VisitorChip> : null}
+        {card.arrived.campaign ? <VisitorChip icon={Megaphone}>Campaign: {card.arrived.campaign}</VisitorChip> : null}
+        {card.arrived.referrer ? <VisitorChip icon={CornerDownRight}>From {card.arrived.referrer.replace(/^https?:\/\//, "")}</VisitorChip> : null}
         {card.answers.map((a) => (
-          <span key={a.label}>
+          <VisitorChip key={a.label}>
             {a.label}: <span className="font-medium text-[color:var(--color-foreground)]">{a.value}</span>
-          </span>
+          </VisitorChip>
         ))}
         {card.pageUrl ? (
-          <a href={card.pageUrl} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex min-w-0 max-w-full items-center gap-1 hover:underline" title={card.pageUrl}>
+          <a
+            href={card.pageUrl}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            title={card.pageUrl}
+            className="inline-flex min-w-0 max-w-[20rem] items-center gap-1 rounded-full bg-[var(--color-surface)] px-2 py-0.5 ring-1 ring-[var(--color-border)] hover:text-[color:var(--color-foreground)]"
+          >
             <Globe className="size-3 shrink-0" aria-hidden />
-            <span className="truncate">{card.pageUrl}</span>
+            <span className="truncate">{card.pageUrl.replace(/^https?:\/\//, "")}</span>
           </a>
         ) : null}
-        <span>
+        <span className="ml-auto whitespace-nowrap pl-2 text-[color:var(--color-subtle-foreground)]">
           Last seen {dayFormat.format(new Date(card.lastSeenAt))}, {timeFormat.format(new Date(card.lastSeenAt))}
         </span>
         {card.typing ? <span className="font-medium text-[color:var(--color-info-fg)]">Typing…</span> : null}
-      </p>
+      </div>
       {card.clients && card.clients.length > 0 ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-[color:var(--color-foreground)]">Client</span>

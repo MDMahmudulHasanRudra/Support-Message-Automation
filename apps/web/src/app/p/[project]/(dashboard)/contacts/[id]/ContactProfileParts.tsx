@@ -34,7 +34,7 @@ export function ContactValuesCard({ contact, canEdit }: { contact: ContactProfil
         return;
       }
       setError(null);
-      setHeld(r.heldElsewhere);
+      setHeld(r.heldElsewhere.map((h) => `${h.value} is already on ${h.label} (${h.name})`));
       after();
       if (r.added) showToast({ tone: "success", title: r.added === 1 ? "Added" : `${r.added} added` });
       router.refresh();

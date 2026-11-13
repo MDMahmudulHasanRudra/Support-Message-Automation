@@ -1,5 +1,6 @@
 "use server";
 
+import { hasPermission } from "@/server/permissions";
 import { projectPath } from "@/server/projectPaths";
 import { prisma } from "@/server/db";
 import { revalidatePath } from "next/cache";
@@ -112,10 +113,14 @@ function parseRuleFields(formData: FormData) {
   };
 }
 
+const CANNOT_ACTIVATE = "Your role cannot switch rules on. Save it as a draft, and someone who can activate rules will switch it on.";
+
 export async function createRule(_prevState: RuleFormState, formData: FormData): Promise<RuleFormState> {
   const granted = await checkPermission("automation_rules.create");
   if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
+  // Switching a rule on is its own permission: creating one does not include it.
+  if (fields.status === "ACTIVE" && !(await hasPermission(granted.session, "automation_rules.activate"))) return { error: CANNOT_ACTIVATE };
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
 
@@ -144,6 +149,11 @@ export async function updateRule(id: string, _prevState: RuleFormState, formData
   const granted = await checkPermission("automation_rules.edit");
   if ("denied" in granted) return { error: granted.denied };
   const fields = parseRuleFields(formData);
+  // Editing a rule that is already on is fine; turning one on needs the activate permission.
+  if (fields.status === "ACTIVE" && !(await hasPermission(granted.session, "automation_rules.activate"))) {
+    const current = await prisma.automationRule.findFirst({ where: { id }, select: { status: true } });
+    if (current?.status !== "ACTIVE") return { error: CANNOT_ACTIVATE };
+  }
   const conditions = parseConditions(formData);
   const actions = parseActions(formData);
 

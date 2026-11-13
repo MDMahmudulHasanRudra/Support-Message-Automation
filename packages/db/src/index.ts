@@ -1634,6 +1634,8 @@ export async function createProjectWithDefaults(input: CreateProjectInput, db: P
     await tx.mediaStorageSettings.create({ data: own });
     // Mood Detection off, with the recommended policies (MOOD_DETECTION.md).
     await tx.moodDetectionSettings.create({ data: own });
+    // Contacts collected from every conversation from the start, past ones included (CONTACTS.md).
+    await tx.contactSettings.create({ data: { ...own, autoCreateFromChats: true, collectionStartedAt: new Date() } });
 
     await tx.projectFeature.createMany({
       data: PROJECT_FEATURES.map((feature) => ({ projectId: project.id, key: feature.key, enabled: feature.defaultEnabled })),

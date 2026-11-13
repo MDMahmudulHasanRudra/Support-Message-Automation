@@ -1,69 +1,196 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ExternalLink, Unlink } from "lucide-react";
-import { CONTACT_CONSENT_LABEL, CONTACT_SOURCE_LABEL, type ConversationRef } from "@support-automation/shared";
+import { ExternalLink, Plus, Sparkles, Unlink } from "lucide-react";
+import {
+  CONTACT_CONSENT_LABEL,
+  CONTACT_SOURCE_LABEL,
+  type ContactIdentifierKindValue,
+  type ContactIdentifierReading,
+  type ConversationRef,
+} from "@support-automation/shared";
 import { Alert, Badge, Button, Field, Input, Textarea, useToast } from "@/components/ui";
 import Link, { useProjectRouter } from "@/components/ProjectLink";
-import { ContactAvatar, CopyButton, KIND_ICON, PasteValues, usePastedValues, WhatsAppMark } from "@/components/contacts/contactDisplay";
-import { addContactValues, linkChatToContact, saveChatContact, saveContactNotes, searchContacts, unlinkChatFromContact } from "@/server/actions/contacts";
-import type { ConversationContact } from "@/server/contacts";
+import { ContactAvatar, CopyButton, KIND_ICON, usePastedValues, WhatsAppMark, type PickedValue } from "@/components/contacts/contactDisplay";
+import { collectValues, keyOf, PasteSeveral, useValueBoxes, ValueBoxes } from "@/components/contacts/ValueBoxes";
+import { addContactValues, linkChatToContact, saveChatContact, saveContactNotes, searchContacts, unlinkChatFromContact, type HeldElsewhere } from "@/server/actions/contacts";
+import type { ConversationContact, DetectedContactValue } from "@/server/contacts";
 
 const SMALL = "text-[12.5px] text-[color:var(--color-muted-foreground)]";
+const HEADING = "text-[12px] font-medium text-[color:var(--color-muted-foreground)]";
 
 /**
- * The Contact tab beside every chat (CONTACTS.md). Copy a number from the conversation, paste it here and it is on this
- * chat's contact. A chat belongs to one contact; a contact can hold many numbers and many chats, on any channel.
+ * The Contact tab beside every chat (CONTACTS.md). A box per number, email and link, what customers already wrote in
+ * this chat ready to add with one press, and a clear choice when a value is already saved on someone else. A chat
+ * belongs to one contact; a contact can hold many numbers and many chats, on any channel. Nothing here sends a message.
  */
 export function ContactTab({ conversation, card }: { conversation: ConversationRef; card: ConversationContact }) {
   return card.contact ? <KnownContact conversation={conversation} card={card} contact={card.contact} /> : <NoContactYet conversation={conversation} card={card} />;
 }
 
-function Notices({ error, notes }: { error: string | null; notes: string[] }) {
+// ── Found in this chat ──────────────────────────────────────────────────────────────────────────
+
+function FoundInChat({
+  detected,
+  hidden,
+  pending,
+  hint,
+  onAdd,
+  onUse,
+}: {
+  detected: DetectedContactValue[];
+  hidden: Set<string>;
+  pending: boolean;
+  hint: string;
+  onAdd: (values: DetectedContactValue[]) => void;
+  onUse: (holder: { contactId: string; name: string }) => void;
+}) {
+  const shown = detected.filter((d) => !hidden.has(keyOf(d)));
+  if (!shown.length) return null;
+  const free = shown.filter((d) => !d.heldBy);
   return (
-    <>
-      {error ? <Alert tone="danger">{error}</Alert> : null}
-      {notes.map((n) => (
-        <Alert key={n} tone="warning">
-          {n}
-        </Alert>
-      ))}
-    </>
+    <section aria-label="Found in this chat" className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-2.5">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[color:var(--color-foreground)]">
+          <Sparkles className="size-3.5 text-[color:var(--color-accent)]" aria-hidden />
+          Found in this chat
+        </p>
+        {free.length > 1 ? (
+          <Button size="sm" variant="ghost" disabled={pending} onClick={() => onAdd(free)}>
+            Add all {free.length}
+          </Button>
+        ) : null}
+      </div>
+      <p className={`mb-1.5 ${SMALL}`}>{hint}</p>
+      <ul className="space-y-1">
+        {shown.map((d) => {
+          const Icon = KIND_ICON[d.kind];
+          return (
+            <li key={keyOf(d)} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <Icon className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[13px]" title={d.value}>
+                {d.value}
+              </span>
+              {d.heldBy ? (
+                <Button size="sm" variant="ghost" disabled={pending} onClick={() => onUse(d.heldBy!)} title={`Already saved on ${d.heldBy.name} (${d.heldBy.label})`}>
+                  Use {d.heldBy.label}
+                </Button>
+              ) : (
+                <Button size="sm" variant="secondary" disabled={pending} onClick={() => onAdd([d])} aria-label={`Add ${d.value}`}>
+                  <Plus className="size-3.5" aria-hidden />
+                  Add
+                </Button>
+              )}
+              {d.heldBy ? <p className={`basis-full pl-5.5 ${SMALL}`}>Already saved on {d.heldBy.name}.</p> : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
+
+// ── Already saved on someone else ───────────────────────────────────────────────────────────────
+
+function HeldElsewhereList({ items, pending, onUse, onSkip }: { items: HeldElsewhere[]; pending: boolean; onUse: (h: HeldElsewhere) => void; onSkip: (h: HeldElsewhere) => void }) {
+  if (!items.length) return null;
+  return (
+    <div className="space-y-2">
+      {items.map((h) => (
+        <Alert key={`${h.kind}:${h.value}`} tone="warning">
+          <p className="break-words">
+            <span className="font-medium">{h.value}</span> is already saved on{" "}
+            <Link href={`/contacts/${h.contactId}`} className="font-medium underline">
+              {h.name} ({h.label})
+            </Link>
+            . A number or email can be on one contact only.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Button size="sm" variant="secondary" disabled={pending} onClick={() => onUse(h)}>
+              Use that contact for this chat
+            </Button>
+            <Button size="sm" variant="ghost" disabled={pending} onClick={() => onSkip(h)}>
+              Skip
+            </Button>
+          </div>
+        </Alert>
+      ))}
+    </div>
+  );
+}
+
+function useHeldElsewhere() {
+  const [held, setHeld] = useState<HeldElsewhere[]>([]);
+  return { held, setHeld, skip: (h: HeldElsewhere) => setHeld((all) => all.filter((x) => x !== h)) };
+}
+
+// ── Automatic collection ────────────────────────────────────────────────────────────────────────
+
+function AutoCollectionNote({ auto }: { auto: ConversationContact["autoCollection"] }) {
+  const on = auto.autoCreate || auto.ai;
+  const text = !on
+    ? "Automatic collection is off. Contacts are saved only when someone saves them here."
+    : auto.autoCreate
+      ? `Automatic collection is on. New chats are saved as contacts by themselves${auto.ai ? ", and AI picks up numbers and emails customers write" : ""}.`
+      : "Automatic collection is on. AI picks up numbers and emails customers write.";
+  return (
+    <p className={SMALL}>
+      {text}{" "}
+      {auto.canOpenSettings ? (
+        <Link href="/settings/contacts" className="link font-medium">
+          Contact settings
+        </Link>
+      ) : null}
+    </p>
+  );
+}
+
+// ── A chat with no contact ──────────────────────────────────────────────────────────────────────
 
 function NoContactYet({ conversation, card }: { conversation: ConversationRef; card: ConversationContact }) {
   const router = useProjectRouter();
   const { showToast } = useToast();
+  const boxes = useValueBoxes(card.suggestion.handleKind);
   const paste = usePastedValues(card.suggestion.handleKind);
   const [name, setName] = useState(card.suggestion.name ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string[]>([]);
+  const { held, setHeld, skip } = useHeldElsewhere();
   const [pending, start] = useTransition();
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<Awaited<ReturnType<typeof searchContacts>>>([]);
 
   if (!card.canEdit) return <p className={`p-4 ${SMALL}`}>This chat has no contact yet.</p>;
 
-  const save = () =>
+  const save = () => {
+    if (boxes.invalid) {
+      boxes.touchAll();
+      setError("Fix the box marked in red, or clear it, then save.");
+      return;
+    }
     start(async () => {
-      const r = await saveChatContact(conversation, { name, values: paste.values });
+      const r = await saveChatContact(conversation, { name, values: collectValues(boxes, paste.values) });
       if ("error" in r) {
         setError(r.error);
         return;
       }
       setError(null);
-      setNotes(r.heldElsewhere);
+      setHeld(r.heldElsewhere);
+      boxes.clear();
       paste.clear();
       showToast({ tone: "success", title: r.created ? `${r.label} created` : `Added to ${r.label}` });
       router.refresh();
     });
+  };
 
-  const link = (contactId: string) =>
+  const link = (contactId: string, label?: string) =>
     start(async () => {
       const r = await linkChatToContact(conversation, contactId);
       if ("error" in r) setError(r.error);
-      else router.refresh();
+      else {
+        setHeld([]);
+        if (label) showToast({ tone: "success", title: `This chat is now on ${label}` });
+        router.refresh();
+      }
     });
 
   return (
@@ -77,13 +204,13 @@ function NoContactYet({ conversation, card }: { conversation: ConversationRef; c
       </Field>
       {card.suggestion.values.length ? (
         <div>
-          <p className="mb-1.5 text-[12px] font-medium text-[color:var(--color-muted-foreground)]">From this chat</p>
+          <p className={`mb-1.5 ${HEADING}`}>Saved with this chat automatically</p>
           <ul className="space-y-1">
             {card.suggestion.values.map((v) => {
               const Icon = KIND_ICON[v.kind];
               return (
                 <li key={v.normalized} className="flex items-center gap-2 text-[13px]">
-                  <Icon className="size-3.5 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                  <Icon className="size-3.5 shrink-0 text-[color:var(--color-muted-foreground)]" aria-hidden />
                   <span className="truncate">{v.value}</span>
                   {v.isWhatsApp ? <WhatsAppMark /> : null}
                 </li>
@@ -92,18 +219,30 @@ function NoContactYet({ conversation, card }: { conversation: ConversationRef; c
           </ul>
         </div>
       ) : null}
-      <Field label="Numbers, emails, social links">
-        <PasteValues paste={paste} />
-      </Field>
-      <Notices error={error} notes={notes} />
+
+      <FoundInChat
+        detected={card.detected}
+        hidden={boxes.taken}
+        pending={pending}
+        hint="Customers wrote these here. Add puts them in the boxes below."
+        onAdd={(values) => boxes.put(values)}
+        onUse={(h) => link(h.contactId, h.name)}
+      />
+
+      <ValueBoxes boxes={boxes} />
+      <PasteSeveral paste={paste} />
+
+      {error ? <Alert tone="danger">{error}</Alert> : null}
+      <HeldElsewhereList items={held} pending={pending} onUse={(h) => link(h.contactId, h.name)} onSkip={skip} />
       <Button onClick={save} disabled={pending}>
         {pending ? "Saving…" : "Save contact"}
       </Button>
 
       <div className="border-t border-[var(--color-border)] pt-3">
-        <p className="mb-1.5 text-[12px] font-medium text-[color:var(--color-muted-foreground)]">Or add this chat to someone already saved</p>
+        <p className={`mb-1.5 ${HEADING}`}>Or add this chat to someone already saved</p>
         <Input
           value={query}
+          aria-label="Search saved contacts"
           placeholder="Search name or number"
           onChange={(e) => {
             const q = e.target.value;
@@ -127,32 +266,61 @@ function NoContactYet({ conversation, card }: { conversation: ConversationRef; c
           </ul>
         ) : null}
       </div>
+
+      <AutoCollectionNote auto={card.autoCollection} />
     </div>
   );
 }
 
+// ── A chat with a contact ───────────────────────────────────────────────────────────────────────
+
 function KnownContact({ conversation, card, contact }: { conversation: ConversationRef; card: ConversationContact; contact: NonNullable<ConversationContact["contact"]> }) {
   const router = useProjectRouter();
   const { showToast } = useToast();
+  const boxes = useValueBoxes(card.suggestion.handleKind);
   const paste = usePastedValues(card.suggestion.handleKind);
   const [note, setNote] = useState(contact.notes ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [held, setHeld] = useState<string[]>([]);
+  const { held, setHeld, skip } = useHeldElsewhere();
   const [pending, start] = useTransition();
+  const typed = collectValues(boxes, paste.values);
 
-  const add = () =>
+  const add = (values: PickedValue[], fromBoxes: boolean) =>
     start(async () => {
-      const r = await addContactValues(contact.id, paste.values);
+      const r = await addContactValues(contact.id, values);
       if ("error" in r) {
         setError(r.error);
         return;
       }
       setError(null);
       setHeld(r.heldElsewhere);
-      paste.clear();
+      if (fromBoxes) {
+        boxes.clear();
+        paste.clear();
+      }
       if (r.added) showToast({ tone: "success", title: r.added === 1 ? "Added" : `${r.added} added` });
       else if (!r.heldElsewhere.length) showToast({ tone: "info", title: "Already saved on this contact" });
       router.refresh();
+    });
+
+  const addTyped = () => {
+    if (boxes.invalid) {
+      boxes.touchAll();
+      setError("Fix the box marked in red, or clear it, then add.");
+      return;
+    }
+    if (typed.length) add(typed, true);
+  };
+
+  const moveChatTo = (contactId: string, label: string) =>
+    start(async () => {
+      const r = await linkChatToContact(conversation, contactId);
+      if ("error" in r) setError(r.error);
+      else {
+        setHeld([]);
+        showToast({ tone: "success", title: `This chat is now on ${label}` });
+        router.refresh();
+      }
     });
 
   const saveNote = () => {
@@ -220,14 +388,26 @@ function KnownContact({ conversation, card, contact }: { conversation: Conversat
 
       {card.canEdit ? (
         <>
-          <Field label="Add from the chat">
-            <PasteValues paste={paste} />
-          </Field>
-          {paste.values.length ? (
-            <Button variant="secondary" onClick={add} disabled={pending}>
-              {pending ? "Adding…" : paste.values.length === 1 ? "Add it" : `Add ${paste.values.length}`}
-            </Button>
-          ) : null}
+          <FoundInChat
+            detected={card.detected}
+            hidden={boxes.taken}
+            pending={pending}
+            hint={`Customers wrote these here. Add saves them on ${contact.name}.`}
+            onAdd={(values) => add(values.map((v) => ({ kind: v.kind, value: v.value })), false)}
+            onUse={(h) => moveChatTo(h.contactId, h.name)}
+          />
+          <div className="border-t border-[var(--color-border)] pt-3">
+            <p className="mb-2 text-[13.5px] font-semibold text-[color:var(--color-foreground)]">Add more</p>
+            <ValueBoxes boxes={boxes} />
+            <div className="mt-2">
+              <PasteSeveral paste={paste} />
+            </div>
+            {typed.length || boxes.invalid ? (
+              <Button variant="secondary" className="mt-3 w-full" onClick={addTyped} disabled={pending}>
+                {pending ? "Adding…" : typed.length === 1 ? "Add it" : typed.length ? `Add ${typed.length}` : "Add"}
+              </Button>
+            ) : null}
+          </div>
           <Field label="Notes">
             <Textarea value={note} onChange={(e) => setNote(e.target.value)} onBlur={saveNote} rows={3} maxLength={10000} placeholder="Anything worth remembering. Saved when you click away." />
           </Field>
@@ -236,7 +416,10 @@ function KnownContact({ conversation, card, contact }: { conversation: Conversat
         <p className="whitespace-pre-wrap text-[13px]">{contact.notes}</p>
       ) : null}
 
-      <Notices error={error} notes={held} />
+      {error ? <Alert tone="danger">{error}</Alert> : null}
+      <HeldElsewhereList items={held} pending={pending} onUse={(h) => moveChatTo(h.contactId, h.name)} onSkip={skip} />
+
+      {card.canEdit ? <AutoCollectionNote auto={card.autoCollection} /> : null}
 
       <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3">
         <Link href={`/contacts/${contact.id}`} className="link inline-flex items-center gap-1.5 text-[12.5px] font-medium">

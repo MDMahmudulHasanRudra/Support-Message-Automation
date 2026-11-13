@@ -1,4 +1,4 @@
-import { MessagesSquare, PlugZap } from "lucide-react";
+import { Clock, MessagesSquare, PlugZap, Search, UserCheck } from "lucide-react";
 import { ALL_PROJECTS_SCOPE, channelBySlug, CHANNELS, isInboxScope } from "@support-automation/shared";
 import { notFound } from "next/navigation";
 import { ButtonLink } from "@/components/ui";
@@ -46,16 +46,29 @@ export default async function InboxEmptyPane({ params }: { params: Promise<{ sco
   }
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
-      <span className="flex size-11 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-neutral-bg)] text-[color:var(--color-muted-foreground)]">
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-8 text-center">
+      <span className="flex size-12 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-accent-bg)] text-[color:var(--color-accent-fg)]">
         <MessagesSquare className="size-5" aria-hidden />
       </span>
       <div className="max-w-xs space-y-1">
-        <h2 className="text-[15px] font-semibold text-[color:var(--color-foreground)]">Choose a conversation</h2>
-        <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">
-          Every channel opens right here. Press <kbd className="rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[11px]">/</kbd> to search names and messages.
-        </p>
+        <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-[color:var(--color-foreground)]">Choose a conversation</h2>
+        <p className="text-[13px] leading-relaxed text-[color:var(--color-muted-foreground)]">Every channel opens right here, with the customer&apos;s details beside it.</p>
       </div>
+      <ul className="w-full max-w-sm space-y-2 text-left">
+        {[
+          { icon: Clock, title: "Start with Waiting", detail: "Customers nobody has answered yet, longest wait first." },
+          { icon: Search, title: "Search anything", detail: "Press / to find a name or a message." },
+          { icon: UserCheck, title: "Mine is your own work", detail: "Conversations assigned to you." },
+        ].map((tip) => (
+          <li key={tip.title} className="flex items-start gap-3 rounded-[var(--radius-lg)] bg-[var(--color-surface-sunken)] px-3.5 py-2.5">
+            <tip.icon className="mt-0.5 size-4 shrink-0 text-[color:var(--color-accent)]" aria-hidden />
+            <span className="min-w-0">
+              <span className="block text-[13px] font-medium text-[color:var(--color-foreground)]">{tip.title}</span>
+              <span className="block text-[12px] leading-relaxed text-[color:var(--color-muted-foreground)]">{tip.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
