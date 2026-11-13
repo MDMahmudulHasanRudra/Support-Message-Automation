@@ -1024,6 +1024,22 @@ const RELEASES: HistoricalRelease[] = [
     improvements: ["How long the worker has been silent reads as days and hours, not minutes"],
     bugFixes: [],
   },
+  {
+    version: "0.45.0",
+    title: "Easier contacts in chat, and one-step automation rules",
+    summary: "Save a customer from the chat with separate boxes and one-press suggestions, and make a keyword rule in one screen.",
+    releaseDate: "2026-11-13",
+    releaseType: "IMPROVEMENT",
+    affectedModules: ["Unified Inbox", "Contacts", "Automation Rules"],
+    whatsNew: [
+      "Separate boxes for phone numbers, emails and links, each with a + button to add more",
+      "Found in this chat: numbers, emails and links the customer wrote, ready to add with one press",
+      "When a number is already on another contact, choose to use that contact or skip it",
+      "New automation rule: type the keywords, type the reply, save. Everything else is under More options",
+    ],
+    improvements: ["Saving a rule as Active now needs the permission to switch rules on"],
+    bugFixes: [],
+  },
 ];
 
 async function main() {

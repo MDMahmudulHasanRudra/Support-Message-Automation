@@ -84,6 +84,26 @@ async function holderLabel(contactId: string): Promise<string> {
   return c ? `${formatContactSerial(c.serial)} (${contactDisplayName(c)})` : "another contact";
 }
 
+/** A value that could not be saved because another contact already holds it. The person decides what happens next. */
+export interface HeldElsewhere {
+  kind: ContactIdentifierKindValue;
+  value: string;
+  contactId: string;
+  /** The other contact's serial, `CT-0012`. */
+  label: string;
+  name: string;
+}
+
+async function heldElsewhereOf(held: ReadonlyArray<{ kind: ContactIdentifierKindValue; value: string; contactId: string }>): Promise<HeldElsewhere[]> {
+  if (!held.length) return [];
+  const contacts = await prisma.contact.findMany({ where: { id: { in: [...new Set(held.map((h) => h.contactId))] } }, select: { id: true, serial: true, name: true, company: true } });
+  const byId = new Map(contacts.map((c) => [c.id, c]));
+  return held.flatMap((h) => {
+    const c = byId.get(h.contactId);
+    return c ? [{ kind: h.kind, value: h.value, contactId: c.id, label: formatContactSerial(c.serial), name: contactDisplayName(c) }] : [];
+  });
+}
+
 type RawValue = { kind: unknown; value: unknown };
 
 function readValues(raw: unknown): Array<{ kind: ContactIdentifierKindValue; value: string; normalized: string }> | Fail {
@@ -152,7 +172,7 @@ export async function updateContact(id: string, input: Record<string, unknown>):
   return { ok: true };
 }
 
-export async function addContactValues(id: string, raw: unknown): Promise<{ added: number; heldElsewhere: string[] } | Fail> {
+export async function addContactValues(id: string, raw: unknown): Promise<{ added: number; heldElsewhere: HeldElsewhere[] } | Fail> {
   const granted = await checkPermission("contacts.edit", FEATURE);
   if ("denied" in granted) return { error: granted.denied };
   const values = readValues(raw);
@@ -171,7 +191,7 @@ export async function addContactValues(id: string, raw: unknown): Promise<{ adde
     ]);
   }
   const elsewhere = known.filter((k) => k.contactId !== id);
-  const heldElsewhere = await Promise.all(elsewhere.map(async (k) => `${k.value} is already on ${await holderLabel(k.contactId)}`));
+  const heldElsewhere = await heldElsewhereOf(elsewhere.map((k) => ({ kind: k.kind as ContactIdentifierKindValue, value: k.value, contactId: k.contactId })));
   await refresh(id);
   return { added: fresh.length, heldElsewhere };
 }
@@ -307,7 +327,7 @@ export async function mergeContacts(sourceId: string, targetId: string): Promise
 // ── Beside a chat ───────────────────────────────────────────────────────────────────────────────
 
 /** Saves what a person pasted or chose beside a chat: the chat's own contact, created if it has none. */
-export async function saveChatContact(rawRef: unknown, input: { name?: unknown; values?: unknown }): Promise<{ id: string; label: string; created: boolean; added: number; heldElsewhere: string[] } | Fail> {
+export async function saveChatContact(rawRef: unknown, input: { name?: unknown; values?: unknown }): Promise<{ id: string; label: string; created: boolean; added: number; heldElsewhere: HeldElsewhere[] } | Fail> {
   const granted = await checkPermission("contacts.edit", FEATURE);
   if ("denied" in granted) return { error: granted.denied };
   const ref = parseConversationRef(rawRef);
@@ -318,7 +338,7 @@ export async function saveChatContact(rawRef: unknown, input: { name?: unknown; 
   try {
     const result = await collectFromConversation(granted.session, ref, { name, values });
     await refresh(result.contactId);
-    const heldElsewhere = await Promise.all(result.heldElsewhere.map(async (h) => `${h.value} is already on ${await holderLabel(h.contactId)}`));
+    const heldElsewhere = await heldElsewhereOf(result.heldElsewhere.map((h) => ({ kind: h.kind as ContactIdentifierKindValue, value: h.value, contactId: h.contactId })));
     return { id: result.contactId, label: formatContactSerial(result.serial), created: result.created, added: result.added.length, heldElsewhere };
   } catch (err) {
     if (isUnique(err)) return { error: "Someone saved this a moment ago. Refresh and try again." };

@@ -9,9 +9,11 @@ import {
   contactDisplayName,
   contactIdentifierHref,
   contactMapHref,
+  extractContactIdentifiers,
   formatContactSerial,
   isContactConsent,
   isContactSource,
+  normalizePhoneNumber,
   parseContactSerial,
   phoneFromChatId,
   renderContactCampaignText,
@@ -19,6 +21,7 @@ import {
   type ContactCampaignChannelValue,
   type ContactConsentValue,
   type ContactIdentifierKindValue,
+  type ContactIdentifierReading,
   type ContactImportRow,
   type ContactSourceValue,
   type ConversationRef,
@@ -274,7 +277,65 @@ export interface ConversationContact {
   } | null;
   /** What this chat itself tells us, for a chat with no contact yet. */
   suggestion: { name: string | null; values: Array<{ kind: ContactIdentifierKindValue; value: string; normalized: string; isWhatsApp?: boolean }>; isGroup: boolean; handleKind?: ContactIdentifierKindValue };
+  /** Numbers, emails and links customers wrote in this chat that are not on its contact yet. Only for people who can edit. */
+  detected: DetectedContactValue[];
+  /** Whether Settings → Contacts collects contacts by itself in this project. Read only. */
+  autoCollection: { autoCreate: boolean; ai: boolean; canOpenSettings: boolean };
   canEdit: boolean;
+}
+
+export interface DetectedContactValue {
+  kind: ContactIdentifierKindValue;
+  value: string;
+  normalized: string;
+  /** Another contact already holding this value: the database keeps a value on one contact only. */
+  heldBy: { contactId: string; label: string; name: string } | null;
+}
+
+const DETECT_MESSAGES = 200;
+const DETECT_MAX = 20;
+
+/**
+ * What customers wrote in this chat that reads as a number, an email or a profile link: the latest stored customer
+ * messages only, newest first. Our own numbers and the team's are left out, and so is an @mention: in a group it names a
+ * participant by a number or a LID, and a LID is never a phone number.
+ */
+async function detectInConversation(ref: ConversationRef, skip: Set<string>): Promise<DetectedContactValue[]> {
+  const [bodies, accounts, members] = await Promise.all([
+    ref.kind === "whatsapp"
+      ? prisma.message
+          .findMany({ where: { accountId: ref.accountId, chatId: ref.chatId, direction: "INCOMING", isFromTeamMember: false }, orderBy: { timestampWa: "desc" }, take: DETECT_MESSAGES, select: { body: true } })
+          .then((rows) => rows.map((r) => r.body))
+      : prisma.channelMessage
+          .findMany({ where: { conversationId: ref.conversationId, direction: "INBOUND", senderType: "CUSTOMER" }, orderBy: { createdAt: "desc" }, take: DETECT_MESSAGES, select: { text: true } })
+          .then((rows) => rows.map((r) => r.text ?? "")),
+    prisma.whatsAppAccount.findMany({ where: { phoneNumber: { not: null } }, select: { phoneNumber: true } }),
+    prisma.internalTeamMember.findMany({ select: { phoneNumber: true } }),
+  ]);
+  const ours = new Set([...accounts.map((a) => a.phoneNumber!), ...members.map((m) => m.phoneNumber)].flatMap((p) => normalizePhoneNumber(p) ?? []));
+
+  const found: ContactIdentifierReading[] = [];
+  const seen = new Set(skip);
+  for (const body of bodies) {
+    if (!body) continue;
+    for (const reading of extractContactIdentifiers(body.replace(/@\d{5,}/g, " "))) {
+      const key = `${reading.kind}:${reading.normalized}`;
+      // A bare @handle names no app, so it is left to the paste box where a person says which one.
+      if (reading.kind === "OTHER" || seen.has(key) || (reading.kind === "PHONE" && ours.has(reading.normalized))) continue;
+      seen.add(key);
+      found.push(reading);
+    }
+    if (found.length >= DETECT_MAX) break;
+  }
+  const values = found.slice(0, DETECT_MAX);
+  if (!values.length) return [];
+
+  const held = await prisma.contactIdentifier.findMany({
+    where: { OR: values.map((v) => ({ kind: v.kind, normalized: v.normalized })) },
+    select: { kind: true, normalized: true, contact: { select: { id: true, serial: true, name: true, company: true } } },
+  });
+  const holder = new Map(held.map((h) => [`${h.kind}:${h.normalized}`, { contactId: h.contact.id, label: formatContactSerial(h.contact.serial), name: contactDisplayName(h.contact) }]));
+  return values.map((v) => ({ kind: v.kind, value: v.value, normalized: v.normalized, heldBy: holder.get(`${v.kind}:${v.normalized}`) ?? null }));
 }
 
 /** What a chat can vouch for by itself: its display name and, only where the platform proves it, a number or handle. */
@@ -317,8 +378,10 @@ export async function conversationFacts(ref: ConversationRef) {
 export async function loadConversationContact(session: Session, ref: ConversationRef): Promise<ConversationContact | null> {
   const disabled = await activeDisabledFeatures();
   if (disabled.has("CONTACTS") || !(await hasPermission(session, "contacts.view"))) return null;
-  const [canEdit, facts, link] = await Promise.all([
+  const [canEdit, canOpenSettings, settings, facts, link] = await Promise.all([
     hasPermission(session, "contacts.edit"),
+    hasPermission(session, "settings.view"),
+    prisma.contactSettings.findFirst({ select: { autoCreateFromChats: true, aiCollectionEnabled: true } }),
     conversationFacts(ref),
     prisma.contactConversationLink.findFirst({
       where: ref.kind === "whatsapp" ? { chatId: ref.chatId } : { channelConversationId: ref.conversationId },
@@ -326,15 +389,20 @@ export async function loadConversationContact(session: Session, ref: Conversatio
         contact: {
           select: {
             id: true, serial: true, name: true, company: true, notes: true, tags: true, consent: true, source: true, status: true,
-            identifiers: { orderBy: { createdAt: "asc" }, select: { id: true, kind: true, value: true, isWhatsApp: true } },
+            identifiers: { orderBy: { createdAt: "asc" }, select: { id: true, kind: true, value: true, normalized: true, isWhatsApp: true } },
           },
         },
       },
     }),
   ]);
   const c = link?.contact;
+  // What the chat already proves, or the contact already holds, is not "found" again.
+  const known = new Set((c ? c.identifiers : facts.values).map((v) => `${v.kind}:${v.normalized}`));
+  const detected = canEdit ? await detectInConversation(ref, known) : [];
   return {
     canEdit,
+    detected,
+    autoCollection: { autoCreate: settings?.autoCreateFromChats ?? false, ai: settings?.aiCollectionEnabled ?? false, canOpenSettings },
     suggestion: { name: facts.name, values: facts.values, isGroup: facts.isGroup, handleKind: facts.handleKind },
     contact: c
       ? {
