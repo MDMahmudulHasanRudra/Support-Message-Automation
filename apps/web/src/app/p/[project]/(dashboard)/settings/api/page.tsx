@@ -28,7 +28,7 @@ export default async function ApiSettingsPage() {
             </HelpSection>
             <HelpSection title="Checking a webhook's signature">
               <p>
-                Take <code>t</code> and <code>v1</code> from X-GetAssist-Signature, compute HMAC-SHA256 of “t.” followed by the raw body with your
+                Take <code>t</code> and <code>v1</code> from X-Chithii-Signature, compute HMAC-SHA256 of “t.” followed by the raw body with your
                 endpoint secret, compare it to v1, and refuse a <code>t</code> older than five minutes.
               </p>
             </HelpSection>

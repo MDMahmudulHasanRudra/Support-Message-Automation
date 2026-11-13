@@ -1,4 +1,4 @@
-# Get Assist design system: Premium Tide Board
+# Chithii design system: Premium Tide Board
 
 One theme for the project software (`/p/<slug>`) and the Main Admin Portal (`/admin`). Tokens live in `src/app/globals.css`.
 

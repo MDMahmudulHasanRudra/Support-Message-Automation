@@ -26,7 +26,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ con
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": 'attachment; filename="getassist-chat.zip"',
+      "Content-Disposition": 'attachment; filename="chithii-chat.zip"',
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     },

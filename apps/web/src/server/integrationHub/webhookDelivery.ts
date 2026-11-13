@@ -9,7 +9,7 @@ import { disabledFeaturesFor } from "@/server/projectFeatures";
  * Sending queued webhook deliveries (INTEGRATION_HUB.md §Delivery). At least once: a delivery whose
  * answer was lost is sent again, and receivers deduplicate on the event id. Each request is signed:
  *
- *   X-GetAssist-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with the endpoint secret>
+ *   X-Chithii-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with the endpoint secret>
  *
  * Before sending, the host is resolved and refused when any address it resolves to is private — a saved
  * public name must not be turned into a request inside our own network.
@@ -90,11 +90,11 @@ export async function deliverDueWebhooks(now = new Date()): Promise<number> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "User-Agent": "GetAssist-Webhooks/1",
-          "X-GetAssist-Event": d.event,
-          "X-GetAssist-Event-Id": d.eventId,
-          "X-GetAssist-Delivery": d.id,
-          "X-GetAssist-Signature": signWebhook(secret, body, new Date()),
+          "User-Agent": "Chithii-Webhooks/1",
+          "X-Chithii-Event": d.event,
+          "X-Chithii-Event-Id": d.eventId,
+          "X-Chithii-Delivery": d.id,
+          "X-Chithii-Signature": signWebhook(secret, body, new Date()),
         },
         body,
         signal: controller.signal,

@@ -51,7 +51,7 @@ function fakeGraph(routes: Array<[RegExp, string, Route]>, claim: { lostAtMarkSe
 
 const page = (over: Partial<PublishInput> = {}): PublishInput => ({
   account: { platform: "FACEBOOK_PAGE", externalId: "111", parentExternalId: null, token: "PAGE_TOKEN_abcdefghijklmnopqrstuvwxyz" },
-  text: "Hello from Get Assist",
+  text: "Hello from Chithii",
   media: [],
   settings: {},
   containerIds: [],
@@ -88,7 +88,7 @@ describe("Facebook Page adapter", () => {
     expect(feed.afterSent).toBe(true);
     expect(feed.auth).toBe("Bearer PAGE_TOKEN_abcdefghijklmnopqrstuvwxyz");
     expect(feed.params.get("appsecret_proof")).toMatch(/^[a-f0-9]{64}$/);
-    expect(feed.params.get("message")).toBe("Hello from Get Assist");
+    expect(feed.params.get("message")).toBe("Hello from Chithii");
     expect(feed.params.get("link")).toBe("https://shop.example.com/sale");
   });
 

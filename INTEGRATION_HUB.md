@@ -31,9 +31,9 @@ Money is returned as decimal strings ("1250.00") with the currency beside it.
 - Events: `order.created`, `order.status_changed`, `order.payment_recorded`, `shipment.status_changed`,
   `lead.created`, `lead.stage_changed` (and `ping` from "Send test"). Raised by `emitWebhookEvent` AFTER the change
   is committed; it only queues one `WebhookDelivery` per subscribed endpoint and never throws.
-- Body: `{ id, event, createdAt, data }`. Headers: `X-GetAssist-Event`, `X-GetAssist-Event-Id` (the same for every
-  retry — deduplicate on it), `X-GetAssist-Delivery`, and
-  `X-GetAssist-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with the endpoint secret>`.
+- Body: `{ id, event, createdAt, data }`. Headers: `X-Chithii-Event`, `X-Chithii-Event-Id` (the same for every
+  retry — deduplicate on it), `X-Chithii-Delivery`, and
+  `X-Chithii-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with the endpoint secret>`.
   Receivers should refuse a `t` older than five minutes.
 - **At least once.** Retries after 1 min, 5 min, 30 min, 2 h, 6 h and 24 h, then DEAD (Retry by hand). A delivery
   left SENDING by a restart goes back in line after five minutes. A held project or the feature switched off makes

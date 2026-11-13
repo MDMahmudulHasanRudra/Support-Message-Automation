@@ -100,8 +100,8 @@ describe("Website Chat V3 settings", () => {
 
 describe("website address input", () => {
   it("reads a bare domain as https and keeps only the origin", () => {
-    expect(normalizeOriginInput("getassist.pro")).toBe("https://getassist.pro");
-    expect(normalizeOriginInput(" GetAssist.pro/pricing?x=1 ")).toBe("https://getassist.pro");
+    expect(normalizeOriginInput("chithii.com")).toBe("https://chithii.com");
+    expect(normalizeOriginInput(" Chithii.com/pricing?x=1 ")).toBe("https://chithii.com");
     expect(normalizeOriginInput("https://www.example.com/")).toBe("https://www.example.com");
     expect(normalizeOriginInput("shop.example.co.uk:8443")).toBe("https://shop.example.co.uk:8443");
     expect(normalizeOriginInput("http://localhost:3000")).toBe("http://localhost:3000");
@@ -111,13 +111,13 @@ describe("website address input", () => {
     for (const bad of ["ftp://example.com", "javascript:alert(1)", "*.example.com", "https://*.example.com", "http://example.com", "https://user:pw@example.com", "localhost.", "example", "exa mple.com", "https://", "a..b.com", "-bad.com"]) {
       expect(normalizeOriginInput(bad), bad).toBeNull();
     }
-    expect(parseAllowedOrigins("getassist.pro\nhttps://shop.getassist.pro\nnot a site")).toEqual({ origins: ["https://getassist.pro", "https://shop.getassist.pro"], invalid: ["not a site"] });
+    expect(parseAllowedOrigins("chithii.com\nhttps://shop.chithii.com\nnot a site")).toEqual({ origins: ["https://chithii.com", "https://shop.chithii.com"], invalid: ["not a site"] });
   });
 
   it("offers the www address for a bare domain, never for a subdomain", () => {
-    expect(wwwVariant("https://getassist.pro")).toBe("https://www.getassist.pro");
-    expect(wwwVariant("https://shop.getassist.pro")).toBeNull();
-    expect(wwwVariant("https://www.getassist.pro")).toBeNull();
+    expect(wwwVariant("https://chithii.com")).toBe("https://www.chithii.com");
+    expect(wwwVariant("https://shop.chithii.com")).toBeNull();
+    expect(wwwVariant("https://www.chithii.com")).toBeNull();
     expect(wwwVariant("http://localhost:3000")).toBeNull();
   });
 });

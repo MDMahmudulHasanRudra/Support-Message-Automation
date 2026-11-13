@@ -47,7 +47,7 @@ export const SECURITY_HEADERS: Array<{ key: string; value: string }> = [
 /**
  * HSTS only on a request that arrived over HTTPS (Caddy sets x-forwarded-proto), so plain-HTTP access by
  * IP or localhost (the recovery path, SAAS_PLATFORM_PLAN.md §8) is never told to upgrade. One day, without
- * includeSubDomains: a mistake must not lock every customer's *.getassist.pro address to HTTPS for a year.
+ * includeSubDomains: a mistake must not lock every customer's *.chithii.com address to HTTPS for a year.
  * Raise it once every served address is known to have a certificate.
  */
 export const HSTS_HEADER = { key: "Strict-Transport-Security", value: "max-age=86400" };

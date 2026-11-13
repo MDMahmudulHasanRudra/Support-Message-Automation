@@ -826,7 +826,7 @@ export function widgetTeaserAllowed(
 }
 
 /**
- * What a person typed as a website address, as the browser's Origin: `getassist.pro` → `https://getassist.pro`,
+ * What a person typed as a website address, as the browser's Origin: `chithii.com` → `https://chithii.com`,
  * `https://www.x.com/page` → `https://www.x.com`. Refuses other schemes, credentials, wildcards, spaces and
  * anything that is not a host name (or localhost / 127.0.0.1 for testing, which may be http).
  */

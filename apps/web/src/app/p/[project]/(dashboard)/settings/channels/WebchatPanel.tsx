@@ -1084,7 +1084,7 @@ function IdentitySecret({ connectionId, canManage, hasIdentitySecret }: { connec
       <p className={hint}>
         To show a logged-in customer as verified, your SERVER computes <code>HMAC-SHA256(identity secret, user id)</code> as hex and the page sets, before the script:
       </p>
-      <pre className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-2.5 text-[11.5px]">{`<script>window.GetAssistChat = { user: { id: "123", name: "Rina", email: "rina@example.com", hash: "<hmac hex>",
+      <pre className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--color-surface-sunken)] p-2.5 text-[11.5px]">{`<script>window.ChithiiChat = { user: { id: "123", name: "Rina", email: "rina@example.com", hash: "<hmac hex>",
   phone: "01712345678", phoneHash: "<HMAC-SHA256(secret, \"phone:123:01712345678\") hex>" } };</script>`}</pre>
       <p className={hint}>Never put the secret in a page or in the browser. Without a valid hash the visitor is anonymous and anything they type is shown as unverified. The WordPress plugin does this for you.</p>
       {secret ? <CopyValue label="Identity secret — shown once" value={secret} /> : null}

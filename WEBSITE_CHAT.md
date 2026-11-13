@@ -58,7 +58,7 @@ cached for an hour (`max-age=3600`), so a site picks up a new widget version wit
 
 ### WordPress
 
-`/p/<slug>/api/webchat/wordpress/<connectionId>` returns `getassist-chat.zip` (`server/channels/webchatWordpress.ts`,
+`/p/<slug>/api/webchat/wordpress/<connectionId>` returns `chithii-chat.zip` (`server/channels/webchatWordpress.ts`,
 zipped by `server/zip.ts`, no dependency). Plugin 1.1.0: one PHP file that prints the widget in `wp_footer`,
 with the widget key and script address written in; a settings page (Settings → Get Assist Chat, also linked
 from the Plugins list) to hide the chat, hide it on listed paths (`getassist_chat_hide_paths`) or for

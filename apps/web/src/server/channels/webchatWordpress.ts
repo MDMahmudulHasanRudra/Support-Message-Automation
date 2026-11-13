@@ -147,7 +147,7 @@ add_action('wp_footer', function () {
             $data['phone'] = $phone;
             $data['phoneHash'] = hash_hmac('sha256', 'phone:' . $id . ':' . $phone, $secret);
         }
-        echo '<script>window.GetAssistChat = ' . wp_json_encode(array('user' => $data)) . ';</script>';
+        echo '<script>window.ChithiiChat = ' . wp_json_encode(array('user' => $data)) . ';</script>';
     }
     printf('<script src="%s" data-key="%s" async></script>', esc_url(GETASSIST_CHAT_SCRIPT), esc_attr(GETASSIST_CHAT_KEY));
 }, 100);
