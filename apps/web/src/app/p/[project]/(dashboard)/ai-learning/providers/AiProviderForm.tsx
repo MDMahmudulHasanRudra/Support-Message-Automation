@@ -1,14 +1,22 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { KeyRound, PlugZap } from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, PlugZap } from "lucide-react";
 import {
   AI_PROVIDER_PROFILES,
   SELECTABLE_AI_PROVIDER_KINDS,
   type AiProviderKind,
 } from "@support-automation/shared";
-import { Alert, Button, Card, Field, Input, SectionHeader, Select } from "@/components/ui";
+import { Alert, Button, Card, Field, Input, SectionHeader } from "@/components/ui";
 import { testAiProviderConnection, type AiProviderFormState } from "@/server/actions/aiProviders";
+
+/** Where each vendor hands out an API key. Opened in a new tab; nothing is sent there. */
+const KEY_PAGE: Partial<Record<AiProviderKind, { url: string; label: string }>> = {
+  ANTHROPIC: { url: "https://console.anthropic.com/settings/keys", label: "Get a key from the Anthropic Console" },
+  OPENAI: { url: "https://platform.openai.com/api-keys", label: "Get a key from OpenAI" },
+  OPENROUTER: { url: "https://openrouter.ai/keys", label: "Get a key from OpenRouter" },
+  GOOGLE: { url: "https://aistudio.google.com/apikey", label: "Get a key from Google AI Studio" },
+};
 
 export interface AiProviderFormDefaults {
   name?: string;
@@ -44,7 +52,11 @@ export function AiProviderForm({
   const initialKind = (defaults.kind as AiProviderKind) ?? "ANTHROPIC";
   const [kind, setKind] = useState<AiProviderKind>(initialKind);
   // Only overwritten when the type changes, so an endpoint typed by hand survives a re-render.
-  const [apiUrl, setApiUrl] = useState(defaults.apiUrl ?? "");
+  const [apiUrl, setApiUrl] = useState(defaults.apiUrl ?? AI_PROVIDER_PROFILES[initialKind].defaultApiUrl ?? "");
+  // The name follows the chosen vendor until somebody types one.
+  const [name, setName] = useState(defaults.name ?? AI_PROVIDER_PROFILES[initialKind].label);
+  const [nameEdited, setNameEdited] = useState(Boolean(defaults.name));
+  const [advanced, setAdvanced] = useState(initialKind === "OLLAMA");
 
   const profile = AI_PROVIDER_PROFILES[kind];
   const keyRequired = profile.requiresApiKey && !defaults.hasExistingKey;
@@ -57,6 +69,9 @@ export function AiProviderForm({
       apiUrl === "" ||
       SELECTABLE_AI_PROVIDER_KINDS.some((k) => AI_PROVIDER_PROFILES[k].defaultApiUrl === apiUrl);
     if (isUntouched) setApiUrl(AI_PROVIDER_PROFILES[next].defaultApiUrl ?? "");
+    if (!nameEdited) setName(AI_PROVIDER_PROFILES[next].label);
+    // A self-hosted runtime has no default address that works from a container: show it.
+    if (next === "OLLAMA") setAdvanced(true);
     // A verdict about the previous vendor's key and endpoint says nothing about this one's.
     setTestResult(null);
   }
@@ -76,27 +91,88 @@ export function AiProviderForm({
   return (
     <form action={formAction} className="space-y-4">
       <Card>
-        <SectionHeader title="Provider" />
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Name" required>
-            <Input name="name" defaultValue={defaults.name} placeholder="e.g. OpenRouter — Production" required />
-          </Field>
-
-          <Field label="Type" hint={profile.description}>
-            <Select
-              name="kind"
-              value={kind}
-              onChange={(event) => handleKindChange(event.target.value as AiProviderKind)}
+        <SectionHeader title="1. Choose your AI provider" />
+        <input type="hidden" name="kind" value={kind} />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="AI provider">
+          {SELECTABLE_AI_PROVIDER_KINDS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={kind === value}
+              onClick={() => handleKindChange(value)}
+              className={`rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition-colors ${
+                kind === value
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-bg)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"
+              }`}
             >
-              {SELECTABLE_AI_PROVIDER_KINDS.map((value) => (
-                <option key={value} value={value}>
-                  {AI_PROVIDER_PROFILES[value].label}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              <span className="block text-[13px] font-semibold text-[color:var(--color-foreground)]">{AI_PROVIDER_PROFILES[value].label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-[12.5px] leading-relaxed text-[color:var(--color-muted-foreground)]">{profile.description}</p>
 
-          <Field label="API URL" hint={profile.apiUrlHint || "Leave blank to use the provider's default endpoint."}>
+        <div className="mt-5">
+          <p className="mb-2 text-[13px] font-semibold text-[color:var(--color-foreground)]">2. {profile.requiresApiKey ? "Paste its API key" : "Nothing to paste"}</p>
+          {profile.requiresApiKey ? (
+            <Field
+              label={
+                <span className="inline-flex items-center gap-1.5">
+                  <KeyRound className="size-3.5 text-[color:var(--color-muted-foreground)]" aria-hidden />
+                  API key
+                </span>
+              }
+              required={keyRequired}
+              hint={defaults.hasExistingKey ? "Leave blank to keep the current key." : "Stored encrypted — never shown again in full."}
+            >
+              <Input
+                name="apiKey"
+                type="password"
+                autoComplete="off"
+                placeholder={defaults.hasExistingKey ? "••••••••" : ""}
+                className="font-[family-name:var(--font-mono)] tracking-wide"
+              />
+            </Field>
+          ) : (
+            <p className="text-[12.5px] text-[color:var(--color-muted-foreground)]">A self-hosted runtime accepts requests without a key. Check its address below.</p>
+          )}
+          {KEY_PAGE[kind] ? (
+            <a
+              href={KEY_PAGE[kind]!.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-[12.5px] font-medium text-[color:var(--color-accent)] hover:underline"
+            >
+              {KEY_PAGE[kind]!.label}
+              <ExternalLink className="size-3" aria-hidden />
+            </a>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setAdvanced((a) => !a)}
+          aria-expanded={advanced}
+          className="mt-5 inline-flex items-center gap-1 text-[12.5px] font-medium text-[color:var(--color-muted-foreground)] hover:text-[color:var(--color-foreground)]"
+        >
+          <ChevronDown className={`size-3.5 transition-transform ${advanced ? "rotate-180" : ""}`} aria-hidden />
+          Name and address
+        </button>
+        {/* Always submitted; filled for the chosen vendor, shown when asked for. */}
+        <div className={advanced ? "mt-3 grid grid-cols-1 gap-4 md:grid-cols-2" : "hidden"}>
+          <Field label="Name" required hint="How it is listed here, e.g. “OpenRouter — Production”.">
+            <Input
+              name="name"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameEdited(true);
+              }}
+              required
+            />
+          </Field>
+          <Field label="API URL" hint={profile.apiUrlHint || "Leave as it is to use the provider's own address."}>
             <Input
               name="apiUrl"
               value={apiUrl}
@@ -105,45 +181,9 @@ export function AiProviderForm({
               className="font-[family-name:var(--font-mono)] text-xs"
             />
           </Field>
-
-          <Field
-            label={
-              <span className="inline-flex items-center gap-1.5">
-                <KeyRound className="size-3.5 text-[color:var(--color-muted-foreground)]" aria-hidden />
-                API Key
-              </span>
-            }
-            required={keyRequired}
-            hint={
-              !profile.requiresApiKey
-                ? "Not needed — a self-hosted runtime accepts requests without one."
-                : defaults.hasExistingKey
-                  ? "Leave blank to keep the current key."
-                  : "Stored encrypted — never shown again in full."
-            }
-          >
-            <Input
-              name="apiKey"
-              type="password"
-              autoComplete="off"
-              disabled={!profile.requiresApiKey}
-              placeholder={
-                !profile.requiresApiKey ? "Not required" : defaults.hasExistingKey ? "••••••••" : ""
-              }
-              className="font-[family-name:var(--font-mono)] tracking-wide"
-            />
-          </Field>
-        </div>
-
-        <div className="mt-4">
-          <Field label="Example model id" hint="Set the actual model per job on the AI Models page.">
-            <Input
-              readOnly
-              value={profile.exampleModelId}
-              className="font-[family-name:var(--font-mono)] text-xs"
-              tabIndex={-1}
-            />
-          </Field>
+          <p className="text-[12px] text-[color:var(--color-muted-foreground)] md:col-span-2">
+            Example model: <code className="font-[family-name:var(--font-mono)]">{profile.exampleModelId}</code>. Choose the model for each job on the AI Models page.
+          </p>
         </div>
       </Card>
 

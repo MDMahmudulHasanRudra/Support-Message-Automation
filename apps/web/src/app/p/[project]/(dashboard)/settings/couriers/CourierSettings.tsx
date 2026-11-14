@@ -31,6 +31,8 @@ function ProviderCard({ provider, row, canManage }: { provider: CourierProvider;
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  // A courier nobody connected stays one line until someone chooses it.
+  const [open, setOpen] = useState(Boolean(row));
   const [form, setForm] = useState({
     label: row?.label ?? COURIER_LABELS[provider],
     sandbox: row?.sandbox ?? false,
@@ -56,11 +58,33 @@ function ProviderCard({ provider, row, canManage }: { provider: CourierProvider;
     });
   };
 
+  /** Save, then check the account at once: one press, and the answer is whether it works. */
+  const saveAndTest = () => {
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      const saved = await saveCourierConnection({ provider, ...form });
+      if (saved.error || !saved.id) {
+        setError(saved.error ?? "It could not be saved.");
+        router.refresh();
+        return;
+      }
+      setForm((f) => ({ ...f, credentials: {} }));
+      const tested = await testCourierConnection(saved.id);
+      if (tested.error) setError(`Saved, but ${COURIER_LABELS[provider]} did not accept it: ${tested.error}`);
+      else {
+        setNotice(tested.success ?? `${COURIER_LABELS[provider]} is connected and working.`);
+        showToast({ tone: "success", title: `${COURIER_LABELS[provider]} connected` });
+      }
+      router.refresh();
+    });
+  };
+
   return (
     <Card>
       <SectionHeader
         title={COURIER_LABELS[provider]}
-        description={HELP[provider]}
+        description={row ? undefined : "Book parcels from an order and get delivery updates automatically."}
         action={
           row ? (
             <Badge color={!row.isActive ? "gray" : row.lastCheckOk === true ? "green" : row.lastCheckOk === false ? "red" : "yellow"} dot>
@@ -72,14 +96,20 @@ function ProviderCard({ provider, row, canManage }: { provider: CourierProvider;
         }
       />
       {row?.lastError ? <p className="mb-3 text-xs text-[color:var(--color-danger)]">{row.lastError}</p> : null}
-      {canManage ? (
+      {canManage && !open ? (
+        <Button type="button" onClick={() => setOpen(true)}>
+          Connect {COURIER_LABELS[provider]}
+        </Button>
+      ) : null}
+      {canManage && open ? (
         <form
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
-            run(() => saveCourierConnection({ provider, ...form }), () => setForm((f) => ({ ...f, credentials: {} })));
+            saveAndTest();
           }}
         >
+          <p className="text-[12.5px] leading-relaxed text-[color:var(--color-muted-foreground)]">Where to find these: {HELP[provider]}</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {COURIER_CREDENTIAL_FIELDS[provider].map((f) => (
               <Field key={f.key} label={f.label} hint={row ? "Leave empty to keep the saved value." : undefined}>
@@ -126,13 +156,17 @@ function ProviderCard({ provider, row, canManage }: { provider: CourierProvider;
           {notice ? <Alert tone="success">{notice}</Alert> : null}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" loading={pending}>
-              {row ? "Save" : "Connect"}
+              {row ? "Save and test" : "Connect and test"}
             </Button>
             {row ? (
               <Button type="button" variant="secondary" loading={pending} onClick={() => run(() => testCourierConnection(row.id))}>
-                Test connection
+                Test again
               </Button>
-            ) : null}
+            ) : (
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+            )}
             {row ? (
               <Button type="button" variant="ghost" onClick={() => setRemoving(true)}>
                 Remove

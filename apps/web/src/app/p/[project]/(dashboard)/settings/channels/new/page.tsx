@@ -8,6 +8,9 @@ import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { ChannelMark } from "../../../conversations/ChannelMark";
 import { SetupGuide } from "../SetupGuide";
 import { ConnectChannelForm } from "../ConnectChannelForm";
+import { OneClickPanel } from "../OneClickPanel";
+import { metaAllowedForProject, metaPlatformConfig } from "@/server/channels/metaOAuth";
+import { activeProjectId } from "@/server/projectContext";
 
 export const metadata = { title: "Connect a channel" };
 
@@ -38,12 +41,21 @@ export default async function NewChannelPage({ searchParams }: { searchParams: P
   // A website chat widget lives in its own module (WEBSITE_CHAT.md).
   if (type === "WEBCHAT") redirect(await projectPath("/website-chat/widgets/new"));
   const def = CHANNELS[type];
+  // Messenger and Instagram: when one-click Facebook is on for this workspace it is the easy way, so it comes
+  // first and the own-app form below becomes the alternative (same rule as Settings → Messaging Channels).
+  const oneClick = (type === "MESSENGER" || type === "INSTAGRAM") && metaPlatformConfig().ok && metaAllowedForProject(await activeProjectId());
   return (
     <div>
       <PageHeader
         title={`Connect ${def.label}`}
         description={`Connect a ${def.accountNoun}. Credentials are checked with the provider before anything is saved, stored encrypted, and never shown again.`}
       />
+      {oneClick ? (
+        <div className="mb-6 space-y-3">
+          <OneClickPanel available canManage problems={null} />
+          <p className="text-[12.5px] text-[color:var(--color-muted-foreground)]">Or connect it with your own Meta app:</p>
+        </div>
+      ) : null}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card>
           <h2 className="mb-3 text-[14px] font-semibold text-[color:var(--color-foreground)]">Before you start</h2>

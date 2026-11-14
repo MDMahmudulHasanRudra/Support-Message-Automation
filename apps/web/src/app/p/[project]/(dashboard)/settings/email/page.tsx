@@ -25,7 +25,7 @@ export default async function EmailSettingsPage() {
   return (
     <div className="space-y-6">
       {inFlight ? <AutoRefresh intervalMs={3000} /> : null}
-      <PageHeader title="Email" description="The mail server this project's email is sent through. Enter what your mail provider gave you, then send yourself a test message." />
+      <PageHeader title="Email" description="Send this project's email from your own mailbox. Pick your provider, enter your address and password, and send yourself a test." />
 
       <Card className="p-6">
         <div className="flex flex-wrap items-center gap-3">
@@ -46,7 +46,7 @@ export default async function EmailSettingsPage() {
         ) : null}
         {settings.state === "NOT_CONFIGURED" ? (
           <p className="mt-3 text-[13px] text-[color:var(--color-muted-foreground)]">
-            Nothing is configured yet, and no provider is assumed. To use email you need, from your mail provider: the server name, port, username and password; and, in your domain&apos;s DNS, the SPF, DKIM and DMARC records that decide whether mail lands in the inbox or in spam.
+            Pick your email provider below and enter your address and password. For mail to reach inboxes rather than spam, your domain also needs SPF, DKIM and DMARC records; your provider shows how.
           </p>
         ) : null}
       </Card>
