@@ -109,7 +109,7 @@ export function moneyFiguresGrounded(
     accountAmounts: account.amounts,
     // The team's verified entries only — never an entry built from a client or an order.
     knowledgeText: knowledge
-      .filter((k) => !k.id.startsWith("commerce:") && !isClientAccountEntryId(k.id))
+      .filter((k) => !k.id.startsWith("commerce:") && !k.id.startsWith("commerce-app:") && !isClientAccountEntryId(k.id))
       .map((k) => [k.title, k.question ?? "", k.answer, k.procedure ?? ""].join("\n"))
       .join("\n"),
   });

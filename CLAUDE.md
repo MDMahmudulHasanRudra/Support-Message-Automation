@@ -3184,14 +3184,31 @@ messages. Rules worth not undoing:
 ### Business Apps — external first-party apps as project add-ons (`docs/BUSINESS_APP_INTEGRATION_CONTRACT.md`, 14 Nov 2026)
 
 Commerce / Education / Travel ERPs deployed on their own, with their own databases. NOT Core Modules, and unrelated to the
-internal Commerce modules below. Rules worth not undoing: the registry (`packages/shared/src/businessApps.ts`) holds no
-secret and no address; one `ProjectAppInstallation` per project + app (unique), project-scoped AND customer-scoped
-(TENANT_PARENT); **never ACTIVE without a verified connection** (only `connectBusinessApp` on an adapter's verified answer,
-plus a database CHECK); enabling a disabled app returns it to PENDING; no app call inside a transaction; install / connect /
-disable need `projects.manage`, opening needs `business_apps.open` (not a `.view` key); launch is decided only by
-`authorizeBusinessAppLaunch` and is a top-level navigation to a single-use URL, never an iframe or a host credential;
-every host-side capability call passes `resolveBusinessAppCapability` (packages/db) first. No adapter is registered yet
-(WAITING FOR COMMERCE): do not invent endpoints. A project created with no add-on must stay byte-for-byte as before.
+internal Commerce modules below. **Commerce is connected for real** through its published v1 host contract (the Commerce
+repo's `docs/GET_ASSIST_INTEGRATION.md`): signed provisioning + a read-only API key. Rules worth not undoing:
+- The registry (`packages/shared/src/businessApps.ts`) holds no secret and no address; Commerce's addresses and secret are
+  env only (`COMMERCE_API_URL`, `COMMERCE_APP_URL`, `COMMERCE_PROVISIONING_SECRET` — the worker never gets the secret),
+  HTTPS or loopback HTTP only (`parseApprovedAppUrl`). Never invent an endpoint: `commerceAppAdapter` (packages/db) uses
+  only paths Commerce publishes.
+- One `ProjectAppInstallation` per project + app, project- and customer-scoped. **Never ACTIVE without a verified
+  connection**: provisioning answered, workspace as asked/stored, contract version supported (checked in the adapter AND
+  by the host), Commerce says Active, and one authenticated read with the key — plus a database CHECK.
+- **Commerce shows its key once: it is encrypted and stored the moment it arrives**, before any other check
+  (`persistCredential`), only as an `encryptSecret` envelope (CHECK refuses `cmk_…`), never selected for a view.
+  That write keeps `updatedAt` = the claim time, because `updatedAt` is the CONNECTING claim token. Disable keeps the key.
+- A mapped project is only re-checked, never re-pointed at another workspace.
+- **`callBusinessApp` (packages/db) is the only way host code reads app data**: the capability gate, then the installation's
+  own key decrypted right before the call. A refused gate makes no request. Prices become exact minor units or nothing.
+- The workspace shows Commerce's own frontend in a sandboxed frame (`EmbeddedBusinessApp`), on Commerce's origin, only
+  after `authorizeBusinessAppLaunch` allows it; never on Chithii's own host; no Chithii cookie, token or id in the address
+  (`safeAppPath`); no script injected. The person signs in to Commerce inside it (Commerce v1 SSO answers 501). A launch
+  hand-off, when one exists, is followed only through `validateLaunchTicket`.
+- The AI reads Commerce through the EXISTING grounding (`findCommerceGrounding`), behind the same AI commerce switches;
+  never a second AI path, never a reply, and the `UNGROUNDED_PRICE` check covers its figures. Order status only for the
+  ONE Commerce customer whose number is the verified `@c.us` number.
+- Install / connect / disable need `projects.manage`; opening needs `business_apps.open`. No app call inside a transaction.
+  A project created with no add-on must stay byte-for-byte as before. Tests run against `__tests__/helpers/fakeCommerce.ts`,
+  which follows Commerce's own provisioning code; keep it in step with Commerce.
 
 ### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
 

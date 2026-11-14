@@ -8,6 +8,7 @@ import { Button, ButtonLink, ConfirmDialog, useToast } from "@/components/ui";
 import { BusinessAppIcon } from "@/components/businessApps/BusinessAppIcon";
 import { BusinessAppStatusBadge } from "@/components/businessApps/BusinessAppStatusBadge";
 import { addBusinessApp, connectBusinessAppAction, setBusinessAppEnabledAction, type BusinessAppActionResult } from "@/server/actions/businessApps";
+import { ConnectAppDialog } from "./ConnectAppDialog";
 
 export interface PanelInstallation {
   id: string;
@@ -19,6 +20,8 @@ export interface PanelInstallation {
   installedByName: string | null;
   createdAt: string;
   contractVersion: string;
+  externalWorkspaceId: string | null;
+  credentialHint: string | null;
 }
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null);
@@ -48,6 +51,7 @@ export function BusinessAppsPanel({
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDisable, setConfirmDisable] = useState<PanelInstallation | null>(null);
+  const [connecting, setConnecting] = useState<PanelInstallation | null>(null);
   const held = projectStatus === "SUSPENDED" || projectStatus === "ARCHIVED";
 
   function run(id: string, action: () => Promise<BusinessAppActionResult>) {
@@ -56,6 +60,7 @@ export function BusinessAppsPanel({
       const result = await action();
       setBusy(null);
       setConfirmDisable(null);
+      if (!result.error) setConnecting(null);
       if (result.error) showToast({ tone: "danger", title: result.error });
       else showToast({ tone: "success", title: result.success ?? "Saved" });
       router.refresh();
@@ -92,6 +97,22 @@ export function BusinessAppsPanel({
                     <dt className="text-[color:var(--color-subtle-foreground)]">Last verified</dt>
                     <dd className="text-[color:var(--color-muted-foreground)]">{when(inst.lastConnectedAt) ?? "Never"}</dd>
                   </div>
+                  {inst.externalWorkspaceId ? (
+                    <div className="flex min-w-0 gap-1.5">
+                      <dt className="shrink-0 text-[color:var(--color-subtle-foreground)]">Workspace</dt>
+                      <dd className="truncate font-mono text-[11.5px] text-[color:var(--color-muted-foreground)]" title={inst.externalWorkspaceId}>
+                        {inst.externalWorkspaceId}
+                      </dd>
+                    </div>
+                  ) : null}
+                  {inst.credentialHint ? (
+                    <div className="flex gap-1.5">
+                      <dt className="text-[color:var(--color-subtle-foreground)]">Key</dt>
+                      <dd className="font-mono text-[11.5px] text-[color:var(--color-muted-foreground)]">
+                        {inst.credentialHint}… · contract {inst.contractVersion}
+                      </dd>
+                    </div>
+                  ) : null}
                 </dl>
               ) : null}
               {inst?.lastError && inst.status !== "ACTIVE" ? (
@@ -112,9 +133,9 @@ export function BusinessAppsPanel({
                 </Button>
               ) : null}
               {inst && canManage && inst.status !== "DISABLED" ? (
-                <Button size="sm" variant={inst.status === "ACTIVE" ? "secondary" : "primary"} loading={isBusy} disabled={pending || held} onClick={() => run(inst.id, () => connectBusinessAppAction(inst.id, projectId))}>
+                <Button size="sm" variant={inst.status === "ACTIVE" ? "secondary" : "primary"} loading={isBusy} disabled={pending || held} onClick={() => (inst.externalWorkspaceId ? run(inst.id, () => connectBusinessAppAction(inst.id, projectId, { mode: "RECHECK" })) : setConnecting(inst))}>
                   {inst.status === "ACTIVE" || inst.status === "ERROR" ? <RefreshCw className="size-3.5" aria-hidden /> : <Plug className="size-3.5" aria-hidden />}
-                  {inst.status === "ACTIVE" ? "Check again" : inst.status === "ERROR" ? "Reconnect" : "Connect"}
+                  {inst.status === "ACTIVE" ? "Check again" : inst.status === "ERROR" || inst.externalWorkspaceId ? "Reconnect" : "Connect"}
                 </Button>
               ) : null}
               {inst && canManage && inst.status === "DISABLED" ? (
@@ -138,12 +159,19 @@ export function BusinessAppsPanel({
           </div>
         );
       })}
+      <ConnectAppDialog
+        open={connecting !== null}
+        appName={connecting ? (BUSINESS_APPS.find((a) => a.key === connecting.appKey)?.name ?? "the app") : "the app"}
+        loading={pending}
+        onClose={() => setConnecting(null)}
+        onConnect={(input) => connecting && run(connecting.id, () => connectBusinessAppAction(connecting.id, projectId, input))}
+      />
       <ConfirmDialog
         open={confirmDisable !== null}
         onClose={() => setConfirmDisable(null)}
         onConfirm={() => confirmDisable && run(confirmDisable.id, () => setBusinessAppEnabledAction(confirmDisable.id, projectId, false))}
         title="Disable this app for the project?"
-        description="Nobody can open it from this workspace, and the AI stops asking it anything. Nothing is deleted here or in the app; enabling it again needs a fresh connection check."
+        description="Nobody can open it from this workspace, and the AI stops asking it anything. Nothing is deleted here or in the app, and the stored key is kept (encrypted, unused) so enabling it again needs only a fresh check. Someone already signed in to the app keeps that app's own session until it ends there."
         confirmLabel="Disable"
         tone="danger"
         loading={pending}

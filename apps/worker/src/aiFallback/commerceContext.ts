@@ -16,7 +16,9 @@ import {
   type OrderStatus,
   type ShipmentStatus,
 } from "@support-automation/shared";
-import { prisma } from "../db.js";
+import { callBusinessApp, resolveBusinessAppCapability, type PrismaClient } from "@support-automation/db";
+import type { ProductSummary } from "@support-automation/shared";
+import { platformPrisma, prisma } from "../db.js";
 import { currentProjectId } from "../project/context.js";
 import { projectHasFeature } from "../project/features.js";
 import type { KnowledgeSnippet } from "./knowledgeContext.js";
@@ -34,6 +36,13 @@ import type { KnowledgeSnippet } from "./knowledgeContext.js";
  * Order details are given only for orders whose phone number IS the sender's verified WhatsApp
  * number (`…@c.us`). A LID, a channel id, or an order number typed by somebody else proves nothing,
  * so it unlocks nothing.
+ *
+ * Two sources, one set of rules. The project's own catalogue (PRODUCT_CATALOG / ORDERS Core Modules) and a
+ * connected Commerce Business App (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md): live price, stock and offers
+ * read from Commerce through `callBusinessApp` — the ONE gated path (ACTIVE installation, project not held,
+ * declared capability, the installation's own key). Either source counts as "the module is on" for the same
+ * AI switches; a disabled, pending or failed installation is simply not a source. Commerce data is never
+ * cached here: every answer quotes what Commerce said at that moment, and a failed call adds nothing.
  */
 
 export interface CommerceGrounding {
@@ -49,6 +58,8 @@ export interface CommerceGrounding {
 const NONE: CommerceGrounding = { snippets: [], rules: [], handoverRequest: false, policy: null, groundingText: "" };
 const MAX_PRODUCTS = 5;
 const MAX_ORDERS = 3;
+/** Commerce products put in front of the AI: each costs one search share and one detail read from Commerce. */
+const COMMERCE_APP_MAX_PRODUCTS = 3;
 const ORDER_LOOKBACK_DAYS = 180;
 
 const day = (d: Date) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Dhaka", day: "numeric", month: "short", year: "numeric" }).format(d);
@@ -81,20 +92,22 @@ export async function findCommerceGrounding(input: { text: string; switches: AiC
   try {
     const enabled = new Set<string>();
     for (const key of ["PRODUCT_CATALOG", "ORDERS", "COURIER"] as const) if (await projectHasFeature(key)) enabled.add(key);
-    const policy = resolveAiCommercePolicy(enabled, s);
+    const app = await connectedCommerceApp();
+    const policy = resolveAiCommercePolicy(new Set([...enabled, ...(app.products ? ["PRODUCT_CATALOG"] : []), ...(app.orders ? ["ORDERS"] : [])]), s);
     if (!policy.active) return NONE;
 
     const intent = detectCommerceIntent(input.text);
     if (policy.handoverRequests && intent.request) return { ...NONE, handoverRequest: true, policy };
 
     const snippets: KnowledgeSnippet[] = [];
-    if (policy.product) snippets.push(...(await productSnippets(input.text, policy)));
+    if (policy.product && enabled.has("PRODUCT_CATALOG")) snippets.push(...(await productSnippets(input.text, policy)));
+    if (policy.product && app.products) snippets.push(...(await commerceAppProductSnippets(input.text, policy)));
     let ordersFound = false;
     let phone: string | null = null;
     if (policy.orders && intent.status && input.customerPhone) {
       phone = await input.customerPhone();
       if (phone) {
-        const orders = await orderSnippets(phone, policy);
+        const orders = [...(enabled.has("ORDERS") ? await orderSnippets(phone, policy) : []), ...(app.orders ? await commerceAppOrderSnippets(phone) : [])];
         ordersFound = orders.length > 0;
         snippets.push(...orders);
       }
@@ -187,5 +200,98 @@ async function orderSnippets(phone: string, policy: AiCommercePolicy): Promise<K
       }
     }
     return snippet(`commerce:order:${o.id}`, `Your order ${o.number}`, lines.join(" "));
+  });
+}
+
+// ── A connected Commerce Business App ─────────────────────────────────────────────────────────────
+
+/** Which Commerce capabilities this project may use right now (the gate only; no call to Commerce). */
+async function connectedCommerceApp(): Promise<{ products: boolean; orders: boolean }> {
+  const projectId = currentProjectId();
+  const db = platformPrisma as unknown as PrismaClient;
+  const [products, orders] = await Promise.all([
+    resolveBusinessAppCapability(db, projectId, "commerce", "commerce.searchProducts"),
+    resolveBusinessAppCapability(db, projectId, "commerce", "commerce.getOrderStatus"),
+  ]);
+  return { products: products.allowed, orders: orders.allowed };
+}
+
+const appMoney = (m: { amountMinor: string; currency: string } | null | undefined) => (m ? formatMinor(BigInt(m.amountMinor), m.currency) : null);
+
+/**
+ * Products from Commerce matching the customer's words: one search per distinctive term (Commerce's search is
+ * a single "contains" match), merged and ranked by how many terms a name carries; then Commerce's own detail
+ * for the best few, which names the offers that apply to that product (Commerce's offers are mostly by
+ * category, so matching them here would be a guess). Every figure is Commerce's own — the price a customer
+ * pays now (offers already applied) and the regular price — and a product Commerce gave no price for says so.
+ */
+async function commerceAppProductSnippets(text: string, policy: AiCommercePolicy): Promise<KnowledgeSnippet[]> {
+  const projectId = currentProjectId();
+  const db = platformPrisma as unknown as PrismaClient;
+  const terms = deriveQueryTerms(text)
+    .filter((t) => t.length >= 3)
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3);
+  if (terms.length === 0) return [];
+  const results = await Promise.all(terms.map((query) => callBusinessApp(db, projectId, "commerce", "commerce.searchProducts", { query, limit: 5 })));
+  const byId = new Map<string, ProductSummary>();
+  for (const r of results) if (r.ok) for (const p of r.data.products) byId.set(p.productId, p);
+  if (byId.size === 0) return [];
+  const ranked = [...byId.values()]
+    .map((p) => ({ p, score: terms.filter((t) => p.name.toLowerCase().includes(t.toLowerCase()) || p.sku?.toLowerCase() === t.toLowerCase()).length }))
+    .sort((a, b) => b.score - a.score || a.p.name.localeCompare(b.p.name))
+    .slice(0, COMMERCE_APP_MAX_PRODUCTS);
+  const details = await Promise.all(ranked.map(({ p }) => callBusinessApp(db, projectId, "commerce", "commerce.getProductDetails", { productId: p.productId })));
+  const checkedAt = when(new Date());
+
+  return ranked.map(({ p }, i) => {
+    const detail = details[i]!.ok ? details[i]!.data : null;
+    const price = appMoney(detail?.price ?? p.price);
+    const variant = detail?.variants[0];
+    const regularMinor = variant?.listPrice && detail?.price && BigInt(variant.listPrice.amountMinor) > BigInt(detail.price.amountMinor) ? variant.listPrice : (p.compareAtPrice ?? null);
+    const regular = appMoney(regularMinor);
+    const lines = [price ? `Price now: ${price}${regular ? ` (regular price ${regular})` : ""}.` : "Price: not given by Commerce."];
+    const inStock = detail?.inStock ?? p.inStock;
+    const qty = p.quantityAvailable ?? null;
+    lines.push(
+      inStock === null
+        ? "Availability: not given by Commerce."
+        : !inStock
+          ? "Availability: out of stock."
+          : policy.showStockCount && qty !== null
+            ? `Availability: ${qty} in stock.`
+            : "Availability: in stock.",
+    );
+    if (detail && detail.variants.length > 1) {
+      lines.push(`Options: ${detail.variants.map((v) => `${v.name} — ${appMoney(v.price) ?? "price not given"}, ${v.inStock === null ? "availability not given" : v.inStock ? "in stock" : "out of stock"}`).join("; ")}.`);
+    }
+    if (p.category) lines.push(`Category: ${p.category}.`);
+    if (p.brand) lines.push(`Brand: ${p.brand}.`);
+    if (p.sku) lines.push(`SKU: ${p.sku}.`);
+    if (detail) {
+      const offers = detail.offers;
+      lines.push(
+        offers.length
+          ? `Offer applied: ${offers.map((o) => `${o.title}${o.description ? ` (${o.description})` : ""}${o.endsAt ? `, until ${day(new Date(o.endsAt))}` : ""}`).join("; ")}.`
+          : "No offer applies to it right now.",
+      );
+    }
+    if (p.shortDescription) lines.push(p.shortDescription.slice(0, 300));
+    lines.push(`(Live from Commerce at ${checkedAt}.)`);
+    return snippet(`commerce-app:product:${p.productId}`, `Product: ${p.name}`, lines.join(" "));
+  });
+}
+
+/** The verified customer's recent Commerce orders (exact phone match inside Commerce's own customer list). */
+async function commerceAppOrderSnippets(phone: string): Promise<KnowledgeSnippet[]> {
+  const projectId = currentProjectId();
+  const db = platformPrisma as unknown as PrismaClient;
+  const answer = await callBusinessApp(db, projectId, "commerce", "commerce.getOrderStatus", { orderReference: null, verifiedCustomer: { kind: "PHONE_E164", value: phone } });
+  if (!answer.ok) return [];
+  return answer.data.orders.map((o) => {
+    const parts = [o.placedAt ? `Placed ${day(new Date(o.placedAt))}.` : null, `Status: ${o.status}.`, o.paymentStatus ? `Payment: ${o.paymentStatus}.` : null, o.fulfillmentStatus ? `Fulfilment: ${o.fulfillmentStatus}.` : null];
+    const total = appMoney(o.total);
+    if (total) parts.push(`Total: ${total}.`);
+    return snippet(`commerce-app:order:${o.orderReference}`, `Your order ${o.orderReference}`, parts.filter(Boolean).join(" "));
   });
 }

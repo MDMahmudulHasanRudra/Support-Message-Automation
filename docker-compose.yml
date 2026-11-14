@@ -110,6 +110,10 @@ services:
       META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
       META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
       META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+      # Commerce Business App (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md). Unset = Commerce cannot be connected.
+      COMMERCE_API_URL: ${COMMERCE_API_URL:-}
+      COMMERCE_APP_URL: ${COMMERCE_APP_URL:-}
+      COMMERCE_PROVISIONING_SECRET: ${COMMERCE_PROVISIONING_SECRET:-}
       # Social Studio publishing's own Facebook Login for Business configuration (publishing permissions
       # only). App only: publishing runs in the app process. Unset = permissions requested by scope.
       META_SOCIAL_LOGIN_CONFIG_ID: ${META_SOCIAL_LOGIN_CONFIG_ID:-}
@@ -225,6 +229,8 @@ services:
       META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
       META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-}
       META_LOGIN_CONFIG_ID: ${META_LOGIN_CONFIG_ID:-}
+      # Commerce Business App: the AI reads live prices and stock through it. Never the provisioning secret.
+      COMMERCE_API_URL: ${COMMERCE_API_URL:-}
       META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-}
       # Workspaces allowed to use it (project ids, "*" = all). Empty = none: it fails closed.
       META_ALLOWED_PROJECT_IDS: ${META_ALLOWED_PROJECT_IDS:-}

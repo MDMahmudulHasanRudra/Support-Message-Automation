@@ -1,19 +1,23 @@
 import "server-only";
 import {
   BUSINESS_APP_CONNECT_CLAIM_MS,
-  BUSINESS_APP_CONTRACT_VERSION,
   businessAppDefinition,
   decideLaunch,
   installRefusal,
   isBusinessAppKey,
+  isSupportedAppContract,
   LAUNCH_REFUSAL_MESSAGES,
   notAvailableError,
+  safeAppPath,
   type BusinessAppAdapter,
+  type ConnectRequest,
+  type IssuedCredential,
   type BusinessAppDefinition,
   type BusinessAppKey,
   type BusinessAppStatus,
   type LaunchRefusal,
 } from "@support-automation/shared";
+import { BUSINESS_APP_ADAPTERS, commerceAppConfig, decryptSecret, encryptSecret } from "@support-automation/db";
 import { platformPrisma, prisma } from "@/server/db";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
@@ -39,6 +43,9 @@ export interface InstallationView {
   status: BusinessAppStatus;
   contractVersion: string;
   externalWorkspaceId: string | null;
+  /** The credential's non-secret prefix and when it was issued; the credential itself never leaves the server. */
+  credentialHint: string | null;
+  credentialIssuedAt: Date | null;
   lastConnectedAt: Date | null;
   lastError: string | null;
   lastErrorAt: Date | null;
@@ -55,6 +62,8 @@ const VIEW_SELECT = {
   status: true,
   contractVersion: true,
   externalWorkspaceId: true,
+  credentialHint: true,
+  credentialIssuedAt: true,
   lastConnectedAt: true,
   lastError: true,
   lastErrorAt: true,
@@ -71,9 +80,10 @@ const asView = (row: { appKey: string; status: string } & Omit<InstallationView,
 });
 
 // ── Adapters ──────────────────────────────────────────────────────────────────────────────────────
-// None is registered: no Business App has published an endpoint yet (WAITING FOR COMMERCE). A real adapter
-// is registered here, at startup, once one exists; until then every check answers NOT_AVAILABLE.
-const adapters = new Map<BusinessAppKey, BusinessAppAdapter>();
+// The adapters this installation ships (packages/db `BUSINESS_APP_ADAPTERS`: Commerce, against its published
+// v1 host contract). Tests replace one with `registerBusinessAppAdapter`; `null` removes it, after which the
+// app answers NOT_AVAILABLE exactly as an app with no adapter does.
+const adapters = new Map<BusinessAppKey, BusinessAppAdapter>(Object.entries(BUSINESS_APP_ADAPTERS) as Array<[BusinessAppKey, BusinessAppAdapter]>);
 
 export function registerBusinessAppAdapter(adapter: BusinessAppAdapter | null, key?: BusinessAppKey): void {
   if (adapter) adapters.set(adapter.appKey, adapter);
@@ -120,7 +130,7 @@ export async function installBusinessApp(projectId: string, appKey: string, acto
         projectId,
         appKey,
         status: "PENDING",
-        contractVersion: BUSINESS_APP_CONTRACT_VERSION,
+        contractVersion: app.contractVersion,
         installedById: actor.userId,
         installedByName: actor.username,
         updatedById: actor.userId,
@@ -139,17 +149,20 @@ export type ChangeResult = { ok: true; message: string; status: BusinessAppStatu
 async function installationInCustomer(installationId: string) {
   return platformPrisma.projectAppInstallation.findFirst({
     where: { id: installationId },
-    select: { ...VIEW_SELECT, project: { select: { status: true, name: true } } },
+    select: { ...VIEW_SELECT, credentialCiphertext: true, project: { select: { status: true, name: true, customerId: true, customer: { select: { name: true } } } } },
   });
 }
-
 /**
  * Check the connection: claim CONNECTING (a conditional update, so two checks never run at once), ask the
  * app's adapter OUTSIDE any transaction, then record the answer only if the claim is still ours. ACTIVE only
- * on a verified answer; "the app is not available yet" leaves it waiting (PENDING) with the reason; anything
- * else is ERROR with the reason.
+ * on a verified answer for a workspace and a contract version this host supports; "the app is not available
+ * yet" leaves it waiting (PENDING) with the reason; anything else is ERROR with the reason.
+ *
+ * `request` says what the Main Admin asked for: a new workspace, an existing one by its id, or (the default)
+ * re-checking the mapping and credential the installation already holds. A credential the app issues is
+ * encrypted and stored the moment it arrives, whatever happens after (`persistCredential`).
  */
-export async function connectBusinessApp(installationId: string, actor: Pick<Session, "userId">): Promise<ChangeResult> {
+export async function connectBusinessApp(installationId: string, actor: Pick<Session, "userId">, request: ConnectRequest = { mode: "RECHECK" }): Promise<ChangeResult> {
   const row = await installationInCustomer(installationId);
   if (!row) return { ok: false, error: "That installation no longer exists." };
   const app = businessAppDefinition(row.appKey as BusinessAppKey);
@@ -157,6 +170,19 @@ export async function connectBusinessApp(installationId: string, actor: Pick<Ses
     return { ok: false, error: `${row.project.name} is ${row.project.status.toLowerCase()}, so its Business Apps cannot be connected.` };
   }
   if (row.status === "DISABLED") return { ok: false, error: `${app.name} is disabled here. Enable it first.` };
+  // A project already mapped to a workspace is re-checked, never re-pointed at another one from here.
+  if (request.mode !== "RECHECK" && row.externalWorkspaceId) {
+    return { ok: false, error: `${app.name} is already mapped to a workspace for this project. Use “Check again”.` };
+  }
+
+  let credential: string | null = null;
+  if (row.credentialCiphertext) {
+    try {
+      credential = decryptSecret(row.credentialCiphertext);
+    } catch {
+      return { ok: false, error: `This server cannot read the stored ${app.name} credential (the encryption key changed). Nothing was sent.` };
+    }
+  }
 
   const claimedAt = new Date();
   const staleBefore = new Date(claimedAt.getTime() - BUSINESS_APP_CONNECT_CLAIM_MS);
@@ -167,12 +193,37 @@ export async function connectBusinessApp(installationId: string, actor: Pick<Ses
   if (claim.count === 0) return { ok: false, error: `${app.name} is already being connected. Wait a moment and reload.` };
 
   const adapter = businessAppAdapterFor(app.key);
-  const ref = { projectId: row.projectId, appKey: app.key, externalWorkspaceId: row.externalWorkspaceId, contractVersion: row.contractVersion };
+  const ref = { projectId: row.projectId, appKey: app.key, externalWorkspaceId: row.externalWorkspaceId, contractVersion: row.contractVersion, credential };
+  const persistCredential = async (issued: IssuedCredential) => {
+    // Not conditional on the claim: an app that shows a key once must never lose it to a race with a reload.
+    // `updatedAt` is written back to the claim time: Prisma would otherwise move it, and it IS the claim token.
+    await platformPrisma.projectAppInstallation.updateMany({
+      where: { id: installationId },
+      data: { credentialCiphertext: encryptSecret(issued.secret), credentialHint: issued.hint.slice(0, 40), credentialIssuedAt: new Date(), updatedAt: claimedAt },
+    });
+    ref.credential = issued.secret;
+  };
   let result: Awaited<ReturnType<BusinessAppAdapter["verifyConnection"]>>;
   try {
-    result = adapter ? await adapter.verifyConnection(ref) : { ok: false, error: notAvailableError(app.name) };
+    result = adapter
+      ? await adapter.verifyConnection(ref, {
+          host: {
+            // The founding installation's projects carry no customer id; Commerce needs a stable, non-empty one.
+            hostCustomerId: row.project.customerId ?? "founding",
+            hostProjectId: row.projectId,
+            customerName: row.project.customer?.name ?? null,
+            projectName: row.project.name,
+          },
+          request,
+          persistCredential,
+        })
+      : { ok: false, error: notAvailableError(app.name) };
   } catch {
     result = { ok: false, error: { code: "UPSTREAM_ERROR", message: `${app.name} did not answer the connection check.`, retryable: true } };
+  }
+  // Whatever the adapter says, the host only activates a contract version it has an adapter for.
+  if (result.ok && !isSupportedAppContract(app.key, result.data.appContractVersion)) {
+    result = { ok: false, error: { code: "CONTRACT_MISMATCH", message: `${app.name} speaks a contract version this server does not support, so it was not activated.`, retryable: false } };
   }
 
   const ours = { id: installationId, status: "CONNECTING", updatedAt: claimedAt };
@@ -180,12 +231,22 @@ export async function connectBusinessApp(installationId: string, actor: Pick<Ses
   if (result.ok && result.data.externalWorkspaceId) {
     const done = await platformPrisma.projectAppInstallation.updateMany({
       where: ours,
-      data: { status: "ACTIVE", externalWorkspaceId: result.data.externalWorkspaceId, lastConnectedAt: now, lastError: null, lastErrorAt: null, updatedById: actor.userId },
+      data: {
+        status: "ACTIVE",
+        externalWorkspaceId: result.data.externalWorkspaceId,
+        externalTenantId: result.data.externalTenantId ?? null,
+        externalConnectionId: result.data.externalConnectionId ?? null,
+        contractVersion: result.data.appContractVersion,
+        lastConnectedAt: now,
+        lastError: null,
+        lastErrorAt: null,
+        updatedById: actor.userId,
+      },
     });
     return done.count ? { ok: true, status: "ACTIVE", message: `${app.name} is connected.` } : { ok: false, error: "The installation changed while it was being connected. Reload and try again." };
   }
   const error = result.ok ? { code: "CONTRACT_MISMATCH" as const, message: `${app.name} answered without a workspace id, so the connection was not accepted.` } : result.error;
-  // "Not available yet" is the normal state before an app publishes its endpoint: back to waiting, with why.
+  // "Not available yet" is the normal state before an app is configured: back to waiting, with why.
   // A previously verified installation that now fails is a problem, not a wait.
   const next: BusinessAppStatus = error.code === "NOT_AVAILABLE" && row.status !== "ACTIVE" ? "PENDING" : "ERROR";
   await platformPrisma.projectAppInstallation.updateMany({
@@ -273,4 +334,17 @@ export async function authorizeBusinessAppLaunch(appKey: string): Promise<Launch
   const decision = decideLaunch({ appKey, projectStatus: project.status, installation, mayOpen });
   if (!decision.ok) return { ok: false, refusal: decision.refusal, message: LAUNCH_REFUSAL_MESSAGES[decision.refusal], installation: mayOpen ? installation : null };
   return { ok: true, session, project, installation: installation!, app: businessAppDefinition(appKey) };
+}
+
+/**
+ * Where an embedded app opens inside the workspace (the app's own dashboard, on its own origin), or null when
+ * its dashboard address is not configured. The path is the person's (`?path=`) only after `safeAppPath`.
+ * Nothing about the host — no cookie, no token, no project id — is put in the address.
+ */
+export function businessAppEmbedUrl(appKey: BusinessAppKey, path?: string | null): { url: string; origin: string } | null {
+  if (appKey !== "commerce") return null;
+  const cfg = commerceAppConfig();
+  if (!cfg.ok || !cfg.config.appUrl) return null;
+  const origin = cfg.config.appUrl.origin;
+  return { url: new URL(safeAppPath(path), origin).toString(), origin };
 }

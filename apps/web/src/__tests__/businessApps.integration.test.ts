@@ -1,7 +1,8 @@
 import "./helpers/requireTestDatabase";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createProjectWithDefaults, prisma as rawPrisma, resolveBusinessAppCapability } from "@support-automation/db";
+import { callBusinessApp, commerceAppAdapter, createProjectWithDefaults, decryptSecret, prisma as rawPrisma, resolveBusinessAppCapability } from "@support-automation/db";
+import { FakeCommerce } from "./helpers/fakeCommerce";
 import { PERMISSIONS, type BusinessAppAdapter } from "@support-automation/shared";
 import type { Session } from "@/server/auth";
 
@@ -99,7 +100,7 @@ beforeAll(async () => {
   s.viewerOnly = await user(A.customer, "appsviewer", viewerOnly, [A.project]);
 });
 
-afterEach(() => host.registerBusinessAppAdapter(null, "commerce"));
+afterEach(() => host.registerBusinessAppAdapter(commerceAppAdapter));
 
 afterAll(async () => {
   await rawPrisma.projectAppInstallation.deleteMany({ where: { projectId: { in: [A.project, A.other, B.project, B.other, ...created] } } });
@@ -166,9 +167,13 @@ describe("adding an app", () => {
 });
 
 describe("connecting", () => {
-  it("stays waiting, with the reason, while no adapter exists — never ACTIVE", async () => {
+  it("stays waiting, with the reason, while Commerce is not configured or no adapter exists — never ACTIVE", async () => {
     current = s.adminA;
     const row = (await installation(A.project))!;
+    delete process.env.COMMERCE_API_URL;
+    expect((await actions.connectBusinessAppAction(row.id, A.project)).error).toMatch(/not configured on this server/);
+    expect((await installation(A.project))!.status).toBe("PENDING");
+    host.registerBusinessAppAdapter(null, "commerce");
     const result = await actions.connectBusinessAppAction(row.id, A.project);
     expect(result.error).toMatch(/has not published its connection endpoint/);
     const after = (await installation(A.project))!;
@@ -184,7 +189,12 @@ describe("connecting", () => {
     expect((await actions.connectBusinessAppAction(row.id, A.project)).error).toMatch(/refused/);
     expect((await installation(A.project))!.status).toBe("ERROR");
 
-    host.registerBusinessAppAdapter(fakeAdapter(async () => ({ ok: true, data: { externalWorkspaceId: "ws-a", appContractVersion: "1", verifiedAt: new Date().toISOString() }, asOf: new Date().toISOString() })));
+    // Whatever an adapter claims, the host activates only a contract version it supports.
+    host.registerBusinessAppAdapter(fakeAdapter(async () => ({ ok: true, data: { externalWorkspaceId: "ws-a", appContractVersion: "v2", verifiedAt: new Date().toISOString() }, asOf: new Date().toISOString() })));
+    expect((await actions.connectBusinessAppAction(row.id, A.project)).error).toMatch(/contract version this server does not support/);
+    expect((await installation(A.project))!.status).toBe("ERROR");
+
+    host.registerBusinessAppAdapter(fakeAdapter(async () => ({ ok: true, data: { externalWorkspaceId: "ws-a", appContractVersion: "v1", verifiedAt: new Date().toISOString() }, asOf: new Date().toISOString() })));
     expect((await actions.connectBusinessAppAction(row.id, A.project)).success).toMatch(/connected/);
     const after = (await installation(A.project))!;
     expect([after.status, after.externalWorkspaceId, after.lastError]).toEqual(["ACTIVE", "ws-a", null]);
@@ -203,12 +213,29 @@ describe("opening an app", () => {
     current = s.opener;
     const decision = await inProject(A, () => host.authorizeBusinessAppLaunch("commerce"));
     expect(decision.ok).toBe(true);
-    // No adapter: honest refusal, nothing sent.
+    // The real Commerce adapter: Commerce v1 has no sign-in hand-off, said honestly.
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/no sign-in hand-off yet/);
+    host.registerBusinessAppAdapter(null, "commerce");
     expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/has not published its sign-in hand-off/);
-    host.registerBusinessAppAdapter(fakeAdapter(async () => ({ ok: false, error: { code: "NOT_AVAILABLE", message: "x", retryable: true } })));
+    const nf = async () => ({ ok: false as const, error: { code: "NOT_AVAILABLE" as const, message: "x", retryable: true } });
+    // An app whose address is not configured is never followed, whatever it answers.
+    delete process.env.COMMERCE_APP_URL;
+    host.registerBusinessAppAdapter(fakeAdapter(nf));
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/not configured/);
+    process.env.COMMERCE_API_URL = "https://commerce-api.example.test";
+    process.env.COMMERCE_APP_URL = "https://commerce.example.test";
     expect(await inProject(A, () => actions.launchBusinessApp("commerce"))).toEqual({ redirectUrl: "https://commerce.example.test/launch?code=one-time" });
-    host.registerBusinessAppAdapter(fakeAdapter(async () => ({ ok: false, error: { code: "NOT_AVAILABLE", message: "x", retryable: true } }), "http://commerce.example.test/launch"));
+    host.registerBusinessAppAdapter(fakeAdapter(nf, "http://commerce.example.test/launch"));
     expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/not secure/);
+    host.registerBusinessAppAdapter(fakeAdapter(nf, "https://commerce.example.test.evil.test/launch"));
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/outside its approved origin/);
+    const withExpiry = (expiresAt: string) => ({ ...fakeAdapter(nf), createLaunch: async () => ({ ok: true as const, data: { redirectUrl: "https://commerce.example.test/launch?code=x", expiresAt }, asOf: "" }) });
+    host.registerBusinessAppAdapter(withExpiry(new Date(Date.now() - 1000).toISOString()));
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/already expired/);
+    host.registerBusinessAppAdapter(withExpiry(new Date(Date.now() + 3_600_000).toISOString()));
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/valid for too long/);
+    delete process.env.COMMERCE_API_URL;
+    delete process.env.COMMERCE_APP_URL;
   });
 
   it("is refused without business_apps.open, and the sidebar offers nothing", async () => {
@@ -283,5 +310,155 @@ describe("the capability gate the AI and the worker must pass", () => {
     const row = (await installation(A.project))!;
     expect((await actions.setBusinessAppEnabledAction(row.id, A.project, false)).error).toMatch(/Manage Projects/);
     expect((await installation(A.project))!.status).not.toBe("DISABLED");
+  });
+});
+
+describe("the real Commerce adapter, against Commerce's own rules (contract v1)", () => {
+  const commerce = new FakeCommerce();
+  const P = {} as Record<"link" | "fresh" | "v2" | "mapped", string>;
+
+  beforeAll(async () => {
+    await commerce.start();
+    for (const k of ["link", "fresh", "v2", "mapped"] as const) {
+      P[k] = (await createProjectWithDefaults({ name: `Commerce ${k} ${tag}`, slug: `commerce-${k}-${tag}`, status: "ACTIVE", creatorUserId: null, customerId: A.customer }, rawPrisma)).id;
+      created.push(P[k]);
+      await rawPrisma.projectAppInstallation.create({ data: { projectId: P[k], appKey: "commerce", contractVersion: "v1" } });
+    }
+  });
+  afterAll(async () => {
+    await commerce.stop();
+    delete process.env.COMMERCE_API_URL;
+    delete process.env.COMMERCE_PROVISIONING_SECRET;
+    delete process.env.COMMERCE_APP_URL;
+  });
+  const configure = () => {
+    process.env.COMMERCE_API_URL = commerce.url;
+    process.env.COMMERCE_PROVISIONING_SECRET = commerce.secret;
+  };
+  const connect = async (k: keyof typeof P, input?: Parameters<typeof actions.connectBusinessAppAction>[2]) => {
+    current = s.adminA;
+    return actions.connectBusinessAppAction((await installation(P[k]))!.id, P[k], input);
+  };
+
+  it("links an existing workspace: signed provisioning, the key stored encrypted the moment it is issued, ACTIVE only after an authenticated read", async () => {
+    configure();
+    const ws = commerce.workspace(0);
+    expect((await connect("link", { mode: "LINK_EXISTING", workspaceId: ws })).success).toMatch(/connected/);
+    const row = (await installation(P.link))!;
+    const conn = commerce.connection(P.link)!;
+    expect([row.status, row.externalWorkspaceId, row.externalTenantId, row.externalConnectionId, row.contractVersion]).toEqual(["ACTIVE", ws, conn.tenantId, conn.connectionId, "v1"]);
+    expect(conn.hostCustomerId).toBe(A.customer);
+    expect(row.credentialCiphertext).not.toContain(conn.apiKey);
+    expect(decryptSecret(row.credentialCiphertext!)).toBe(conn.apiKey);
+    expect(conn.apiKey.startsWith(row.credentialHint!)).toBe(true);
+    expect(commerce.requests).toEqual(["POST /api/v1/integrations/provision", "GET /api/v1/integrations/products/search"]);
+    // The view a page reads never carries the credential.
+    const listed = JSON.stringify(await host.listProjectInstallations(P.link));
+    expect(listed).not.toContain("credentialCiphertext");
+    expect(listed).not.toContain(conn.apiKey);
+  });
+
+  it("a plaintext key can never be stored (database CHECK)", async () => {
+    await expect(rawPrisma.projectAppInstallation.updateMany({ where: { projectId: P.link }, data: { credentialCiphertext: "cmk_abc_def" } })).rejects.toThrow(/credential_encrypted_check/);
+  });
+
+  it("reads live products through the one gate: Commerce's prices as exact minor units, offers as Commerce applies them", async () => {
+    const found = await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.searchProducts", { query: "anker", limit: 5 });
+    expect(found.ok && found.data.products.map((p) => [p.name, p.price, p.compareAtPrice, p.inStock, p.quantityAvailable])).toEqual([
+      ["Anker 737 Power Bank 24K", { amountMinor: "10355", currency: "USD" }, null, true, 70],
+      ["Anker Soundcore Space One", { amountMinor: "8400", currency: "USD" }, { amountMinor: "12900", currency: "USD" }, false, 0],
+    ]);
+    const detail = await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.getProductDetails", { productId: "6bc7a01f-63de-4b3e-95b8-489dfa0fa06f" });
+    expect(detail.ok && [detail.data.variants[0]!.listPrice, detail.data.offers.map((o) => [o.title, o.description])]).toEqual([
+      { amountMinor: "10900", currency: "USD" },
+      [["Accessory Bundle", "5% off"]],
+    ]);
+  });
+
+  it("order status only for the ONE Commerce customer whose number is the verified one", async () => {
+    const mine = await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.getOrderStatus", { orderReference: null, verifiedCustomer: { kind: "PHONE_E164", value: "33612345678" } });
+    expect(mine.ok && mine.data.orders.map((o) => [o.orderReference, o.status, o.paymentStatus, o.total])).toEqual([["ORD-1006", "Processing", "Partial", { amountMinor: "149900", currency: "USD" }]]);
+    const shared = await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.getOrderStatus", { orderReference: null, verifiedCustomer: { kind: "PHONE_E164", value: "8801711000222" } });
+    expect(shared.ok && shared.data.orders).toEqual([]);
+  });
+
+  it("check again re-proves the same mapping with the stored key (Commerce gives no second key)", async () => {
+    expect((await connect("link")).success).toMatch(/connected/);
+    expect((await installation(P.link))!.status).toBe("ACTIVE");
+  });
+
+  it("Commerce saying the connection is disabled is ERROR, and from then on the gate makes no call at all", async () => {
+    commerce.connection(P.link)!.status = "Disabled";
+    expect((await connect("link")).error).toMatch(/reports this connection as Disabled/);
+    expect((await installation(P.link))!.status).toBe("ERROR");
+    const before = commerce.requests.length;
+    expect(await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.searchProducts", { query: "anker", limit: 5 })).toMatchObject({ ok: false, error: { code: "FORBIDDEN" } });
+    expect(commerce.requests.length).toBe(before);
+    commerce.connection(P.link)!.status = "Active";
+    expect((await connect("link")).success).toMatch(/connected/);
+  });
+
+  it("a Main Admin's disable stops every new call, though Commerce itself is still active", async () => {
+    current = s.adminA;
+    expect((await actions.setBusinessAppEnabledAction((await installation(P.link))!.id, P.link, false)).success).toMatch(/disabled/);
+    const before = commerce.requests.length;
+    expect(await callBusinessApp(rawPrisma, P.link, "commerce", "commerce.getActiveOffers", {})).toMatchObject({ ok: false, error: { code: "FORBIDDEN", message: expect.stringMatching(/INSTALLATION_DISABLED/) } });
+    expect(commerce.requests.length).toBe(before);
+    // The key is kept (encrypted), so enabling needs only a fresh check, never a lost one-time key.
+    expect((await installation(P.link))!.credentialCiphertext).not.toBeNull();
+    expect((await actions.setBusinessAppEnabledAction((await installation(P.link))!.id, P.link, true)).success).toMatch(/enabled/);
+    expect((await connect("link")).success).toMatch(/connected/);
+  });
+
+  it("refuses to re-point a mapped project at another workspace, and a workspace linked elsewhere is Commerce's 409", async () => {
+    expect((await connect("link", { mode: "LINK_EXISTING", workspaceId: commerce.workspace(1) })).error).toMatch(/already mapped/);
+    expect((await connect("mapped", { mode: "LINK_EXISTING", workspaceId: commerce.workspace(0) })).error).toMatch(/already linked to another host project/);
+    expect((await installation(P.mapped))!.status).toBe("ERROR");
+  });
+
+  it("a workspace Commerce now reports differently for the project is not accepted", async () => {
+    expect((await connect("mapped", { mode: "LINK_EXISTING", workspaceId: commerce.workspace(1) })).success).toMatch(/connected/);
+    commerce.connection(P.mapped)!.workspaceId = commerce.workspace(2);
+    expect((await connect("mapped")).error).toMatch(/different workspace/);
+    const row = (await installation(P.mapped))!;
+    expect([row.status, row.externalWorkspaceId]).toEqual(["ERROR", commerce.workspace(1)]);
+  });
+
+  it("a contract version this server has no adapter for is never activated, and the one-time key is still kept", async () => {
+    commerce.contractVersion = "v2";
+    try {
+      expect((await connect("v2", { mode: "PROVISION_NEW", currency: "BDT" })).error).toMatch(/speaks contract “v2”/);
+    } finally {
+      commerce.contractVersion = "v1";
+    }
+    const row = (await installation(P.v2))!;
+    expect([row.status, row.externalWorkspaceId]).toEqual(["ERROR", null]);
+    expect(decryptSecret(row.credentialCiphertext!)).toBe(commerce.connection(P.v2)!.apiKey);
+  });
+
+  it("creates a new workspace, and a project whose key this server never held cannot be activated", async () => {
+    expect((await connect("fresh", { mode: "PROVISION_NEW", currency: "bdt" })).success).toMatch(/connected/);
+    expect(commerce.workspaces.has((await installation(P.fresh))!.externalWorkspaceId!)).toBe(true);
+    // Lose the key: Commerce will not give it again, so the host refuses rather than guessing.
+    await rawPrisma.projectAppInstallation.updateMany({ where: { projectId: P.fresh }, data: { credentialCiphertext: null } });
+    expect((await connect("fresh")).error).toMatch(/gives its key only once/);
+  });
+
+  it("a wrong shared secret is Commerce's 401, shown as Commerce said it", async () => {
+    process.env.COMMERCE_PROVISIONING_SECRET = "not-the-secret";
+    expect((await connect("v2", { mode: "PROVISION_NEW", currency: "BDT" })).error).toMatch(/signature is invalid/);
+    configure();
+  });
+
+  it("only an approved address is ever called or framed", async () => {
+    process.env.COMMERCE_API_URL = "http://commerce.internal.test";
+    expect((await connect("link")).error).toMatch(/not an approved address/);
+    configure();
+    process.env.COMMERCE_APP_URL = "https://shop.example.test/";
+    expect(host.businessAppEmbedUrl("commerce", "/orders?status=open")).toEqual({ url: "https://shop.example.test/orders?status=open", origin: "https://shop.example.test" });
+    expect(host.businessAppEmbedUrl("commerce", "//evil.test/x")!.url).toBe("https://shop.example.test/dashboard");
+    expect(host.businessAppEmbedUrl("commerce", "https://evil.test/")!.url).toBe("https://shop.example.test/dashboard");
+    process.env.COMMERCE_APP_URL = "http://shop.example.test";
+    expect(host.businessAppEmbedUrl("commerce")).toBeNull();
   });
 });

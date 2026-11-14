@@ -260,6 +260,8 @@ export default async function ProjectDetailPage({
               installedByName: i.installedByName,
               createdAt: i.createdAt.toISOString(),
               contractVersion: i.contractVersion,
+              externalWorkspaceId: i.externalWorkspaceId,
+              credentialHint: i.credentialHint,
             }))}
           />
           {!canManage ? <Alert tone="info">Adding, connecting and disabling Business Apps needs the Manage Projects permission.</Alert> : null}

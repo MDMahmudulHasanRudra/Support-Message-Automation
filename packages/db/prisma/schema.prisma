@@ -10641,6 +10641,15 @@ model ProjectAppInstallation {
   contractVersion     String
   /// The app's own id for this project's workspace, returned by a verified connection. Never typed in.
   externalWorkspaceId String?
+  /// The app's tenant and connection ids from provisioning (Commerce returns both). Reference only.
+  externalTenantId     String?
+  externalConnectionId String?
+  /// The per-installation credential the app issued (Commerce: a read-only API key), as an encryptSecret
+  /// envelope. Read ONLY by packages/db's Business App client right before a call; never selected for a view.
+  credentialCiphertext String?
+  /// The credential's non-secret prefix, to recognise it in the app's own key list.
+  credentialHint       String?
+  credentialIssuedAt   DateTime?
   /// When the app last answered a verified connection check.
   lastConnectedAt     DateTime?
   /// The last failed check, in words safe to show a Main Admin (never a token or a stack trace).

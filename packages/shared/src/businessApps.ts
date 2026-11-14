@@ -43,6 +43,12 @@ export interface BusinessAppDefinition {
   capabilities: readonly BusinessAppCapability[];
   /** The integration contract version this host speaks to the app. Bumped only with the contract document. */
   contractVersion: string;
+  /**
+   * The app's OWN contract versions this host has an adapter for. Activation refuses any other version the app
+   * reports (`isSupportedAppContract`): an unknown version means unknown response shapes, and a guess about
+   * prices or stock is exactly what must never reach a customer. Empty = nothing can be activated.
+   */
+  supportedContractVersions: readonly string[];
 }
 
 export const BUSINESS_APP_CONTRACT_VERSION = "2026-11-14.draft-1";
@@ -62,7 +68,9 @@ export const BUSINESS_APPS: readonly BusinessAppDefinition[] = [
       "commerce.getActiveOffers",
       "commerce.getOrderStatus",
     ],
-    contractVersion: BUSINESS_APP_CONTRACT_VERSION,
+    // Commerce's published host contract (E-Commerce/docs/GET_ASSIST_INTEGRATION.md §12): "v1".
+    contractVersion: "v1",
+    supportedContractVersions: ["v1"],
   },
   {
     key: "education",
@@ -72,6 +80,7 @@ export const BUSINESS_APPS: readonly BusinessAppDefinition[] = [
     availability: "COMING_SOON",
     capabilities: [],
     contractVersion: BUSINESS_APP_CONTRACT_VERSION,
+    supportedContractVersions: [],
   },
   {
     key: "travel",
@@ -81,6 +90,7 @@ export const BUSINESS_APPS: readonly BusinessAppDefinition[] = [
     availability: "COMING_SOON",
     capabilities: [],
     contractVersion: BUSINESS_APP_CONTRACT_VERSION,
+    supportedContractVersions: [],
   },
 ];
 
@@ -186,4 +196,71 @@ export function sanitizeRequestedAddOns(values: readonly unknown[]): BusinessApp
   const out: BusinessAppKey[] = [];
   for (const v of values) if (typeof v === "string" && installRefusal(v) === null && !out.includes(v as BusinessAppKey)) out.push(v as BusinessAppKey);
   return out;
+}
+
+/** Whether the app's reported contract version is one this host has an adapter for (exact, case-sensitive). */
+export function isSupportedAppContract(key: BusinessAppKey, version: unknown): boolean {
+  return typeof version === "string" && businessAppDefinition(key).supportedContractVersions.includes(version);
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * An app address from deployment configuration, or null when it is not one this host will talk to: HTTPS, or
+ * plain HTTP only on a loopback host (a developer's machine). No credentials in the URL, no query or fragment —
+ * a base address is an origin plus an optional path, nothing a request could smuggle state through.
+ */
+export function parseApprovedAppUrl(raw: string | null | undefined): URL | null {
+  if (!raw || !raw.trim()) return null;
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return null;
+  }
+  if (url.username || url.password || url.search || url.hash) return null;
+  if (url.protocol === "https:") return url;
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return url;
+  return null;
+}
+
+/** Longest a launch ticket may still be valid for when it reaches us. A longer one is refused, not trimmed. */
+export const LAUNCH_TICKET_MAX_LIFETIME_MS = 5 * 60_000;
+
+export type LaunchTicketRefusal = "INVALID_URL" | "NOT_SECURE" | "WRONG_ORIGIN" | "EXPIRED" | "TOO_LONG_LIVED";
+
+/**
+ * Whether a launch hand-off an app returned may be followed: its address must be on the app's approved origin
+ * (exactly — a lookalike host or another port is refused), secure by the same rule as the configuration, and
+ * the ticket must expire soon but not already have expired.
+ */
+export function validateLaunchTicket(
+  ticket: { redirectUrl: string; expiresAt: string },
+  approvedOrigin: string,
+  now: Date = new Date(),
+): { ok: true; url: URL } | { ok: false; refusal: LaunchTicketRefusal } {
+  let url: URL;
+  try {
+    url = new URL(ticket.redirectUrl);
+  } catch {
+    return { ok: false, refusal: "INVALID_URL" };
+  }
+  if (url.username || url.password) return { ok: false, refusal: "INVALID_URL" };
+  const secure = url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+  if (!secure) return { ok: false, refusal: "NOT_SECURE" };
+  if (url.origin !== approvedOrigin) return { ok: false, refusal: "WRONG_ORIGIN" };
+  const expires = Date.parse(ticket.expiresAt);
+  if (!Number.isFinite(expires) || expires <= now.getTime()) return { ok: false, refusal: "EXPIRED" };
+  if (expires - now.getTime() > LAUNCH_TICKET_MAX_LIFETIME_MS) return { ok: false, refusal: "TOO_LONG_LIVED" };
+  return { ok: true, url };
+}
+
+/**
+ * A path inside an embedded app the person asked to open (`?path=`), or the app's default page. Only an
+ * absolute path on the app's own origin: no scheme, no `//host`, no backslash tricks, no control characters.
+ */
+export function safeAppPath(raw: string | null | undefined, fallback = "/dashboard"): string {
+  if (!raw) return fallback;
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\") || /[\u0000-\u001f\u007f]/.test(raw) || raw.length > 300) return fallback;
+  return raw;
 }

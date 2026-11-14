@@ -2,13 +2,14 @@
 
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { businessAppDefinition, isBusinessAppKey } from "@support-automation/shared";
+import { businessAppDefinition, isBusinessAppKey, validateLaunchTicket, type ConnectRequest } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import {
   authorizeBusinessAppLaunch,
   businessAppAdapterFor,
+  businessAppEmbedUrl,
   connectBusinessApp,
   installBusinessApp,
   setBusinessAppEnabled,
@@ -54,13 +55,41 @@ export async function addBusinessApp(projectId: string, appKey: string): Promise
   return { success: `${name} was added. It is waiting to connect; nothing has been sent to it.` };
 }
 
-export async function connectBusinessAppAction(installationId: string, projectId: string): Promise<BusinessAppActionResult> {
+/** What the Connect dialog may ask for, re-read on the server: the browser's values are never trusted as typed. */
+export interface ConnectInput {
+  mode: "PROVISION_NEW" | "LINK_EXISTING" | "RECHECK";
+  currency?: string;
+  workspaceId?: string;
+}
+
+function parseConnectInput(input: ConnectInput | undefined): ConnectRequest | { error: string } {
+  const mode = input?.mode ?? "RECHECK";
+  if (mode === "RECHECK") return { mode };
+  if (mode === "PROVISION_NEW") {
+    const currency = (input?.currency ?? "").trim().toUpperCase();
+    if (currency && !/^[A-Z]{3}$/.test(currency)) return { error: "The currency must be a three-letter code, such as BDT or USD." };
+    return { mode, currency: currency || null };
+  }
+  if (mode === "LINK_EXISTING") {
+    const workspaceId = (input?.workspaceId ?? "").trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)) {
+      return { error: "Paste the Commerce workspace id (it looks like 621ac1c0-9b9b-4094-ad6c-7151bd582fce)." };
+    }
+    return { mode, externalWorkspaceId: workspaceId };
+  }
+  return { error: "Unknown way to connect." };
+}
+
+export async function connectBusinessAppAction(installationId: string, projectId: string, input?: ConnectInput): Promise<BusinessAppActionResult> {
   const access = await requireManage();
   if ("denied" in access) return { error: access.denied };
-  const result = await connectBusinessApp(installationId, access.session);
+  const request = parseConnectInput(input);
+  if ("error" in request) return { error: request.error };
+  const result = await connectBusinessApp(installationId, access.session, request);
   await logSystemEvent(result.ok ? "INFO" : "WARN", "business_apps", result.ok ? "Business App connected" : "Business App connection check did not succeed", {
     installationId,
     projectId,
+    mode: request.mode,
     by: access.session.username,
     ...(result.ok ? {} : { reason: result.error }),
   });
@@ -91,7 +120,8 @@ export async function launchBusinessApp(appKey: string): Promise<{ error?: strin
   const adapter = businessAppAdapterFor(decision.app.key);
   if (!adapter) return { error: `${decision.app.name} has not published its sign-in hand-off yet, so it cannot be opened from here. Nothing was sent to it.` };
   const ticket = await adapter.createLaunch(
-    { projectId: decision.project.id, appKey: decision.app.key, externalWorkspaceId: decision.installation.externalWorkspaceId, contractVersion: decision.installation.contractVersion },
+    // No credential is handed to a launch: a hand-off is the app's own single-use code, never the host's key.
+    { projectId: decision.project.id, appKey: decision.app.key, externalWorkspaceId: decision.installation.externalWorkspaceId, contractVersion: decision.installation.contractVersion, credential: null },
     {
       // Pseudonymous and stable per installation: the app never learns the host's own user id.
       subject: createHash("sha256").update(`${decision.installation.id}:${decision.session.userId}`).digest("hex"),
@@ -100,13 +130,15 @@ export async function launchBusinessApp(appKey: string): Promise<{ error?: strin
     },
   );
   if (!ticket.ok) return { error: ticket.error.message };
-  let url: URL;
-  try {
-    url = new URL(ticket.data.redirectUrl);
-  } catch {
-    return { error: `${decision.app.name} answered with an address that is not valid.` };
+  // Only an address on the app's approved origin, secure, and a ticket that expires soon but has not yet.
+  const approved = businessAppEmbedUrl(decision.app.key)?.origin;
+  if (!approved) return { error: `${decision.app.name}'s address is not configured on this server, so it was not opened.` };
+  const checked = validateLaunchTicket(ticket.data, approved);
+  if (!checked.ok) {
+    const why = { INVALID_URL: "an address that is not valid", NOT_SECURE: "an address that is not secure", WRONG_ORIGIN: "an address outside its approved origin", EXPIRED: "a hand-off that has already expired", TOO_LONG_LIVED: "a hand-off that stays valid for too long" }[checked.refusal];
+    return { error: `${decision.app.name} answered with ${why}, so it was not opened.` };
   }
-  if (url.protocol !== "https:") return { error: `${decision.app.name} answered with an address that is not secure, so it was not opened.` };
+  const url = checked.url;
   await logSystemEvent("INFO", "business_apps", "Business App opened", { appKey, projectId: decision.project.id, by: decision.session.username });
   return { redirectUrl: url.toString() };
 }
