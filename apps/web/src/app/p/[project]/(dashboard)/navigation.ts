@@ -736,6 +736,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Every integration in one place: connect, fix or manage each from its card (server/integrationsDirectory.ts).
+    id: "integrations-link",
+    label: "Integrations",
+    icon: PlugZap,
+    links: [{ href: "/integrations", label: "Integrations", icon: PlugZap }],
+  },
+  {
     // Last and on its own, so it is always one glance away. A one-link module renders as that link.
     id: "settings-link",
     label: "Settings",
@@ -758,6 +765,8 @@ export const NAV_GROUPS: NavGroup[] = [
  * composers exist only to launch a send and require the manage key to open.
  */
 const NAV_KEY_EXACT: Record<string, string> = {
+  // The directory itself writes nothing; each card is offered only when its own page would open.
+  "/integrations": "settings.view",
   "/group-message-sender": "bulk_messaging.manage",
   "/group-member-adder": "bulk_messaging.manage",
   "/ai-learning/knowledge-base/import": "ai_learning.manage",

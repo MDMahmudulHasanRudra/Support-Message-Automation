@@ -3181,6 +3181,16 @@ messages. Rules worth not undoing:
 - **Bulk email**: prepared by one person, approved by ANOTHER within 24 h (CHECK `ClientMessageBatch_no_self_approval`),
   recorded consent only, re-checked at approval. Keys `clients.send_messages` / `clients.approve_messages`.
 
+### Integrations page (`/integrations`, `server/integrationsDirectory.ts`, 14 Nov 2026)
+
+One sidebar entry lists every integration a project can have (WhatsApp, Meta/Telegram channels, website chat, email,
+Commerce, WooCommerce, Shopify, couriers, payments, Google Sheets, AI providers, product knowledge, social, API &
+webhooks) as a card with its REAL state read from its own records (Connected / Needs attention / Not connected / Off)
+and one button: Connect, Fix or Manage. Rules worth not undoing: the page sets nothing up — each card opens the
+integration's own page, which keeps every check; a card shows only when that page would open for the person (same key,
+module and page-access rules as the sidebar); a status read that fails shows "Not connected", never breaks the page.
+**A new integration gets a card in `DEFINITIONS`** (name, one plain line, its page, where adding starts, a status read).
+
 ### Business Apps — external first-party apps as project add-ons (`docs/BUSINESS_APP_INTEGRATION_CONTRACT.md`, 14 Nov 2026)
 
 Commerce / Education / Travel ERPs deployed on their own, with their own databases. NOT Core Modules, and unrelated to the
