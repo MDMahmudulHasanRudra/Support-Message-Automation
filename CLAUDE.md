@@ -3181,6 +3181,18 @@ messages. Rules worth not undoing:
 - **Bulk email**: prepared by one person, approved by ANOTHER within 24 h (CHECK `ClientMessageBatch_no_self_approval`),
   recorded consent only, re-checked at approval. Keys `clients.send_messages` / `clients.approve_messages`.
 
+### Business Apps — external first-party apps as project add-ons (`docs/BUSINESS_APP_INTEGRATION_CONTRACT.md`, 14 Nov 2026)
+
+Commerce / Education / Travel ERPs deployed on their own, with their own databases. NOT Core Modules, and unrelated to the
+internal Commerce modules below. Rules worth not undoing: the registry (`packages/shared/src/businessApps.ts`) holds no
+secret and no address; one `ProjectAppInstallation` per project + app (unique), project-scoped AND customer-scoped
+(TENANT_PARENT); **never ACTIVE without a verified connection** (only `connectBusinessApp` on an adapter's verified answer,
+plus a database CHECK); enabling a disabled app returns it to PENDING; no app call inside a transaction; install / connect /
+disable need `projects.manage`, opening needs `business_apps.open` (not a `.view` key); launch is decided only by
+`authorizeBusinessAppLaunch` and is a top-level navigation to a single-use URL, never an iframe or a host credential;
+every host-side capability call passes `resolveBusinessAppCapability` (packages/db) first. No adapter is registered yet
+(WAITING FOR COMMERCE): do not invent endpoints. A project created with no add-on must stay byte-for-byte as before.
+
 ### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
 
 Features `PRODUCT_CATALOG`, `ORDERS`, `SALES_PIPELINE`, all **off by default** (on in the E-commerce type). The

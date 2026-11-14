@@ -4,6 +4,8 @@ import { NotificationEvent } from "@prisma/client";
 import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
 import {
+  decideCapability as decideBusinessAppCapability,
+  isBusinessAppKey,
   buildWhatsAppContactId,
   canonicalPrefix,
   CLIENT_CODE_DEFAULT_WIDTH,
@@ -224,6 +226,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "Ticket", "TicketEvent", "TicketSettings",
   // Automatic routing (AUTO_ROUTING.md).
   "RoutingSettings",
+  // Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md).
+  "ProjectAppInstallation",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
@@ -557,6 +561,8 @@ const TENANT_PARENT: Readonly<Record<string, "user" | "project">> = {
   PushDevice: "user",
   ProjectAccess: "project",
   ProjectFeature: "project",
+  // Read by the Main Admin portal across the customer's own projects, and inside a project through the scoped client.
+  ProjectAppInstallation: "project",
 };
 
 /** One settings row per customer; the original installation's row keeps its fixed id. */
@@ -2817,4 +2823,41 @@ export async function collectContactFromChat(db: any, input: CollectContactInput
     const heldElsewhere = input.values.filter((v) => holders.has(key(v)) && holders.get(key(v)) !== contactId).map((v) => ({ ...v, contactId: holders.get(key(v))! }));
     return { contactId, serial, created, added: fresh, heldElsewhere };
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Whether host-side code may call one capability of a Business App for one project — the ONE gate every
+ * caller (the AI's grounding, the worker, a report) must pass before an adapter is asked anything. Reads
+ * the project's effective status (a billing hold reads as SUSPENDED, as everywhere else) and the
+ * installation, both by the explicit project id, and applies `decideCapability` from packages/shared.
+ * A disabled, pending or failed installation, or a held project, is "no call" — never an empty answer.
+ * `db` may be the unscoped client (the worker): the project id is named on every query.
+ */
+export async function resolveBusinessAppCapability(
+  db: PrismaClient,
+  projectId: string,
+  appKey: string,
+  capability: string,
+): Promise<{ allowed: true; externalWorkspaceId: string; contractVersion: string } | { allowed: false; reason: string }> {
+  if (!isBusinessAppKey(appKey)) return { allowed: false, reason: "UNKNOWN_APP" };
+  const project = await db.project.findUnique({ where: { id: projectId }, select: { status: true, billingHoldAt: true } });
+  if (!project) return { allowed: false, reason: "UNKNOWN_PROJECT" };
+  const held = project.billingHoldAt !== null && (project.status === "SETUP" || project.status === "ACTIVE");
+  const installation = await db.projectAppInstallation.findFirst({
+    where: { projectId, appKey },
+    select: { status: true, externalWorkspaceId: true, contractVersion: true },
+  });
+  const decision = decideBusinessAppCapability({
+    appKey,
+    capability,
+    projectStatus: held ? "SUSPENDED" : project.status,
+    installationStatus: (installation?.status ?? null) as Parameters<typeof decideBusinessAppCapability>[0]["installationStatus"],
+  });
+  if (!decision.allowed) return decision;
+  // ACTIVE cannot exist without a workspace id (database CHECK), so this is never empty here.
+  return { allowed: true, externalWorkspaceId: installation!.externalWorkspaceId!, contractVersion: installation!.contractVersion };
 }

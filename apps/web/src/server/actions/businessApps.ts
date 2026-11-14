@@ -1,0 +1,112 @@
+"use server";
+
+import { createHash } from "node:crypto";
+import { revalidatePath } from "next/cache";
+import { businessAppDefinition, isBusinessAppKey } from "@support-automation/shared";
+import { requireSession, type Session } from "@/server/auth";
+import { hasPermission } from "@/server/permissions";
+import { logSystemEvent } from "@/server/logSystemEvent";
+import {
+  authorizeBusinessAppLaunch,
+  businessAppAdapterFor,
+  connectBusinessApp,
+  installBusinessApp,
+  setBusinessAppEnabled,
+} from "@/server/businessApps";
+
+/**
+ * Business Apps actions (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md). Every Server Action is a public endpoint,
+ * so each makes its own check: adding, connecting, disabling and enabling an app is a Main Admin's
+ * (`projects.manage`, the same key that creates projects); launching is `business_apps.open` inside the
+ * project, decided by `authorizeBusinessAppLaunch`. Entitlement boundary: today a Main Admin may add any
+ * INSTALLABLE app; when Business Apps are billed, the plan check goes in `installBusinessApp` and nowhere else.
+ */
+
+export interface BusinessAppActionResult {
+  error?: string;
+  success?: string;
+}
+
+const MANAGE_DENIED = "Managing Business Apps needs the “Manage Projects and Project Access” permission.";
+
+async function requireManage(): Promise<{ session: Session } | { denied: string }> {
+  const session = await requireSession();
+  return (await hasPermission(session, "projects.manage")) ? { session } : { denied: MANAGE_DENIED };
+}
+
+function revalidateAdmin(projectId?: string) {
+  revalidatePath("/admin/business-apps");
+  if (projectId) revalidatePath(`/admin/projects/${projectId}`);
+}
+
+export async function addBusinessApp(projectId: string, appKey: string): Promise<BusinessAppActionResult> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+  const result = await installBusinessApp(projectId, appKey, access.session);
+  if (!result.ok) return { error: result.error };
+  const name = businessAppDefinition(appKey as Parameters<typeof businessAppDefinition>[0]).name;
+  await logSystemEvent("INFO", "business_apps", `Business App "${name}" added to a project`, { projectId, appKey, installationId: result.installationId, by: access.session.username }, {
+    actorUserId: access.session.userId,
+    targetType: "ProjectAppInstallation",
+    targetId: result.installationId,
+  });
+  revalidateAdmin(projectId);
+  return { success: `${name} was added. It is waiting to connect; nothing has been sent to it.` };
+}
+
+export async function connectBusinessAppAction(installationId: string, projectId: string): Promise<BusinessAppActionResult> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+  const result = await connectBusinessApp(installationId, access.session);
+  await logSystemEvent(result.ok ? "INFO" : "WARN", "business_apps", result.ok ? "Business App connected" : "Business App connection check did not succeed", {
+    installationId,
+    projectId,
+    by: access.session.username,
+    ...(result.ok ? {} : { reason: result.error }),
+  });
+  revalidateAdmin(projectId);
+  return result.ok ? { success: result.message } : { error: result.error };
+}
+
+export async function setBusinessAppEnabledAction(installationId: string, projectId: string, enabled: boolean): Promise<BusinessAppActionResult> {
+  const access = await requireManage();
+  if ("denied" in access) return { error: access.denied };
+  const result = await setBusinessAppEnabled(installationId, enabled, access.session);
+  if (result.ok) {
+    await logSystemEvent("WARN", "business_apps", enabled ? "Business App enabled" : "Business App disabled", { installationId, projectId, by: access.session.username });
+  }
+  revalidateAdmin(projectId);
+  return result.ok ? { success: result.message } : { error: result.error };
+}
+
+/**
+ * Open an app from the workspace. The same decision as the launcher page, then the app's adapter is asked
+ * for a short-lived, single-use launch — never a host cookie or a long-lived credential. No adapter exists
+ * yet, so this answers honestly that the app cannot be opened (WAITING FOR COMMERCE).
+ */
+export async function launchBusinessApp(appKey: string): Promise<{ error?: string; redirectUrl?: string }> {
+  const decision = await authorizeBusinessAppLaunch(appKey);
+  if (!decision.ok) return { error: decision.message };
+  if (!isBusinessAppKey(appKey)) return { error: "Unknown Business App." };
+  const adapter = businessAppAdapterFor(decision.app.key);
+  if (!adapter) return { error: `${decision.app.name} has not published its sign-in hand-off yet, so it cannot be opened from here. Nothing was sent to it.` };
+  const ticket = await adapter.createLaunch(
+    { projectId: decision.project.id, appKey: decision.app.key, externalWorkspaceId: decision.installation.externalWorkspaceId, contractVersion: decision.installation.contractVersion },
+    {
+      // Pseudonymous and stable per installation: the app never learns the host's own user id.
+      subject: createHash("sha256").update(`${decision.installation.id}:${decision.session.userId}`).digest("hex"),
+      displayName: decision.session.name || decision.session.username,
+      scopes: ["app.open"],
+    },
+  );
+  if (!ticket.ok) return { error: ticket.error.message };
+  let url: URL;
+  try {
+    url = new URL(ticket.data.redirectUrl);
+  } catch {
+    return { error: `${decision.app.name} answered with an address that is not valid.` };
+  }
+  if (url.protocol !== "https:") return { error: `${decision.app.name} answered with an address that is not secure, so it was not opened.` };
+  await logSystemEvent("INFO", "business_apps", "Business App opened", { appKey, projectId: decision.project.id, by: decision.session.username });
+  return { redirectUrl: url.toString() };
+}

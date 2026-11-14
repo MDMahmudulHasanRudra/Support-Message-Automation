@@ -13,6 +13,13 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Business Apps foundation** (migration `20261114100000_business_app_installations`): separately deployed
+  first-party apps (Commerce first; Education and Travel listed as coming soon) as optional project add-ons. Registry,
+  `ProjectAppInstallation` (never Connected without a verified connection), an optional Business Add-ons step in
+  Create Project, Main Admin → Business Apps and a Business Apps tab per project, a sidebar group and launcher in the
+  workspace, and the capability gate. No app is connected yet: Commerce has not published its endpoints. Not
+  deployed. Reference: `docs/BUSINESS_APP_INTEGRATION_CONTRACT.md`.
+
 - **Client CRM & Billing V7** (inside `CLIENT_CENTER`; migrations `20261101130000_email_purpose_client_message`,
   `20261101130100_client_crm_v7`): invoice and money-receipt pages with print and PDF, a versioned Invoice & Receipt
   setup, renewal offers and a Renewals workspace (an offer is never money owed; a term renews once), client message

@@ -25,6 +25,7 @@ import {
   resolveNavLocation,
   settingsSectionsFor,
   tabsForLocation,
+  withBusinessApps,
   ALL_NAV_LINKS,
   type NavGroup,
 } from "./navigation";
@@ -36,6 +37,8 @@ import type { SwitcherProject } from "@/components/ProjectSwitcher";
 import { Alert } from "@/components/ui";
 import { pathAllowedByFeatures } from "@support-automation/shared";
 import { canOpenPath, type SectionAccess } from "./projectSections";
+
+const NO_BUSINESS_APPS: Array<{ key: string; name: string; icon: "ShoppingBag" | "GraduationCap" | "Plane" }> = [];
 
 /**
  * Owns the client state layout.tsx can't hold itself (it's an async Server
@@ -60,8 +63,11 @@ export function DashboardShell({
   workspaceProjects,
   billingNotice,
   supportSession,
+  businessApps = NO_BUSINESS_APPS,
 }: {
   children: ReactNode;
+  /** This project's connected Business Apps the person may open (server-decided); the sidebar's Business Apps group. */
+  businessApps?: Array<{ key: string; name: string; icon: "ShoppingBag" | "GraduationCap" | "Plane" }>;
   /**
    * Set when the page is shown in the Main Admin Workspace (MAIN_ADMIN_WORKSPACE.md): the projects
    * the viewer may enter, each with its switched-off features, for the project tabs. The same page,
@@ -100,8 +106,8 @@ export function DashboardShell({
   // that is off in THIS project opens in a project that has it (lib/workspace.ts workspaceOpenHref).
   // Global modules (Users & Permissions, Release Notes) move up to the Main Admin section.
   const { navGroups, globalGroups } = useMemo(() => {
-    if (!workspaceProjects) return { navGroups: navGroupsFor(granted, featuresOff, pages), globalGroups: [] as NavGroup[] };
-    const groups = navGroupsFor(granted, new Set(featuresOffEverywhere(workspaceProjects))).map((group) => ({
+    if (!workspaceProjects) return { navGroups: withBusinessApps(navGroupsFor(granted, featuresOff, pages), businessApps), globalGroups: [] as NavGroup[] };
+    const groups = withBusinessApps(navGroupsFor(granted, new Set(featuresOffEverywhere(workspaceProjects))), businessApps).map((group) => ({
       ...group,
       links: group.links.map((link) => {
         const feature = featureForPath(link.href);
@@ -110,7 +116,7 @@ export function DashboardShell({
     }));
     const isGlobal = (group: NavGroup) => group.links.every((link) => isGlobalPage(link.href));
     return { navGroups: groups.filter((g) => !isGlobal(g)), globalGroups: groups.filter(isGlobal) };
-  }, [granted, featuresOff, workspaceProjects, pages]);
+  }, [granted, featuresOff, workspaceProjects, pages, businessApps]);
   const settingsSections = useMemo(() => settingsSectionsFor(granted, featuresOff, pages), [granted, featuresOff, pages]);
   const paletteLinks = useMemo(
     () =>

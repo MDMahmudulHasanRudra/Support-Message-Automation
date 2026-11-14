@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import NextLink from "next/link";
 import { readClientCodeSeries } from "@support-automation/db";
-import { moduleDefinition, previewClientCodes, PROJECT_STATUS_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "@support-automation/shared";
+import { businessAppDefinition, moduleDefinition, previewClientCodes, PROJECT_STATUS_DESCRIPTIONS, PROJECT_TYPE_LABELS } from "@support-automation/shared";
 import { ArrowLeft, ArrowRight, Blocks, CheckCircle2, Circle, PartyPopper, Smartphone, UserPlus, Users } from "lucide-react";
 import { globalPrisma } from "@/server/db";
 import { Alert, Badge, ButtonLink, Card, PageHeader, SectionHeader } from "@/components/ui";
@@ -10,12 +10,16 @@ import { getProjectDetail, requireMainAdminPage } from "@/server/mainAdmin";
 import { whatsappLine } from "../../ProjectCard";
 import { getProjectModuleState } from "@/server/projectModules";
 import { ProjectAccessList, ProjectDeletePanel, ProjectDetailsForm, ProjectStatusControl } from "./ProjectControls";
+import { BusinessAppsPanel } from "./BusinessAppsPanel";
+import { BusinessAppStatusBadge } from "@/components/businessApps/BusinessAppStatusBadge";
+import { listProjectInstallations } from "@/server/businessApps";
 
 export const metadata = { title: "Project" };
 
 const TABS = [
   { key: "overview", label: "Overview" },
   { key: "access", label: "Team & Access" },
+  { key: "apps", label: "Business Apps" },
   { key: "settings", label: "Settings" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
@@ -38,7 +42,7 @@ export default async function ProjectDetailPage({
   const detail = await getProjectDetail(session.userId, id);
   if (!detail) notFound();
   const { project, users, configuration } = detail;
-  const [modules, codeSeries] = await Promise.all([getProjectModuleState(id), readClientCodeSeries(globalPrisma, id)]);
+  const [modules, codeSeries, installations] = await Promise.all([getProjectModuleState(id), readClientCodeSeries(globalPrisma, id), listProjectInstallations(id)]);
   const liveCodes = codeSeries.find((s) => !s.retiredAt);
   const created = query.created === "1";
   const tab: Tab = TABS.some((t) => t.key === query.tab) ? (query.tab as Tab) : "overview";
@@ -88,6 +92,7 @@ export default async function ProjectDetailPage({
           >
             {t.label}
             {t.key === "access" ? <span className="ml-1.5 tabular-nums text-[color:var(--color-subtle-foreground)]">{withAccess.length}</span> : null}
+            {t.key === "apps" && installations.length ? <span className="ml-1.5 tabular-nums text-[color:var(--color-subtle-foreground)]">{installations.length}</span> : null}
           </NextLink>
         ))}
       </nav>
@@ -167,6 +172,28 @@ export default async function ProjectDetailPage({
             </Card>
           </div>
 
+          {installations.length ? (
+            <Card>
+              <SectionHeader
+                title="Business Apps"
+                description={`${installations.filter((i) => i.status === "ACTIVE").length} of ${installations.length} connected.`}
+                action={
+                  <ButtonLink href={tabHref("apps")} variant="secondary" size="sm">
+                    Manage
+                  </ButtonLink>
+                }
+              />
+              <div className="flex flex-wrap gap-2">
+                {installations.map((i) => (
+                  <span key={i.id} className="inline-flex items-center gap-2 rounded-full bg-[var(--color-surface-sunken)] py-1 pl-3 pr-1.5 text-[12.5px]">
+                    {businessAppDefinition(i.appKey).name}
+                    <BusinessAppStatusBadge status={i.status} />
+                  </span>
+                ))}
+              </div>
+            </Card>
+          ) : null}
+
           <Card>
             <SectionHeader
               title="Who can enter"
@@ -208,6 +235,34 @@ export default async function ProjectDetailPage({
             }
           />
           <ProjectAccessList projectId={project.id} users={users} canManage={canManage} />
+        </div>
+      ) : null}
+
+      {tab === "apps" ? (
+        <div className="space-y-4">
+          <SectionHeader
+            title="Business Apps"
+            description="Separate business apps this project can use, each with its own data. An app opens from the workspace only after its connection is verified, and only for roles allowed to open Business Apps."
+          />
+          <BusinessAppsPanel
+            projectId={project.id}
+            projectSlug={project.slug}
+            projectStatus={project.status}
+            canManage={canManage}
+            canEnter={project.canEnter}
+            installations={installations.map((i) => ({
+              id: i.id,
+              appKey: i.appKey,
+              status: i.status,
+              lastConnectedAt: i.lastConnectedAt?.toISOString() ?? null,
+              lastError: i.lastError,
+              lastErrorAt: i.lastErrorAt?.toISOString() ?? null,
+              installedByName: i.installedByName,
+              createdAt: i.createdAt.toISOString(),
+              contractVersion: i.contractVersion,
+            }))}
+          />
+          {!canManage ? <Alert tone="info">Adding, connecting and disabling Business Apps needs the Manage Projects permission.</Alert> : null}
         </div>
       ) : null}
 
