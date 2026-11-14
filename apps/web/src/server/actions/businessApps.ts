@@ -2,13 +2,14 @@
 
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { businessAppDefinition, isBusinessAppKey, validateLaunchTicket, type ConnectRequest } from "@support-automation/shared";
+import { businessAppDefinition, isBusinessAppKey, safeAppPath, validateLaunchTicket, type ConnectRequest } from "@support-automation/shared";
 import { requireSession, type Session } from "@/server/auth";
 import { hasPermission } from "@/server/permissions";
 import { logSystemEvent } from "@/server/logSystemEvent";
 import {
   authorizeBusinessAppLaunch,
   businessAppAdapterFor,
+  businessAppHostOf,
   businessAppEmbedUrl,
   connectBusinessApp,
   installBusinessApp,
@@ -110,10 +111,11 @@ export async function setBusinessAppEnabledAction(installationId: string, projec
 
 /**
  * Open an app from the workspace. The same decision as the launcher page, then the app's adapter is asked
- * for a short-lived, single-use launch — never a host cookie or a long-lived credential. No adapter exists
- * yet, so this answers honestly that the app cannot be opened (WAITING FOR COMMERCE).
+ * for a short-lived, single-use launch — never a host cookie or a long-lived credential. The person is
+ * identified to the app only by a pseudonymous subject (this installation + this user, hashed); the app signs
+ * them in only as the account they linked there themselves. `path` is a page inside the app (`safeAppPath`).
  */
-export async function launchBusinessApp(appKey: string): Promise<{ error?: string; redirectUrl?: string }> {
+export async function launchBusinessApp(appKey: string, path?: string | null): Promise<{ error?: string; redirectUrl?: string; mode?: "SIGN_IN" | "LINK" }> {
   const decision = await authorizeBusinessAppLaunch(appKey);
   if (!decision.ok) return { error: decision.message };
   if (!isBusinessAppKey(appKey)) return { error: "Unknown Business App." };
@@ -127,6 +129,8 @@ export async function launchBusinessApp(appKey: string): Promise<{ error?: strin
       subject: createHash("sha256").update(`${decision.installation.id}:${decision.session.userId}`).digest("hex"),
       displayName: decision.session.name || decision.session.username,
       scopes: ["app.open"],
+      host: await businessAppHostOf(decision.project.id),
+      path: safeAppPath(path),
     },
   );
   if (!ticket.ok) return { error: ticket.error.message };
@@ -139,6 +143,6 @@ export async function launchBusinessApp(appKey: string): Promise<{ error?: strin
     return { error: `${decision.app.name} answered with ${why}, so it was not opened.` };
   }
   const url = checked.url;
-  await logSystemEvent("INFO", "business_apps", "Business App opened", { appKey, projectId: decision.project.id, by: decision.session.username });
-  return { redirectUrl: url.toString() };
+  await logSystemEvent("INFO", "business_apps", "Business App opened", { appKey, projectId: decision.project.id, by: decision.session.username, mode: ticket.data.mode ?? null });
+  return { redirectUrl: url.toString(), ...(ticket.data.mode ? { mode: ticket.data.mode } : {}) };
 }

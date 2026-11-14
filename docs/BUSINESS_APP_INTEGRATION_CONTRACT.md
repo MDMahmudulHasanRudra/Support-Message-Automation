@@ -106,16 +106,28 @@ Workspace → Business Apps → Commerce (`/p/<project>/apps/commerce`) shows **
 - The address carries only a path inside Commerce (`?path=`, through `safeAppPath`: absolute path only, never `//host`, a scheme or a backslash). No Chithii cookie, token, project id or user id is put in it. Chithii injects no script.
 - Chithii's (report-only) CSP lists `COMMERCE_APP_URL`'s origin in `frame-src`.
 
-### 5.2 Who the person is inside Commerce
+### 5.2 Signing the person in to Commerce **IMPLEMENTED** (both sides, 14 Nov 2026)
 
-The person signs in **inside the frame with their Commerce account**; Commerce's own roles decide what they can do there. Chithii decides only whether they may open Commerce from this project. **IMPLEMENTED**
+The frame opens on a **single-use sign-in address** from Commerce, so a person who has linked their Commerce account lands signed in (Commerce's `GET_ASSIST_INTEGRATION.md` §4).
 
-Single sign-on (Chithii signing the person in to Commerce) is **WAITING FOR COMMERCE**: Commerce v1 answers `POST /api/v1/integrations/sso/exchange` with 501, and its OIDC design (`SSO_INTEGRATION.md` in Commerce) is not built. The host side is ready for a launch hand-off: `createLaunch` returns `{ redirectUrl, expiresAt }`, and `validateLaunchTicket` follows it only on the approved origin, secure, expiring within 5 minutes and not already expired. **IMPLEMENTED on the host**, tested with a stand-in adapter.
+1. On open (and on every Reload) the page calls `launchBusinessApp(appKey, path)`, which repeats the launch decision and asks the adapter.
+2. `commerceAppAdapter.createLaunch` sends `POST /api/v1/integrations/sso/launch`, signed with `COMMERCE_PROVISIONING_SECRET` exactly like provisioning. The body is `{ hostCustomerId, hostProjectId, subject, displayName, returnPath }`.
+   - `subject` = SHA-256 of `<installation id>:<user id>`: stable for one person in one project, and never Chithii's user id.
+   - No credential of the installation is sent.
+3. Commerce answers `{ mode: "signIn" | "link", launchPath: "/sso/launch#code=…", expiresAtUtc }`.
+   - The host accepts only exactly that path shape, puts it on `COMMERCE_APP_URL`'s origin, and follows it only through `validateLaunchTicket` (approved origin, secure, expiring within 5 minutes, not already expired).
+   - The code is in the fragment, so it never reaches a server log or a referrer.
+4. Commerce's page redeems the code once:
+   - **signIn** — a normal Commerce session for the mapped workspace.
+   - **link** (first time) — the person signs in with their Commerce email and password once, and Commerce records the link. This works only if that account is an active member of the mapped workspace.
 
-### 5.3 Commerce-side items for embedding **WAITING FOR COMMERCE**
+Who the person is in Commerce is always Commerce's decision: it never takes Chithii's word, never creates a user or membership, and re-checks the connection, workspace, user and membership on every sign-in. Commerce's roles decide what they can do; Chithii decides only whether they may open Commerce from this project.
 
-- Commerce's **frontend** sends no `frame-ancestors` or `X-Frame-Options` (its `HostPlatform:AllowedParentOrigins` is applied only to API responses). It should send `frame-ancestors <Chithii origins>` on the dashboard pages too, so only Chithii can frame it.
-- A workspace hint for the frame (open the mapped workspace after sign-in for a person who belongs to several) does not exist; Commerce opens whichever workspace the person last used.
+When Commerce cannot hand over a sign-in (an older Commerce: 404; a refused or disabled connection: 403), the frame opens Commerce's own sign-in page with the reason shown above it.
+
+### 5.3 Framing **IMPLEMENTED** (Commerce side)
+
+Commerce's dashboard sends `Content-Security-Policy: frame-ancestors <HOST_PLATFORM_ALLOWED_ORIGINS>` (`frontend/src/proxy.ts`, read at runtime; empty = `'none'`). **Set `HOST_PLATFORM_ALLOWED_ORIGINS` on Commerce's web service to Chithii's address, or the embedded view is refused by the browser.**
 
 ## 6. Permission scopes
 
@@ -185,12 +197,12 @@ Commerce v1 emits signed webhooks from an outbox (`commerce.product.*`, `commerc
 
 | Item | Status |
 |---|---|
-| SSO / identity hand-off into the frame | **WAITING FOR COMMERCE** (its SSO answers 501) |
-| A newly provisioned workspace has no user, so nobody can sign in to it | **WAITING FOR COMMERCE** (membership provisioning, or SSO with membership mapping) |
-| `frame-ancestors` on the Commerce dashboard itself (today any site can frame it) | **WAITING FOR COMMERCE** |
+| Sign-in hand-off into the frame | **IMPLEMENTED** (§5.2; a person links their Commerce account once) |
+| `frame-ancestors` on the Commerce dashboard | **IMPLEMENTED** (§5.3; needs `HOST_PLATFORM_ALLOWED_ORIGINS` set) |
+| Opening the mapped workspace for a person in several workspaces | **IMPLEMENTED** (the sign-in session is for the mapped workspace) |
+| A newly provisioned workspace has no user, so nobody can sign in or link to it | **WAITING FOR COMMERCE** (a Commerce admin must add a member; linking never creates one) |
 | Key rotation or re-issue to the host; host-initiated disable / revoke / session end | **WAITING FOR COMMERCE** |
-| Opening the mapped workspace in the frame for a person in several workspaces | **WAITING FOR COMMERCE** |
-| Customer search matches a phone as typed (`Contains`); a number stored with spaces may not be found by its digits | **WAITING FOR COMMERCE** (a normalised phone search) |
+| Customer search by a phone number's digits, however Commerce stored it (`+33 6 12…`) | **IMPLEMENTED** (Commerce side, 14 Nov 2026) |
 | A host webhook receiver for Commerce events | **PROPOSED** (host) |
 
 ## 13. Versioning
@@ -216,6 +228,6 @@ Commerce v1 emits signed webhooks from an outbox (`commerce.product.*`, `commerc
 | `apps/web/src/server/businessApps.ts` | Install, connect (with the key stored first), enable/disable, launch authorization, embed address |
 | `apps/web/src/server/actions/businessApps.ts` | Server Actions (each checks its own permission); connect modes; launch ticket checks |
 | `apps/web/src/app/admin/projects/[id]/BusinessAppsPanel.tsx`, `ConnectAppDialog.tsx` | A project's Business Apps tab and the Connect dialog |
-| `apps/web/src/app/p/[project]/(dashboard)/apps/[appKey]/EmbeddedBusinessApp.tsx` | Commerce inside the workspace |
+| `apps/web/src/app/p/[project]/(dashboard)/apps/[appKey]/EmbeddedBusinessApp.tsx` | Commerce inside the workspace, opened on a single-use sign-in |
 | `apps/worker/src/aiFallback/commerceContext.ts` | Live Commerce data in the AI's grounding |
 | `apps/web/src/__tests__/businessApps.integration.test.ts`, `apps/worker/src/__tests__/commerceAppGrounding.integration.test.ts`, `packages/shared/src/__tests__/businessAppConnection.test.ts` | Each rule confirmed to fail without it; a fake Commerce that follows Commerce's own code (`__tests__/helpers/fakeCommerce.ts`) |

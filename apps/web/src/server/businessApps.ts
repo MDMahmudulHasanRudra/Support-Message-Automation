@@ -208,8 +208,7 @@ export async function connectBusinessApp(installationId: string, actor: Pick<Ses
     result = adapter
       ? await adapter.verifyConnection(ref, {
           host: {
-            // The founding installation's projects carry no customer id; Commerce needs a stable, non-empty one.
-            hostCustomerId: row.project.customerId ?? "founding",
+            hostCustomerId: hostCustomerIdFor(row.project.customerId),
             hostProjectId: row.projectId,
             customerName: row.project.customer?.name ?? null,
             projectName: row.project.name,
@@ -334,6 +333,17 @@ export async function authorizeBusinessAppLaunch(appKey: string): Promise<Launch
   const decision = decideLaunch({ appKey, projectStatus: project.status, installation, mayOpen });
   if (!decision.ok) return { ok: false, refusal: decision.refusal, message: LAUNCH_REFUSAL_MESSAGES[decision.refusal], installation: mayOpen ? installation : null };
   return { ok: true, session, project, installation: installation!, app: businessAppDefinition(appKey) };
+}
+
+/** The founding installation's projects carry no customer id; an app needs a stable, non-empty one. */
+export function hostCustomerIdFor(customerId: string | null): string {
+  return customerId ?? "founding";
+}
+
+/** Which host project an app sees, for a launch: the same identity provisioning used. */
+export async function businessAppHostOf(projectId: string): Promise<{ hostCustomerId: string; hostProjectId: string }> {
+  const project = await platformPrisma.project.findUnique({ where: { id: projectId }, select: { customerId: true } });
+  return { hostCustomerId: hostCustomerIdFor(project?.customerId ?? null), hostProjectId: projectId };
 }
 
 /**

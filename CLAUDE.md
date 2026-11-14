@@ -3201,8 +3201,12 @@ repo's `docs/GET_ASSIST_INTEGRATION.md`): signed provisioning + a read-only API 
   own key decrypted right before the call. A refused gate makes no request. Prices become exact minor units or nothing.
 - The workspace shows Commerce's own frontend in a sandboxed frame (`EmbeddedBusinessApp`), on Commerce's origin, only
   after `authorizeBusinessAppLaunch` allows it; never on Chithii's own host; no Chithii cookie, token or id in the address
-  (`safeAppPath`); no script injected. The person signs in to Commerce inside it (Commerce v1 SSO answers 501). A launch
-  hand-off, when one exists, is followed only through `validateLaunchTicket`.
+  (`safeAppPath`); no script injected. **The frame opens on Commerce's single-use sign-in** (`launchBusinessApp` →
+  `createLaunch` → signed `POST /api/v1/integrations/sso/launch`): the subject is SHA-256(installation id : user id), never
+  the user id; only Commerce's `/sso/launch#code=…` shape on `COMMERCE_APP_URL` is followed, through `validateLaunchTicket`;
+  a fresh launch per open and Reload. Commerce signs a person in only as the account they linked by signing in there once,
+  and creates nobody. Without a hand-off the frame shows Commerce's own sign-in with the reason. Commerce must list
+  Chithii's origin in its `HOST_PLATFORM_ALLOWED_ORIGINS`, or the browser refuses the frame.
 - The AI reads Commerce through the EXISTING grounding (`findCommerceGrounding`), behind the same AI commerce switches;
   never a second AI path, never a reply, and the `UNGROUNDED_PRICE` check covers its figures. Order status only for the
   ONE Commerce customer whose number is the verified `@c.us` number.

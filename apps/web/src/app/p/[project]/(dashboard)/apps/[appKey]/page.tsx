@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { AlertTriangle, Ban, Clock, PauseCircle, Plug } from "lucide-react";
-import { businessAppDefinition, isBusinessAppKey } from "@support-automation/shared";
+import { businessAppDefinition, isBusinessAppKey, safeAppPath } from "@support-automation/shared";
 import { ButtonLink, Card, PageHeader } from "@/components/ui";
 import { BusinessAppIcon } from "@/components/businessApps/BusinessAppIcon";
 import { BusinessAppStatusBadge } from "@/components/businessApps/BusinessAppStatusBadge";
@@ -38,7 +38,7 @@ export default async function BusinessAppLauncherPage({ params, searchParams }: 
     const h = await headers();
     const ownHost = (h.get("x-forwarded-host")?.split(",")[0] ?? h.get("host") ?? "").trim().toLowerCase();
     if (embed && new URL(embed.origin).host.toLowerCase() !== ownHost) {
-      return <EmbeddedBusinessApp app={app} projectName={decision.project.name} src={embed.url} workspaceId={installation?.externalWorkspaceId ?? null} />;
+      return <EmbeddedBusinessApp app={app} projectName={decision.project.name} src={embed.url} path={safeAppPath(path)} workspaceId={installation?.externalWorkspaceId ?? null} />;
     }
   }
 

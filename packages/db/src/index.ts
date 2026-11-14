@@ -60,6 +60,7 @@ import type {
   CommerceCapabilityRequests,
   CommerceCapabilityResponses,
   ConnectContext,
+  LaunchSubject,
   LaunchTicket,
   Money,
   OrderStatusSummary,
@@ -3140,9 +3141,55 @@ export const commerceAppAdapter: BusinessAppAdapter = {
     };
   },
 
-  async createLaunch(): Promise<BusinessAppResult<LaunchTicket>> {
-    // Commerce v1 has no launch or sign-in hand-off: POST /api/v1/integrations/sso/exchange answers 501.
-    return appError("NOT_AVAILABLE", "Commerce has no sign-in hand-off yet (its single sign-on answers “not implemented”). Open it inside the workspace and sign in with your Commerce account.", true);
+  /**
+   * A single-use sign-in for one person (Commerce `POST /api/v1/integrations/sso/launch`, signed with the
+   * provisioning secret like provisioning). Commerce answers with a path on its dashboard carrying the code in
+   * the fragment; it signs the person in only as the Commerce account they linked by signing in to it once.
+   * The host sends a pseudonymous subject, never its own user id, and no credential of the installation.
+   */
+  async createLaunch(installation: BusinessAppInstallationRef, subject: LaunchSubject): Promise<BusinessAppResult<LaunchTicket>> {
+    const cfg = commerceAppConfig();
+    if (!cfg.ok) return appError("NOT_AVAILABLE", cfg.message, true);
+    const config = cfg.config;
+    if (!config.appUrl) return appError("NOT_AVAILABLE", "Commerce's dashboard address is not configured on this server (COMMERCE_APP_URL).", true);
+    if (!config.provisioningSecret) {
+      return appError("NOT_AVAILABLE", "The shared secret for Commerce is not set on this server (COMMERCE_PROVISIONING_SECRET), so sign-in could not be requested.", true);
+    }
+    if (!installation.externalWorkspaceId) return appError("WORKSPACE_NOT_PROVISIONED", "This project is not connected to a Commerce workspace yet.");
+    const body = JSON.stringify({
+      hostPlatform: "Get Assist",
+      hostCustomerId: subject.host.hostCustomerId,
+      hostProjectId: subject.host.hostProjectId,
+      subject: subject.subject,
+      displayName: subject.displayName.slice(0, 120),
+      returnPath: subject.path,
+    });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", config.provisioningSecret).update(`${timestamp}.${body}`).digest("hex");
+    const res = await commerceHttp(config, "POST", "/api/v1/integrations/sso/launch", {
+      body,
+      headers: { "X-GetAssist-Timestamp": timestamp, [config.signatureHeader]: signature },
+    });
+    if (!res.ok) {
+      // A Commerce from before host sign-in has no such path: say so plainly, the person can still sign in there.
+      if (res.error.code === "NOT_FOUND") return appError("NOT_AVAILABLE", "This Commerce server does not offer sign-in from Get Assist yet. Sign in with your Commerce account.", false);
+      if (res.error.code === "FORBIDDEN") {
+        const at = res.error.message.indexOf(" Commerce said:");
+        return appError("FORBIDDEN", `Commerce refused to sign you in from this project.${at >= 0 ? res.error.message.slice(at) : ""}`);
+      }
+      return res;
+    }
+    const b = res.body;
+    if (!isRecord(b) || (b.mode !== "signIn" && b.mode !== "link") || typeof b.launchPath !== "string" || typeof b.expiresAtUtc !== "string") {
+      return shapeError("sign-in answer");
+    }
+    // Only Commerce's own launch page, on the configured dashboard origin; the code stays in the fragment.
+    if (!/^\/sso\/launch#code=[A-Za-z0-9_-]{16,128}$/.test(b.launchPath)) return shapeError("sign-in address");
+    return {
+      ok: true,
+      asOf: new Date().toISOString(),
+      data: { redirectUrl: new URL(b.launchPath, config.appUrl.origin).toString(), expiresAt: b.expiresAtUtc, mode: b.mode === "signIn" ? "SIGN_IN" : "LINK" },
+    };
   },
 
   async call<C extends BusinessAppCapability & keyof CommerceCapabilityRequests>(

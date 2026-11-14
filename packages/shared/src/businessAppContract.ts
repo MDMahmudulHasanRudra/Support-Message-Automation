@@ -157,11 +157,16 @@ export interface VerifiedConnection {
   externalConnectionId?: string | null;
 }
 
-/** A short-lived, single-use hand-off for one person to open the app (proposed OIDC-style launch). */
+/** A short-lived, single-use hand-off for one person to open the app. */
 export interface LaunchTicket {
   /** The app's own sign-in URL carrying a single-use code — never a host session cookie or long-lived token. */
   redirectUrl: string;
   expiresAt: string;
+  /**
+   * SIGN_IN: the app recognises this person and signs them straight in. LINK: the app asks them to sign in to
+   * their own account in the app once, which links the two; it never trusts the host's word alone.
+   */
+  mode?: "SIGN_IN" | "LINK";
 }
 
 export interface LaunchSubject {
@@ -170,6 +175,10 @@ export interface LaunchSubject {
   displayName: string;
   /** Scopes the host grants for this launch. The app's own roles decide what the person may do there. */
   scopes: readonly string[];
+  /** Which host project is asking: the app finds its connection from these, as when provisioning. */
+  host: Pick<HostProjectIdentity, "hostCustomerId" | "hostProjectId">;
+  /** A path inside the app to land on, already passed through `safeAppPath`. */
+  path: string;
 }
 
 export interface BusinessAppAdapter {

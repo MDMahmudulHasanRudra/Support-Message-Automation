@@ -83,6 +83,14 @@ export class FakeCommerce {
   contractVersion = "v1";
   /** Every request this Commerce received, method + path. */
   readonly requests: string[] = [];
+  /** Host sign-in launches Commerce accepted (what the host sent, never a code). */
+  readonly launches: { hostCustomerId: string; hostProjectId: string; subject: string; displayName: string | null; returnPath: string | null }[] = [];
+  /** Host subjects that have linked a Commerce account (Commerce answers "signIn" for them, "link" otherwise). */
+  readonly linkedSubjects = new Set<string>();
+  /** When false, this Commerce predates host sign-in and answers the launch path with 404. */
+  hostSignIn = true;
+  /** Overrides the launch path Commerce answers with (to prove the host refuses an unexpected one). */
+  launchPathOverride: string | null = null;
   private server: Server | null = null;
   url = "";
 
@@ -118,6 +126,7 @@ export class FakeCommerce {
       req.on("end", () => resolve(data));
     });
     if (req.method === "POST" && url.pathname === "/api/v1/integrations/provision") return this.provision(req, raw);
+    if (req.method === "POST" && url.pathname === "/api/v1/integrations/sso/launch" && this.hostSignIn) return this.launch(req, raw);
 
     const host = url.pathname.match(/^\/api\/v1\/integrations\/(.+)$/);
     if (!host || req.method !== "GET") return { status: 404, body: { error: { code: "NOT_FOUND", message: "Not found." } } };
@@ -157,13 +166,31 @@ export class FakeCommerce {
     return { status: 404, body: { error: { code: "NOT_FOUND", message: "Not found." } } };
   }
 
-  private provision(req: IncomingMessage, raw: string): { status: number; body?: unknown } {
+  /** Commerce's ReadSignedAsync: HMAC-SHA256 over "{timestamp}.{rawBody}" with the provisioning secret, ±5 minutes. */
+  private signed(req: IncomingMessage, raw: string): boolean {
     const ts = String(req.headers["x-getassist-timestamp"] ?? "");
     const sig = String(req.headers["x-getassist-signature"] ?? "");
     const expected = createHmac("sha256", this.secret).update(`${ts}.${raw}`).digest("hex");
     const fresh = Math.abs(Date.now() / 1000 - Number(ts)) <= 300;
-    const valid = sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
-    if (!fresh || !valid) return { status: 401, body: { error: { code: "UNAUTHORIZED", message: "The provisioning signature is invalid or has expired." } } };
+    return fresh && sig.length === expected.length && timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  }
+
+  /** Commerce's HostSignInService.CreateLaunchAsync, as far as the host can see it. */
+  private launch(req: IncomingMessage, raw: string): { status: number; body?: unknown } {
+    if (!this.signed(req, raw)) return { status: 401, body: { error: { code: "UNAUTHORIZED", message: "The sign-in signature is invalid or has expired." } } };
+    const body = JSON.parse(raw) as { hostCustomerId: string; hostProjectId: string; subject: string; displayName: string | null; returnPath: string | null };
+    if (!/^[A-Za-z0-9]{16,128}$/.test(body.subject ?? "")) return { status: 400, body: { error: { code: "VALIDATION_ERROR", message: "Subject must be 16-128 letters or digits." } } };
+    const conn = this.connections.find((c) => c.hostCustomerId === body.hostCustomerId && c.hostProjectId === body.hostProjectId);
+    if (!conn) return { status: 403, body: { error: { code: "FORBIDDEN", message: "This host project is not connected to Commerce." } } };
+    if (conn.status !== "Active") return { status: 403, body: { error: { code: "FORBIDDEN", message: "The connection to the host platform is not active." } } };
+    this.launches.push({ hostCustomerId: body.hostCustomerId, hostProjectId: body.hostProjectId, subject: body.subject, displayName: body.displayName, returnPath: body.returnPath });
+    const signIn = this.linkedSubjects.has(body.subject);
+    const expires = new Date(Date.now() + (signIn ? 120_000 : 300_000)).toISOString();
+    return { status: 200, body: { mode: signIn ? "signIn" : "link", launchPath: this.launchPathOverride ?? `/sso/launch#code=${randomUUID().replace(/-/g, "")}`, expiresAtUtc: expires } };
+  }
+
+  private provision(req: IncomingMessage, raw: string): { status: number; body?: unknown } {
+    if (!this.signed(req, raw)) return { status: 401, body: { error: { code: "UNAUTHORIZED", message: "The provisioning signature is invalid or has expired." } } };
     const body = JSON.parse(raw) as { hostCustomerId: string; hostProjectId: string; commerceWorkspaceId: string | null };
     const existing = this.connections.find((c) => c.hostCustomerId === body.hostCustomerId && c.hostProjectId === body.hostProjectId);
     if (existing) {

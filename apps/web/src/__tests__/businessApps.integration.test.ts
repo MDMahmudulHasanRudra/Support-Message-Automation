@@ -1,6 +1,6 @@
 import "./helpers/requireTestDatabase";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { callBusinessApp, commerceAppAdapter, createProjectWithDefaults, decryptSecret, prisma as rawPrisma, resolveBusinessAppCapability } from "@support-automation/db";
 import { FakeCommerce } from "./helpers/fakeCommerce";
 import { PERMISSIONS, type BusinessAppAdapter } from "@support-automation/shared";
@@ -213,8 +213,8 @@ describe("opening an app", () => {
     current = s.opener;
     const decision = await inProject(A, () => host.authorizeBusinessAppLaunch("commerce"));
     expect(decision.ok).toBe(true);
-    // The real Commerce adapter: Commerce v1 has no sign-in hand-off, said honestly.
-    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/no sign-in hand-off yet/);
+    // The real Commerce adapter, with Commerce not configured here: said honestly, nothing sent.
+    expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/not configured on this server/);
     host.registerBusinessAppAdapter(null, "commerce");
     expect((await inProject(A, () => actions.launchBusinessApp("commerce"))).error).toMatch(/has not published its sign-in hand-off/);
     const nf = async () => ({ ok: false as const, error: { code: "NOT_AVAILABLE" as const, message: "x", retryable: true } });
@@ -460,5 +460,82 @@ describe("the real Commerce adapter, against Commerce's own rules (contract v1)"
     expect(host.businessAppEmbedUrl("commerce", "https://evil.test/")!.url).toBe("https://shop.example.test/dashboard");
     process.env.COMMERCE_APP_URL = "http://shop.example.test";
     expect(host.businessAppEmbedUrl("commerce")).toBeNull();
+  });
+
+  describe("signing a person in from the workspace", () => {
+    const fx = () => ({ customer: A.customer, project: P.link, other: P.link, slug: `commerce-link-${tag}`, otherSlug: `commerce-link-${tag}` });
+    const launch = (path?: string) => inProject(fx(), () => actions.launchBusinessApp("commerce", path));
+    beforeAll(() => {
+      configure();
+      process.env.COMMERCE_APP_URL = "http://127.0.0.1:3999";
+    });
+
+    it("asks Commerce with a signed request and a pseudonymous subject, and opens only Commerce's single-use address", async () => {
+      configure();
+      // The address test above left the check failed on purpose; a fresh check makes it ACTIVE again.
+      expect((await connect("link")).success).toMatch(/connected/);
+      current = s.adminA;
+      expect((await installation(P.link))!.status).toBe("ACTIVE");
+      const first = await launch("//evil.test/x");
+      expect(first.mode).toBe("LINK");
+      expect(first.redirectUrl).toMatch(/^http:\/\/127\.0\.0\.1:3999\/sso\/launch#code=[0-9a-f]{32}$/);
+      const sent = commerce.launches.at(-1)!;
+      expect([sent.hostCustomerId, sent.hostProjectId, sent.returnPath, sent.displayName]).toEqual([A.customer, P.link, "/dashboard", s.adminA.name]);
+      // Stable for this person in this installation, and never the host's own user id.
+      expect(sent.subject).toBe(createHash("sha256").update(`${(await installation(P.link))!.id}:${s.adminA.userId}`).digest("hex"));
+      expect(JSON.stringify(commerce.launches)).not.toContain(s.adminA.userId);
+
+      // Once the person linked their Commerce account (in Commerce), the next open signs straight in.
+      commerce.linkedSubjects.add(sent.subject);
+      const second = await launch("/orders?status=open");
+      expect(second.mode).toBe("SIGN_IN");
+      expect(commerce.launches.at(-1)).toMatchObject({ subject: sent.subject, returnPath: "/orders?status=open" });
+    });
+
+    it("an address Commerce was not expected to answer with is never opened", async () => {
+      current = s.adminA;
+      for (const bad of ["https://evil.test/sso/launch#code=0123456789abcdef", "/login#code=0123456789abcdef", "/sso/launch?code=0123456789abcdef"]) {
+        commerce.launchPathOverride = bad;
+        try {
+          expect((await launch()).error).toMatch(/sign-in address did not have the shape/);
+        } finally {
+          commerce.launchPathOverride = null;
+        }
+      }
+    });
+
+    it("Commerce refusing, or not offering sign-in yet, is said plainly; the frame then opens Commerce's own sign-in", async () => {
+      current = s.adminA;
+      commerce.connection(P.link)!.status = "Disabled";
+      try {
+        expect((await launch()).error).toMatch(/refused to sign you in from this project. Commerce said: “The connection to the host platform is not active.”/);
+      } finally {
+        commerce.connection(P.link)!.status = "Active";
+      }
+      commerce.hostSignIn = false;
+      try {
+        expect((await launch()).error).toMatch(/does not offer sign-in from Get Assist yet/);
+      } finally {
+        commerce.hostSignIn = true;
+      }
+      process.env.COMMERCE_PROVISIONING_SECRET = "not-the-secret";
+      expect((await launch()).error).toMatch(/signature is invalid/);
+      configure();
+    });
+
+    it("a disabled installation, or a person without business_apps.open, asks Commerce nothing", async () => {
+      current = s.adminA;
+      const id = (await installation(P.link))!.id;
+      expect((await actions.setBusinessAppEnabledAction(id, P.link, false)).success).toMatch(/disabled/);
+      const before = commerce.requests.length;
+      expect((await launch()).error).toBeTruthy();
+      const noKey = await user(A.customer, "appsnokeylink", await role(A.customer, "AppsNoKeyLink", ["messages.view"]), [P.link]);
+      current = noKey;
+      expect((await launch()).error).toBeTruthy();
+      expect(commerce.requests.length).toBe(before);
+      current = s.adminA;
+      expect((await actions.setBusinessAppEnabledAction(id, P.link, true)).success).toMatch(/enabled/);
+      expect((await connect("link")).success).toMatch(/connected/);
+    });
   });
 });
