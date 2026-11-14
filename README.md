@@ -13,6 +13,13 @@ module, field, and behavior in the app.
 
 **Most recent additions:**
 
+- **Business Apps, with Commerce connected for real** (migrations `20261114100000_business_app_installations`,
+  `20261114120000_business_app_credentials`): separately deployed first-party apps as optional project add-ons. Commerce
+  connects through its published v1 contract (signed provisioning, an encrypted read-only key, workspace and contract
+  checks), opens as its own dashboard inside the workspace, and feeds live prices, stock and offers to the AI's existing
+  grounding. Needs `COMMERCE_API_URL`, `COMMERCE_APP_URL` and `COMMERCE_PROVISIONING_SECRET`; unset = cannot be connected.
+  People are signed in to Commerce from the workspace with a single-use code (they link their Commerce account once);
+  Commerce must list Chithii's address in its `HOST_PLATFORM_ALLOWED_ORIGINS` (`docs/BUSINESS_APP_INTEGRATION_CONTRACT.md` §5).
 - **Client CRM & Billing V7** (inside `CLIENT_CENTER`; migrations `20261101130000_email_purpose_client_message`,
   `20261101130100_client_crm_v7`): invoice and money-receipt pages with print and PDF, a versioned Invoice & Receipt
   setup, renewal offers and a Renewals workspace (an offer is never money owed; a term renews once), client message

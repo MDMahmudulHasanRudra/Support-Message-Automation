@@ -1,8 +1,9 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Check, ChevronDown, Layers, Plus, SlidersHorizontal, Sparkles } from "lucide-react";
-import { PROJECT_NAME_MAX, PROJECT_SLUG_MAX, suggestProjectSlug, validateProjectName, validateProjectSlug } from "@support-automation/shared";
+import { Check, ChevronDown, Layers, Plus, Puzzle, SlidersHorizontal, Sparkles } from "lucide-react";
+import { BUSINESS_APPS, PROJECT_NAME_MAX, PROJECT_SLUG_MAX, suggestProjectSlug, validateProjectName, validateProjectSlug, type BusinessAppKey } from "@support-automation/shared";
+import { BusinessAppIcon } from "@/components/businessApps/BusinessAppIcon";
 import { Alert, Button, Card, Field, Input, Textarea } from "@/components/ui";
 import { createProject, type ProjectFormState } from "@/server/actions/projects";
 import { ClientCodeFields, type ClientCodeContext } from "./ClientCodeFields";
@@ -48,6 +49,8 @@ export function CreateProjectForm({
   const [editingSlug, setEditingSlug] = useState(false);
   const own = templates.filter((t) => !t.builtIn);
   const [setup, setSetup] = useState(PLAN);
+  // Business Add-ons: none by default, so a project created without touching this is created exactly as before.
+  const [addOns, setAddOns] = useState<BusinessAppKey[]>([]);
   const chosen = templates.find((t) => t.key === setup);
   const exampleName = `${useBranding().productName} Project 2`;
 
@@ -146,6 +149,54 @@ export function CreateProjectForm({
           )}
           <p className="mt-2 text-[11.5px] text-[color:var(--color-subtle-foreground)]">Anything your plan does not include is left out and noted. You can switch modules off later in the Module Builder.</p>
         </div>
+      </Card>
+
+      <Card>
+        <StepTitle number={3} title="Business Add-ons" hint="Optional. Separate business apps that open from this workspace. You can add them later too." />
+        {addOns.map((key) => (
+          <input key={key} type="hidden" name="businessApps" value={key} />
+        ))}
+        <div role="group" aria-label="Business Add-ons" className="grid gap-3 sm:grid-cols-3">
+          {BUSINESS_APPS.map((app) => {
+            const installable = app.availability === "INSTALLABLE";
+            const selected = addOns.includes(app.key);
+            return (
+              <button
+                key={app.key}
+                type="button"
+                role="checkbox"
+                aria-checked={selected}
+                aria-disabled={!installable}
+                disabled={!installable}
+                onClick={() => setAddOns((list) => (list.includes(app.key) ? list.filter((k) => k !== app.key) : [...list, app.key]))}
+                className={`relative flex flex-col items-start rounded-[var(--radius-lg)] border px-4 py-3.5 text-left transition-[border-color,box-shadow,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)] disabled:cursor-not-allowed disabled:opacity-60 ${
+                  selected
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent-bg)]/50 shadow-[0_0_0_1px_var(--color-accent)]"
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] enabled:hover:border-[var(--color-border-strong)]"
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute right-3 top-3 flex size-5 items-center justify-center rounded-[6px] border ${selected ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-white" : "border-[var(--color-border-strong)]"}`}
+                >
+                  {selected ? <Check className="size-3" /> : null}
+                </span>
+                <span className="flex items-center gap-1.5 pr-7 text-[14px] font-semibold text-[color:var(--color-foreground)]">
+                  <BusinessAppIcon icon={app.icon} className="size-4 text-[color:var(--color-muted-foreground)]" />
+                  {app.name}
+                </span>
+                <span className="mt-1 line-clamp-3 text-[12.5px] leading-relaxed text-[color:var(--color-muted-foreground)]">{app.description}</span>
+                <span className="mt-2 text-[11.5px] font-medium text-[color:var(--color-subtle-foreground)]">{installable ? "Connects after you create the project" : "Coming soon"}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-3 flex items-start gap-1.5 text-[11.5px] text-[color:var(--color-subtle-foreground)]">
+          <Puzzle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          {addOns.length
+            ? "Added as waiting to connect. Nothing is sent to the app until a Main Admin connects it, and it opens only once the connection is verified."
+            : "None selected. The project is created with its modules only."}
+        </p>
       </Card>
 
       <details className="group rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">

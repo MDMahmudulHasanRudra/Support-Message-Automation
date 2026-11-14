@@ -9,7 +9,7 @@ import { useNavHighlight } from "@/lib/navigationPending";
 import { usePathname, useSearchParams } from "next/navigation";
 import { stripProjectPrefix } from "@/lib/projectPaths";
 import { useMemo, useSyncExternalStore } from "react";
-import { OVERVIEW_LINK, isGroupActive, isLinkActive, isNavActive, type NavGroup, type NavLink } from "./navigation";
+import { BUSINESS_APPS_GROUP_ID, OVERVIEW_LINK, isGroupActive, isLinkActive, isNavActive, type NavGroup, type NavLink } from "./navigation";
 import { ThemeToggle } from "./ThemeToggle";
 
 /**
@@ -204,8 +204,8 @@ export function Sidebar({
       }
 
       // A module holding one page is that page — a parent row above a single child would be
-      // a click that leads nowhere new.
-      if (group.links.length === 1) {
+      // a click that leads nowhere new. Business Apps stays a group: its heading says these are separate apps.
+      if (group.links.length === 1 && group.id !== BUSINESS_APPS_GROUP_ID) {
         const only = group.links[0]!;
         return (
           <NavItem key={group.label} link={only} active={isLinkActive(pathname, searchParams, only)} collapsed={false} />

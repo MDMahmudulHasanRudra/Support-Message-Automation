@@ -97,7 +97,16 @@ export function ShopSettingsPanel({ provider, view, canManage }: { provider: Sho
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              run(() => saveShopConnection({ provider, ...form }), () => setForm((f) => ({ ...f, consumerKey: "", consumerSecret: "", accessToken: "", webhookSecret: "" })));
+              // Save, then check the shop at once: one press, and the answer is whether it works.
+              run(
+                async () => {
+                  const saved = await saveShopConnection({ provider, ...form });
+                  if (saved.error) return saved;
+                  const tested = await testShopConnection(provider);
+                  return tested.error ? { error: `Saved, but the shop did not accept it: ${tested.error}` } : { success: tested.success ?? "Connected and working." };
+                },
+                () => setForm((f) => ({ ...f, consumerKey: "", consumerSecret: "", accessToken: "", webhookSecret: "" })),
+              );
             }}
           >
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -107,6 +116,14 @@ export function ShopSettingsPanel({ provider, view, canManage }: { provider: Sho
               <Field label="Name">
                 <Input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} maxLength={80} />
               </Field>
+              {keyPage(provider, form.shopUrl) ? (
+                <p className="text-[12.5px] md:col-span-2">
+                  <a href={keyPage(provider, form.shopUrl)!} target="_blank" rel="noopener noreferrer" className="font-medium text-[color:var(--color-accent)] hover:underline">
+                    {provider === "WOOCOMMERCE" ? "Open my shop's page for creating a key →" : "Open my store's app settings →"}
+                  </a>{" "}
+                  <span className="text-[color:var(--color-muted-foreground)]">Sign in there, create the key, then paste it below.</span>
+                </p>
+              ) : null}
               {provider === "WOOCOMMERCE" ? (
                 <>
                   <Field label="Consumer key" hint={view ? "Leave empty to keep the saved key." : undefined}>
@@ -139,12 +156,12 @@ export function ShopSettingsPanel({ provider, view, canManage }: { provider: Sho
             {notice ? <Alert tone="success">{notice}</Alert> : null}
             <div className="flex flex-wrap gap-2">
               <Button type="submit" loading={pending}>
-                {view ? "Save" : "Connect"}
+                {view ? "Save and test" : "Connect and test"}
               </Button>
               {view ? (
                 <>
                   <Button type="button" variant="secondary" loading={pending} onClick={() => run(() => testShopConnection(provider))}>
-                    Test connection
+                    Test again
                   </Button>
                   <Button type="button" variant="ghost" onClick={() => setRemoving(true)}>
                     Disconnect
@@ -284,4 +301,21 @@ export function ShopSettingsPanel({ provider, view, canManage }: { provider: Sho
       ) : null}
     </div>
   );
+}
+
+/**
+ * The page inside the shop where its key is made, from the address typed above (opened in a new tab, nothing is
+ * sent). WooCommerce's own "add key" screen; Shopify's custom-app settings. Null until the address looks like one.
+ */
+function keyPage(provider: string, raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`);
+  } catch {
+    return null;
+  }
+  if (!url.hostname.includes(".") || (url.protocol !== "https:" && url.protocol !== "http:")) return null;
+  if (provider === "WOOCOMMERCE") return `${url.origin}${url.pathname.replace(/\/+$/, "")}/wp-admin/admin.php?page=wc-settings&tab=advanced&section=keys&create-key=1`;
+  if (/\.myshopify\.com$/i.test(url.hostname)) return `https://${url.hostname}/admin/settings/apps/development`;
+  return null;
 }

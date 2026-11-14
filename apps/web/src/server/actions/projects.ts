@@ -11,6 +11,7 @@ import {
   isProjectStatus,
   removalImpact,
   normalizeProjectName,
+  sanitizeRequestedAddOns,
   PROJECT_STATUS_LABELS,
   validateProjectName,
   validateProjectSlug,
@@ -27,6 +28,7 @@ import { forgetProjectFeatureStates } from "@/server/projectFeatures";
 import { currentTenant, customerOfTenant } from "@/server/tenant";
 import { recordFailedSecret } from "@/server/loginLockout";
 import { deleteProjectData } from "@/server/projectDeletion";
+import { installBusinessApp } from "@/server/businessApps";
 
 /**
  * Main Admin Portal actions (MULTI_PROJECT_PLAN.md §7–§8). Every one requires `projects.manage` —
@@ -129,6 +131,17 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
     } else setupNote = "Template not found; the plan's modules were kept.";
   }
 
+  // Business Add-ons (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md), optional and none by default: with none
+  // chosen nothing below runs, so creating a project is exactly what it was. Each chosen app is added PENDING
+  // after the project exists — no call to any app, inside or outside a transaction — and a failure is noted,
+  // never a reason for the project to fail.
+  const addOns = sanitizeRequestedAddOns(formData.getAll("businessApps"));
+  const addOnNotes: string[] = [];
+  for (const appKey of addOns) {
+    const installed = await installBusinessApp(created.id, appKey, access.session);
+    if (!installed.ok) addOnNotes.push(`${appKey}: ${installed.error}`);
+  }
+
   forgetProjectAccessDecisions();
   await logSystemEvent("INFO", "projects", `Project "${name}" created`, {
     projectId: created.id,
@@ -137,6 +150,7 @@ export async function createProject(_prev: ProjectFormState, formData: FormData)
     moduleSetup: setup,
     moduleSetupNote: setupNote,
     createdBy: access.session.username,
+    ...(addOns.length ? { businessApps: addOns, businessAppNotes: addOnNotes } : {}),
   });
   revalidatePath("/admin", "layout");
   redirect(setup === "CUSTOM" ? `/admin/projects/${created.id}/modules?created=1` : `/admin/projects/${created.id}?created=1`);

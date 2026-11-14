@@ -1,9 +1,14 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { NotificationEvent } from "@prisma/client";
 import type { AiFallbackOutcome, ProjectStatus, WhatsAppServiceKey } from "@prisma/client";
 import { derivePatternSignature, validateRegexSafety } from "@support-automation/engine";
 import {
+  decideCapability as decideBusinessAppCapability,
+  isBusinessAppKey,
+  isSupportedAppContract,
+  parseApprovedAppUrl,
+  currencyDecimals,
   buildWhatsAppContactId,
   canonicalPrefix,
   CLIENT_CODE_DEFAULT_WIDTH,
@@ -46,6 +51,22 @@ import {
   whatsAppConversationType,
 } from "@support-automation/shared";
 import type {
+  BusinessAppAdapter,
+  BusinessAppCapability,
+  BusinessAppError,
+  BusinessAppInstallationRef,
+  BusinessAppKey,
+  BusinessAppResult,
+  CommerceCapabilityRequests,
+  CommerceCapabilityResponses,
+  ConnectContext,
+  LaunchSubject,
+  LaunchTicket,
+  Money,
+  OrderStatusSummary,
+  ProductSummary,
+  ActiveOffer,
+  VerifiedConnection,
   DutyNow,
   RosterDay,
   RoutingConversationKind,
@@ -224,6 +245,8 @@ export const PROJECT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   "Ticket", "TicketEvent", "TicketSettings",
   // Automatic routing (AUTO_ROUTING.md).
   "RoutingSettings",
+  // Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md).
+  "ProjectAppInstallation",
 ]);
 
 export const PROJECT_SINGLETON_MODELS: ReadonlySet<string> = new Set([
@@ -557,6 +580,8 @@ const TENANT_PARENT: Readonly<Record<string, "user" | "project">> = {
   PushDevice: "user",
   ProjectAccess: "project",
   ProjectFeature: "project",
+  // Read by the Main Admin portal across the customer's own projects, and inside a project through the scoped client.
+  ProjectAppInstallation: "project",
 };
 
 /** One settings row per customer; the original installation's row keeps its fixed id. */
@@ -2817,4 +2842,495 @@ export async function collectContactFromChat(db: any, input: CollectContactInput
     const heldElsewhere = input.values.filter((v) => holders.has(key(v)) && holders.get(key(v)) !== contactId).map((v) => ({ ...v, contactId: holders.get(key(v))! }));
     return { contactId, serial, created, added: fresh, heldElsewhere };
   });
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════════
+// Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md)
+// ════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Whether host-side code may call one capability of a Business App for one project — the ONE gate every
+ * caller (the AI's grounding, the worker, a report) must pass before an adapter is asked anything. Reads
+ * the project's effective status (a billing hold reads as SUSPENDED, as everywhere else) and the
+ * installation, both by the explicit project id, and applies `decideCapability` from packages/shared.
+ * A disabled, pending or failed installation, or a held project, is "no call" — never an empty answer.
+ * `db` may be the unscoped client (the worker): the project id is named on every query.
+ */
+export async function resolveBusinessAppCapability(
+  db: PrismaClient,
+  projectId: string,
+  appKey: string,
+  capability: string,
+): Promise<{ allowed: true; externalWorkspaceId: string; contractVersion: string } | { allowed: false; reason: string }> {
+  if (!isBusinessAppKey(appKey)) return { allowed: false, reason: "UNKNOWN_APP" };
+  const project = await db.project.findUnique({ where: { id: projectId }, select: { status: true, billingHoldAt: true } });
+  if (!project) return { allowed: false, reason: "UNKNOWN_PROJECT" };
+  const held = project.billingHoldAt !== null && (project.status === "SETUP" || project.status === "ACTIVE");
+  const installation = await db.projectAppInstallation.findFirst({
+    where: { projectId, appKey },
+    select: { status: true, externalWorkspaceId: true, contractVersion: true },
+  });
+  const decision = decideBusinessAppCapability({
+    appKey,
+    capability,
+    projectStatus: held ? "SUSPENDED" : project.status,
+    installationStatus: (installation?.status ?? null) as Parameters<typeof decideBusinessAppCapability>[0]["installationStatus"],
+  });
+  if (!decision.allowed) return decision;
+  // ACTIVE cannot exist without a workspace id (database CHECK), so this is never empty here.
+  return { allowed: true, externalWorkspaceId: installation!.externalWorkspaceId!, contractVersion: installation!.contractVersion };
+}
+
+// ── The Commerce adapter ──────────────────────────────────────────────────────────────────────────
+// Speaks Commerce's published host contract v1 (E-Commerce/docs/GET_ASSIST_INTEGRATION.md): HMAC-signed
+// provisioning (`POST /api/v1/integrations/provision`) and the read-only host API (`GET /api/v1/integrations/*`,
+// `X-Api-Key`). Nothing here is invented: every path, header and field below is one that document names.
+// Lives in this file (not a sibling) by the package's no-relative-imports rule, and here rather than in the web
+// app because the worker's AI grounding needs the same gated client.
+
+export interface CommerceAppConfig {
+  /** Server-to-server base address of the Commerce API. */
+  apiUrl: URL;
+  /** The Commerce dashboard's origin, for the embedded workspace view; null = not configured. */
+  appUrl: URL | null;
+  provisioningSecret: string | null;
+  signatureHeader: string;
+  timeoutMs: number;
+}
+
+/** Commerce's address and secret from deployment configuration — never from a request, a row or a form. */
+export function commerceAppConfig(env: NodeJS.ProcessEnv = process.env): { ok: true; config: CommerceAppConfig } | { ok: false; message: string } {
+  const rawApi = env.COMMERCE_API_URL?.trim();
+  if (!rawApi) return { ok: false, message: "Commerce is not configured on this server (COMMERCE_API_URL is not set), so it cannot be connected. Nothing was sent anywhere." };
+  const apiUrl = parseApprovedAppUrl(rawApi);
+  if (!apiUrl) return { ok: false, message: "COMMERCE_API_URL is not an approved address (HTTPS, or HTTP on this machine only), so nothing was sent." };
+  const rawApp = env.COMMERCE_APP_URL?.trim();
+  const appUrl = rawApp ? parseApprovedAppUrl(rawApp) : null;
+  if (rawApp && !appUrl) return { ok: false, message: "COMMERCE_APP_URL is not an approved address (HTTPS, or HTTP on this machine only)." };
+  const signatureHeader = (env.COMMERCE_SIGNATURE_HEADER?.trim() || "X-GetAssist-Signature");
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(signatureHeader)) return { ok: false, message: "COMMERCE_SIGNATURE_HEADER is not a valid header name." };
+  return { ok: true, config: { apiUrl, appUrl, provisioningSecret: env.COMMERCE_PROVISIONING_SECRET?.trim() || null, signatureHeader, timeoutMs: 10_000 } };
+}
+
+const COMMERCE_NAME = "Commerce";
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const optString = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+const cleanForAdmin = (s: string) => s.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 200);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function appError(code: BusinessAppError["code"], message: string, retryable = false): { ok: false; error: BusinessAppError } {
+  return { ok: false, error: { code, message, retryable } };
+}
+
+/** Commerce's error envelope (`{ error: { code, message } }`, API_CONTRACT.md) turned into words for a Main Admin. */
+function commerceHttpError(status: number, body: unknown): BusinessAppError {
+  const e = isRecord(body) && isRecord(body.error) ? body.error : null;
+  const code = typeof e?.code === "string" ? e.code : "";
+  const said = typeof e?.message === "string" && e.message.trim() ? ` Commerce said: “${cleanForAdmin(e.message)}”` : "";
+  if (status === 401) return { code: "UNAUTHORIZED", message: `Commerce refused this installation's credentials.${said}`, retryable: false };
+  if (status === 403 && code === "INTEGRATION_DISABLED") {
+    return { code: "FORBIDDEN", message: `Commerce says this connection is not active (disabled or revoked in Commerce → Settings → Integration).${said}`, retryable: false };
+  }
+  if (status === 403) return { code: "FORBIDDEN", message: `Commerce refused this request for this key's scopes.${said}`, retryable: false };
+  if (status === 404) return { code: "NOT_FOUND", message: `Commerce has no such record in this workspace.${said}`, retryable: false };
+  if (status === 409) return { code: "UPSTREAM_ERROR", message: `Commerce refused because of a conflict.${said}`, retryable: false };
+  if (status === 429) return { code: "RATE_LIMITED", message: "Commerce is rate limiting this server. Try again in a minute.", retryable: true };
+  if (status === 503 && code === "INTEGRATION_NOT_CONFIGURED") {
+    return { code: "NOT_AVAILABLE", message: "Commerce has host provisioning switched off (no shared provisioning secret is set on the Commerce server).", retryable: true };
+  }
+  if (status === 400) return { code: "UPSTREAM_ERROR", message: `Commerce refused the request as invalid.${said}`, retryable: false };
+  return { code: "UPSTREAM_ERROR", message: `Commerce answered with an error (HTTP ${status}).${said}`, retryable: status >= 500 };
+}
+
+type CommerceHttpResult = { ok: true; body: unknown } | { ok: false; error: BusinessAppError };
+
+/**
+ * One request to Commerce: the configured origin only, no redirect followed (a key must never be replayed to
+ * another address), a 10 s ceiling (a timeout is "unknown", never "none"), at most 1 MB read.
+ */
+async function commerceHttp(
+  config: CommerceAppConfig,
+  method: "GET" | "POST",
+  path: string,
+  opts: { apiKey?: string; body?: string; headers?: Record<string, string> } = {},
+): Promise<CommerceHttpResult> {
+  const base = config.apiUrl.href.endsWith("/") ? config.apiUrl.href : `${config.apiUrl.href}/`;
+  const url = new URL(path.replace(/^\/+/, ""), base);
+  if (url.origin !== config.apiUrl.origin) return appError("UPSTREAM_ERROR", "Refused to call an address outside the configured Commerce origin.");
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        accept: "application/json",
+        ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(opts.apiKey ? { "X-Api-Key": opts.apiKey } : {}),
+        ...opts.headers,
+      },
+      body: opts.body,
+      redirect: "manual",
+
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+  } catch (err) {
+    const name = (err as Error)?.name;
+    if (name === "TimeoutError" || name === "AbortError") return appError("TIMEOUT", "Commerce did not answer within 10 seconds. Nothing is assumed about the result.", true);
+    return appError("UPSTREAM_ERROR", "Commerce could not be reached at the configured address.", true);
+  }
+  if (res.status >= 300 && res.status < 400) return appError("UPSTREAM_ERROR", "Commerce answered with a redirect, which is not followed.");
+  const text = await res.text().catch(() => "");
+  if (text.length > 1_000_000) return appError("CONTRACT_MISMATCH", "Commerce's answer was larger than this host accepts.");
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
+  return res.ok ? { ok: true, body } : { ok: false, error: commerceHttpError(res.status, body) };
+}
+
+/** A Commerce decimal price as exact minor units, or null when it cannot be represented exactly (never rounded). */
+function commerceMoney(value: unknown, currency: unknown): Money | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  if (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency)) return null;
+  const scaled = value * 10 ** currencyDecimals(currency);
+  const minor = Math.round(scaled);
+  if (!Number.isSafeInteger(minor) || Math.abs(scaled - minor) > 1e-6) return null;
+  return { amountMinor: String(minor), currency };
+}
+
+function commerceProductSummary(x: unknown): ProductSummary | null {
+  if (!isRecord(x) || typeof x.id !== "string" || typeof x.name !== "string") return null;
+  const price = commerceMoney(x.price ?? x.effectivePrice, x.currencyCode);
+  const compare = commerceMoney(x.compareAtPrice, x.currencyCode);
+  return {
+    productId: x.id,
+    name: x.name,
+    sku: optString(x.sku),
+    price,
+    compareAtPrice: compare && price && BigInt(compare.amountMinor) > BigInt(price.amountMinor) ? compare : null,
+    inStock: typeof x.inStock === "boolean" ? x.inStock : null,
+    quantityAvailable: typeof x.available === "number" && Number.isInteger(x.available) ? x.available : null,
+    category: optString(x.category),
+    brand: optString(x.brand),
+    shortDescription: optString(x.shortDescription),
+  };
+}
+
+function commerceOffer(x: unknown, currency?: unknown): ActiveOffer | null {
+  if (!isRecord(x) || typeof x.id !== "string" || typeof x.name !== "string") return null;
+  const value = typeof x.value === "number" && Number.isFinite(x.value) ? x.value : null;
+  const type = optString(x.type);
+  return {
+    offerId: x.id,
+    title: x.name,
+    // Commerce v1 types: Percentage and FixedAmount (in the workspace currency). Anything else is named as given.
+    description: value === null ? type : type === "Percentage" ? `${value}% off` : type === "FixedAmount" ? `${typeof currency === "string" && /^[A-Z]{3}$/.test(currency) ? `${currency} ${value.toFixed(currencyDecimals(currency))}` : value} off` : type ? `${type} ${value}` : null,
+    endsAt: optString(x.endsAtUtc),
+    productId: optString(x.productId),
+  };
+}
+
+/** Commerce's paged envelope (`{ items, page, pageSize, totalCount, totalPages }`), or null when it is not one. */
+function commercePage(body: unknown): { items: unknown[]; totalCount: number } | null {
+  if (!isRecord(body) || !Array.isArray(body.items) || typeof body.totalCount !== "number") return null;
+  return { items: body.items, totalCount: body.totalCount };
+}
+
+const shapeError = (what: string) => appError("CONTRACT_MISMATCH", `Commerce's ${what} did not have the shape contract v1 describes, so it was not used.`);
+
+/** Digits of a phone number for a search term: the last nine, which every way of typing a number shares. */
+const phoneTail = (e164: string) => e164.replace(/\D/g, "").slice(-9);
+
+export const commerceAppAdapter: BusinessAppAdapter = {
+  appKey: "commerce",
+
+  /**
+   * Connect: provision (signed, idempotent on host customer + project), keep the key the moment it is issued,
+   * then prove — workspace mapping, contract version, Commerce's own status, and one authenticated read with
+   * the key. Every step must pass; there is no partial success.
+   */
+  async verifyConnection(installation: BusinessAppInstallationRef, context: ConnectContext): Promise<BusinessAppResult<VerifiedConnection>> {
+    const cfg = commerceAppConfig();
+    if (!cfg.ok) return appError("NOT_AVAILABLE", cfg.message, true);
+    const config = cfg.config;
+    if (!config.provisioningSecret) {
+      return appError("NOT_AVAILABLE", "The shared provisioning secret for Commerce is not set on this server (COMMERCE_PROVISIONING_SECRET), so nothing was sent.", true);
+    }
+    const { request, host } = context;
+    if (request.mode === "LINK_EXISTING" && !UUID_RE.test(request.externalWorkspaceId)) {
+      return appError("UPSTREAM_ERROR", "That is not a Commerce workspace id. Copy it from Commerce → Settings → Integration.");
+    }
+    if (request.mode === "RECHECK" && !installation.externalWorkspaceId) {
+      return appError("WORKSPACE_NOT_PROVISIONED", "This installation has no Commerce workspace yet. Choose “Create a new workspace” or “Link an existing workspace”.");
+    }
+    if (request.mode === "PROVISION_NEW" && request.currency !== null && !/^[A-Z]{3}$/.test(request.currency)) {
+      return appError("UPSTREAM_ERROR", "The currency must be a three-letter code, such as BDT or USD.");
+    }
+
+    const body = JSON.stringify({
+      hostPlatform: "Get Assist",
+      hostCustomerId: host.hostCustomerId,
+      hostProjectId: host.hostProjectId,
+      customerName: host.customerName,
+      projectName: host.projectName,
+      workspaceName: host.projectName,
+      currency: request.mode === "PROVISION_NEW" ? request.currency : null,
+      webhookUrl: null,
+      externalWorkspaceReference: null,
+      commerceWorkspaceId: request.mode === "LINK_EXISTING" ? request.externalWorkspaceId : null,
+      contractVersion: "v1",
+    });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", config.provisioningSecret).update(`${timestamp}.${body}`).digest("hex");
+    const provisioned = await commerceHttp(config, "POST", "/api/v1/integrations/provision", {
+      body,
+      headers: { "X-GetAssist-Timestamp": timestamp, [config.signatureHeader]: signature },
+    });
+    if (!provisioned.ok) return provisioned;
+    const p = provisioned.body;
+    if (!isRecord(p) || typeof p.workspaceId !== "string" || !UUID_RE.test(p.workspaceId) || typeof p.status !== "string" || typeof p.apiContractVersion !== "string") {
+      return shapeError("provisioning answer");
+    }
+
+    // Commerce shows a key only on the FIRST provisioning. Keep it before checking anything else.
+    if (typeof p.apiKey === "string" && p.apiKey.startsWith("cmk_")) {
+      const hint = p.apiKey.split("_").slice(0, 2).join("_").slice(0, 40);
+      try {
+        await context.persistCredential({ secret: p.apiKey, hint });
+      } catch {
+        return appError("UPSTREAM_ERROR", "Commerce issued a key but this server could not store it. Commerce gives a key only once: ask the Commerce team to issue a new one.");
+      }
+    }
+    const credential = typeof p.apiKey === "string" ? p.apiKey : installation.credential;
+
+    if (request.mode === "LINK_EXISTING" && p.workspaceId.toLowerCase() !== request.externalWorkspaceId.toLowerCase()) {
+      return appError("WORKSPACE_MISMATCH", "Commerce already maps this project to a different workspace than the one asked for, so nothing was changed here.");
+    }
+    if (installation.externalWorkspaceId && installation.externalWorkspaceId.toLowerCase() !== p.workspaceId.toLowerCase()) {
+      return appError("WORKSPACE_MISMATCH", "Commerce now reports a different workspace for this project than the one this installation was connected to. It was not accepted.");
+    }
+    if (!isSupportedAppContract("commerce", p.apiContractVersion)) {
+      return appError("CONTRACT_MISMATCH", `Commerce speaks contract “${cleanForAdmin(p.apiContractVersion)}”, which this server has no adapter for (it supports v1).`);
+    }
+    if (p.status !== "Active") {
+      return appError("FORBIDDEN", `Commerce reports this connection as ${cleanForAdmin(p.status)}. A Commerce admin can reconnect it in Commerce → Settings → Integration (a revoked connection cannot be reconnected).`);
+    }
+    if (!credential) {
+      return appError(
+        "UNAUTHORIZED",
+        "Commerce already has this project connected but gives its key only once, and this installation does not hold it. Commerce v1 has no way to hand it over again; the Commerce team must issue a replacement.",
+      );
+    }
+
+    // One authenticated read with the key proves authentication, scope and that Commerce considers the connection active.
+    const probe = await commerceHttp(config, "GET", "/api/v1/integrations/products/search?page=1&pageSize=1", { apiKey: credential });
+    if (!probe.ok) return probe;
+    if (!commercePage(probe.body)) return shapeError("product search answer");
+
+    return {
+      ok: true,
+      asOf: new Date().toISOString(),
+      data: {
+        externalWorkspaceId: p.workspaceId,
+        appContractVersion: p.apiContractVersion,
+        verifiedAt: new Date().toISOString(),
+        externalTenantId: typeof p.tenantId === "string" ? p.tenantId : null,
+        externalConnectionId: typeof p.connectionId === "string" ? p.connectionId : null,
+      },
+    };
+  },
+
+  /**
+   * A single-use sign-in for one person (Commerce `POST /api/v1/integrations/sso/launch`, signed with the
+   * provisioning secret like provisioning). Commerce answers with a path on its dashboard carrying the code in
+   * the fragment; it signs the person in only as the Commerce account they linked by signing in to it once.
+   * The host sends a pseudonymous subject, never its own user id, and no credential of the installation.
+   */
+  async createLaunch(installation: BusinessAppInstallationRef, subject: LaunchSubject): Promise<BusinessAppResult<LaunchTicket>> {
+    const cfg = commerceAppConfig();
+    if (!cfg.ok) return appError("NOT_AVAILABLE", cfg.message, true);
+    const config = cfg.config;
+    if (!config.appUrl) return appError("NOT_AVAILABLE", "Commerce's dashboard address is not configured on this server (COMMERCE_APP_URL).", true);
+    if (!config.provisioningSecret) {
+      return appError("NOT_AVAILABLE", "The shared secret for Commerce is not set on this server (COMMERCE_PROVISIONING_SECRET), so sign-in could not be requested.", true);
+    }
+    if (!installation.externalWorkspaceId) return appError("WORKSPACE_NOT_PROVISIONED", "This project is not connected to a Commerce workspace yet.");
+    const body = JSON.stringify({
+      hostPlatform: "Get Assist",
+      hostCustomerId: subject.host.hostCustomerId,
+      hostProjectId: subject.host.hostProjectId,
+      subject: subject.subject,
+      displayName: subject.displayName.slice(0, 120),
+      returnPath: subject.path,
+    });
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const signature = createHmac("sha256", config.provisioningSecret).update(`${timestamp}.${body}`).digest("hex");
+    const res = await commerceHttp(config, "POST", "/api/v1/integrations/sso/launch", {
+      body,
+      headers: { "X-GetAssist-Timestamp": timestamp, [config.signatureHeader]: signature },
+    });
+    if (!res.ok) {
+      // A Commerce from before host sign-in has no such path: say so plainly, the person can still sign in there.
+      if (res.error.code === "NOT_FOUND") return appError("NOT_AVAILABLE", "This Commerce server does not offer sign-in from Get Assist yet. Sign in with your Commerce account.", false);
+      if (res.error.code === "FORBIDDEN") {
+        const at = res.error.message.indexOf(" Commerce said:");
+        return appError("FORBIDDEN", `Commerce refused to sign you in from this project.${at >= 0 ? res.error.message.slice(at) : ""}`);
+      }
+      return res;
+    }
+    const b = res.body;
+    if (!isRecord(b) || (b.mode !== "signIn" && b.mode !== "link") || typeof b.launchPath !== "string" || typeof b.expiresAtUtc !== "string") {
+      return shapeError("sign-in answer");
+    }
+    // Only Commerce's own launch page, on the configured dashboard origin; the code stays in the fragment.
+    if (!/^\/sso\/launch#code=[A-Za-z0-9_-]{16,128}$/.test(b.launchPath)) return shapeError("sign-in address");
+    return {
+      ok: true,
+      asOf: new Date().toISOString(),
+      data: { redirectUrl: new URL(b.launchPath, config.appUrl.origin).toString(), expiresAt: b.expiresAtUtc, mode: b.mode === "signIn" ? "SIGN_IN" : "LINK" },
+    };
+  },
+
+  async call<C extends BusinessAppCapability & keyof CommerceCapabilityRequests>(
+    installation: BusinessAppInstallationRef,
+    capability: C,
+    request: CommerceCapabilityRequests[C],
+  ): Promise<BusinessAppResult<CommerceCapabilityResponses[C]>> {
+    const cfg = commerceAppConfig();
+    if (!cfg.ok) return appError("NOT_AVAILABLE", cfg.message, true);
+    if (!installation.credential) return appError("UNAUTHORIZED", "This installation holds no Commerce key.");
+    const config = cfg.config;
+    const key = installation.credential;
+    const done = (data: unknown) => ({ ok: true, data, asOf: new Date().toISOString() }) as unknown as BusinessAppResult<CommerceCapabilityResponses[C]>;
+    const enc = encodeURIComponent;
+
+    switch (capability) {
+      case "commerce.searchProducts": {
+        const r = request as CommerceCapabilityRequests["commerce.searchProducts"];
+        const limit = Math.min(Math.max(1, Math.trunc(r.limit) || 1), 20);
+        const res = await commerceHttp(config, "GET", `/api/v1/integrations/products/search?q=${enc(r.query.slice(0, 100))}&page=1&pageSize=${limit}`, { apiKey: key });
+        if (!res.ok) return res;
+        const page = commercePage(res.body);
+        if (!page) return shapeError("product search answer");
+        const products = page.items.map(commerceProductSummary).filter((x): x is ProductSummary => x !== null);
+        return done({ products, truncated: page.totalCount > products.length }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      case "commerce.getProductDetails": {
+        const r = request as CommerceCapabilityRequests["commerce.getProductDetails"];
+        if (!UUID_RE.test(r.productId)) return appError("NOT_FOUND", "Not a Commerce product id.");
+        const res = await commerceHttp(config, "GET", `/api/v1/integrations/products/${enc(r.productId)}`, { apiKey: key });
+        if (!res.ok) return res;
+        const b = res.body;
+        const summary = commerceProductSummary(b);
+        if (!summary || !isRecord(b)) return shapeError("product answer");
+        const variants = (Array.isArray(b.variants) ? b.variants : []).filter(isRecord).filter((v) => v.isActive !== false && typeof v.id === "string").map((v) => ({
+          variantId: v.id as string,
+          name: typeof v.name === "string" ? v.name : "",
+          price: commerceMoney(v.effectivePrice, b.currencyCode),
+          listPrice: commerceMoney(v.listPrice, b.currencyCode),
+          inStock: typeof v.available === "number" ? v.available > 0 : null,
+        }));
+        const offers = (Array.isArray(b.activeOffers) ? b.activeOffers : []).map((o) => commerceOffer(o, b.currencyCode)).filter((x): x is ActiveOffer => x !== null);
+        return done({ ...summary, description: optString(b.description), variants, offers }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      case "commerce.getCurrentPrice": {
+        const r = request as CommerceCapabilityRequests["commerce.getCurrentPrice"];
+        if (!UUID_RE.test(r.productId)) return appError("NOT_FOUND", "Not a Commerce product id.");
+        const res = await commerceHttp(config, "GET", `/api/v1/integrations/products/${enc(r.productId)}/pricing`, { apiKey: key });
+        if (!res.ok) return res;
+        const b = res.body;
+        if (!isRecord(b) || !Array.isArray(b.variants)) return shapeError("pricing answer");
+        const variants = b.variants.filter(isRecord);
+        const v = r.variantId ? variants.find((x) => x.id === r.variantId) : variants.find((x) => x.isActive !== false);
+        const price = v ? commerceMoney(v.effectivePrice, b.currencyCode) : null;
+        if (!price) return appError("NOT_FOUND", "Commerce gave no current price for that product.");
+        return done({ price, validUntil: null }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      case "commerce.checkAvailability": {
+        const r = request as CommerceCapabilityRequests["commerce.checkAvailability"];
+        if (!UUID_RE.test(r.productId)) return appError("NOT_FOUND", "Not a Commerce product id.");
+        const res = await commerceHttp(config, "GET", `/api/v1/integrations/products/${enc(r.productId)}/availability`, { apiKey: key });
+        if (!res.ok) return res;
+        const b = res.body;
+        if (!isRecord(b) || typeof b.available !== "number" || typeof b.inStock !== "boolean") return shapeError("availability answer");
+        return done({ available: b.available >= Math.max(1, r.quantity), quantityAvailable: b.available }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      case "commerce.getActiveOffers": {
+        const r = request as CommerceCapabilityRequests["commerce.getActiveOffers"];
+        const res = await commerceHttp(config, "GET", "/api/v1/integrations/offers/active", { apiKey: key });
+        if (!res.ok) return res;
+        const list = Array.isArray(res.body) ? res.body : isRecord(res.body) && Array.isArray(res.body.items) ? res.body.items : null;
+        if (!list) return shapeError("offers answer");
+        const offers = list.map((o) => commerceOffer(o)).filter((x): x is ActiveOffer => x !== null);
+        return done({ offers: r.productId ? offers.filter((o) => o.productId === r.productId) : offers }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      case "commerce.getOrderStatus": {
+        const r = request as CommerceCapabilityRequests["commerce.getOrderStatus"];
+        const verified = normalizePhoneNumber(r.verifiedCustomer.value);
+        if (!verified) return done({ orders: [] }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+        const found = await commerceHttp(config, "GET", `/api/v1/integrations/customers/search?q=${enc(phoneTail(verified))}&page=1&pageSize=20`, { apiKey: key });
+        if (!found.ok) return found;
+        const page = commercePage(found.body);
+        if (!page) return shapeError("customer search answer");
+        // The ONE customer whose stored number IS the verified number. Two customers sharing it unlock nothing.
+        const matches = page.items.filter(isRecord).filter((c) => typeof c.id === "string" && typeof c.phone === "string" && normalizePhoneNumber(c.phone) === verified);
+        if (matches.length !== 1) return done({ orders: [] }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+        const res = await commerceHttp(config, "GET", `/api/v1/integrations/customers/${enc(matches[0]!.id as string)}/orders`, { apiKey: key });
+        if (!res.ok) return res;
+        const list = Array.isArray(res.body) ? res.body : isRecord(res.body) && Array.isArray(res.body.items) ? res.body.items : null;
+        if (!list) return shapeError("order history answer");
+        const wanted = r.orderReference?.trim().toLowerCase() ?? null;
+        const orders: OrderStatusSummary[] = list
+          .filter(isRecord)
+          .filter((o) => typeof o.orderNumber === "string" && typeof o.status === "string")
+          .filter((o) => wanted === null || (o.orderNumber as string).toLowerCase() === wanted)
+          .sort((a, b) => String(b.placedAtUtc ?? "").localeCompare(String(a.placedAtUtc ?? "")))
+          .slice(0, 3)
+          .map((o) => ({
+            orderReference: o.orderNumber as string,
+            status: o.status as string,
+            paymentStatus: optString(o.paymentStatus),
+            fulfillmentStatus: optString(o.fulfillmentStatus),
+            placedAt: optString(o.placedAtUtc),
+            updatedAt: optString(o.deliveredAtUtc) ?? optString(o.shippedAtUtc) ?? optString(o.placedAtUtc) ?? new Date().toISOString(),
+            total: commerceMoney(o.grandTotal, o.currencyCode),
+            trackingUrl: null,
+          }));
+        return done({ orders }) as BusinessAppResult<CommerceCapabilityResponses[C]>;
+      }
+      default:
+        return appError("FORBIDDEN", "Unknown capability.");
+    }
+  },
+};
+
+/** The adapters this installation ships. One per installable app; an app absent here cannot be connected. */
+export const BUSINESS_APP_ADAPTERS: Partial<Record<BusinessAppKey, BusinessAppAdapter>> = { commerce: commerceAppAdapter };
+
+/**
+ * The ONLY way host code reads data from a Business App: the capability gate, then the installation's own
+ * credential (decrypted here, right before the call, never returned), then the adapter. A refused gate is
+ * FORBIDDEN with no request made — never an empty answer presented as the app's.
+ */
+export async function callBusinessApp<C extends BusinessAppCapability & keyof CommerceCapabilityRequests>(
+  db: PrismaClient,
+  projectId: string,
+  appKey: BusinessAppKey,
+  capability: C,
+  request: CommerceCapabilityRequests[C],
+): Promise<BusinessAppResult<CommerceCapabilityResponses[C]>> {
+  const gate = await resolveBusinessAppCapability(db, projectId, appKey, capability);
+  if (!gate.allowed) return appError("FORBIDDEN", `Not allowed: ${gate.reason}.`);
+  const adapter = BUSINESS_APP_ADAPTERS[appKey];
+  if (!adapter) return appError("NOT_AVAILABLE", "No adapter exists for this app.", true);
+  const row = await db.projectAppInstallation.findFirst({ where: { projectId, appKey }, select: { credentialCiphertext: true } });
+  if (!row?.credentialCiphertext) return appError("UNAUTHORIZED", "This installation holds no credential for the app.");
+  let credential: string;
+  try {
+    credential = decryptSecret(row.credentialCiphertext);
+  } catch {
+    return appError("UNAUTHORIZED", "This installation's credential could not be read on this server.");
+  }
+  return adapter.call({ projectId, appKey, externalWorkspaceId: gate.externalWorkspaceId, contractVersion: gate.contractVersion, credential }, capability, request);
 }

@@ -3181,6 +3181,49 @@ messages. Rules worth not undoing:
 - **Bulk email**: prepared by one person, approved by ANOTHER within 24 h (CHECK `ClientMessageBatch_no_self_approval`),
   recorded consent only, re-checked at approval. Keys `clients.send_messages` / `clients.approve_messages`.
 
+### Integrations page (`/integrations`, `server/integrationsDirectory.ts`, 14 Nov 2026)
+
+One sidebar entry lists every integration a project can have (WhatsApp, Meta/Telegram channels, website chat, email,
+Commerce, WooCommerce, Shopify, couriers, payments, Google Sheets, AI providers, product knowledge, social, API &
+webhooks) as a card with its REAL state read from its own records (Connected / Needs attention / Not connected / Off)
+and one button: Connect, Fix or Manage. Rules worth not undoing: the page sets nothing up — each card opens the
+integration's own page, which keeps every check; a card shows only when that page would open for the person (same key,
+module and page-access rules as the sidebar); a status read that fails shows "Not connected", never breaks the page.
+**A new integration gets a card in `DEFINITIONS`** (name, one plain line, its page, where adding starts, a status read).
+
+### Business Apps — external first-party apps as project add-ons (`docs/BUSINESS_APP_INTEGRATION_CONTRACT.md`, 14 Nov 2026)
+
+Commerce / Education / Travel ERPs deployed on their own, with their own databases. NOT Core Modules, and unrelated to the
+internal Commerce modules below. **Commerce is connected for real** through its published v1 host contract (the Commerce
+repo's `docs/GET_ASSIST_INTEGRATION.md`): signed provisioning + a read-only API key. Rules worth not undoing:
+- The registry (`packages/shared/src/businessApps.ts`) holds no secret and no address; Commerce's addresses and secret are
+  env only (`COMMERCE_API_URL`, `COMMERCE_APP_URL`, `COMMERCE_PROVISIONING_SECRET` — the worker never gets the secret),
+  HTTPS or loopback HTTP only (`parseApprovedAppUrl`). Never invent an endpoint: `commerceAppAdapter` (packages/db) uses
+  only paths Commerce publishes.
+- One `ProjectAppInstallation` per project + app, project- and customer-scoped. **Never ACTIVE without a verified
+  connection**: provisioning answered, workspace as asked/stored, contract version supported (checked in the adapter AND
+  by the host), Commerce says Active, and one authenticated read with the key — plus a database CHECK.
+- **Commerce shows its key once: it is encrypted and stored the moment it arrives**, before any other check
+  (`persistCredential`), only as an `encryptSecret` envelope (CHECK refuses `cmk_…`), never selected for a view.
+  That write keeps `updatedAt` = the claim time, because `updatedAt` is the CONNECTING claim token. Disable keeps the key.
+- A mapped project is only re-checked, never re-pointed at another workspace.
+- **`callBusinessApp` (packages/db) is the only way host code reads app data**: the capability gate, then the installation's
+  own key decrypted right before the call. A refused gate makes no request. Prices become exact minor units or nothing.
+- The workspace shows Commerce's own frontend in a sandboxed frame (`EmbeddedBusinessApp`), on Commerce's origin, only
+  after `authorizeBusinessAppLaunch` allows it; never on Chithii's own host; no Chithii cookie, token or id in the address
+  (`safeAppPath`); no script injected. **The frame opens on Commerce's single-use sign-in** (`launchBusinessApp` →
+  `createLaunch` → signed `POST /api/v1/integrations/sso/launch`): the subject is SHA-256(installation id : user id), never
+  the user id; only Commerce's `/sso/launch#code=…` shape on `COMMERCE_APP_URL` is followed, through `validateLaunchTicket`;
+  a fresh launch per open and Reload. Commerce signs a person in only as the account they linked by signing in there once,
+  and creates nobody. Without a hand-off the frame shows Commerce's own sign-in with the reason. Commerce must list
+  Chithii's origin in its `HOST_PLATFORM_ALLOWED_ORIGINS`, or the browser refuses the frame.
+- The AI reads Commerce through the EXISTING grounding (`findCommerceGrounding`), behind the same AI commerce switches;
+  never a second AI path, never a reply, and the `UNGROUNDED_PRICE` check covers its figures. Order status only for the
+  ONE Commerce customer whose number is the verified `@c.us` number.
+- Install / connect / disable need `projects.manage`; opening needs `business_apps.open`. No app call inside a transaction.
+  A project created with no add-on must stay byte-for-byte as before. Tests run against `__tests__/helpers/fakeCommerce.ts`,
+  which follows Commerce's own provisioning code; keep it in step with Commerce.
+
 ### Commerce — products, stock, orders, sales pipeline (`COMMERCE.md`)
 
 Features `PRODUCT_CATALOG`, `ORDERS`, `SALES_PIPELINE`, all **off by default** (on in the E-commerce type). The

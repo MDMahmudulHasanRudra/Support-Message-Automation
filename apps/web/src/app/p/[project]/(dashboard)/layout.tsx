@@ -12,6 +12,7 @@ import { activeDisabledFeatures } from "@/server/projectFeatures";
 import { inWorkspace } from "@/server/projectPaths";
 import { workspaceProjects } from "@/server/workspace";
 import { WORKSPACE_BASE } from "@/lib/workspace";
+import { launchableBusinessApps } from "@/server/businessApps";
 
 import { DashboardShell } from "./DashboardShell";
 
@@ -38,7 +39,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // The project step before anything else renders: a project this user cannot enter is a 404,
   // whatever the page below would have shown (MULTI_PROJECT_PLAN.md §7).
   const project = await requireProjectPage();
-  const [settings, grantedKeys, switchable, disabledFeatures, pageAccess] = await Promise.all([
+  const [settings, grantedKeys, switchable, disabledFeatures, pageAccess, businessApps] = await Promise.all([
     prisma.automationSettings.findUnique({ where: { id: "global" } }),
     // For what the shell SHOWS — which links, whether the assistant. Every page and action still
     // makes its own check; this only stops the sidebar offering pages that would refuse.
@@ -49,6 +50,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     activeDisabledFeatures(),
     // The pages this member's project role opens (PROJECT_ROLES.md), or null — keys alone decide.
     getPageAccess(session),
+    // The project's connected Business Apps this person may open — the sidebar's Business Apps group.
+    launchableBusinessApps(session, project),
   ]);
 
   // SaaS (SAAS_PLATFORM_PLAN.md §10, §12): a held workspace tells everybody why nothing saves;
@@ -70,6 +73,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       disabledFeatures={[...disabledFeatures]}
       pageAccess={pageAccess}
       workspaceProjects={workspaceTabs}
+      businessApps={businessApps}
     >
       {children}
     </DashboardShell>

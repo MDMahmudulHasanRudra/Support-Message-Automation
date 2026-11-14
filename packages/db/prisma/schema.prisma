@@ -765,6 +765,7 @@ model Project {
   ticketSettings                       TicketSettings?
   followUpEvents                       FollowUpEvent[]
   routingSettings                      RoutingSettings?
+  appInstallations                     ProjectAppInstallation[]
   conversationEvents                   ConversationEvent[]
   webChatVisitors                      WebChatVisitor[]
   productCategories                    ProductCategory[]
@@ -10622,4 +10623,46 @@ model WhatsAppCloudTemplate {
 
   @@unique([connectionId, name, language])
   @@index([projectId])
+}
+
+/// A first-party Business App (Commerce, Education, Travel) added to one project as an optional add-on
+/// (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md). The app is a separate product with its own database; this
+/// row records only that the project uses it and the state of the connection. One per project + app.
+/// `status` is PENDING | CONNECTING | ACTIVE | DISABLED | ERROR (CHECK); the database refuses ACTIVE
+/// without a verified connection (`lastConnectedAt` and `externalWorkspaceId`). No secret is stored here.
+model ProjectAppInstallation {
+  id                  String    @id @default(cuid())
+  projectId           String    @default(dbgenerated("project_id_required()"))
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  /// A key of BUSINESS_APPS (packages/shared businessApps.ts); CHECK.
+  appKey              String
+  status              String    @default("PENDING")
+  /// The integration contract version the installation was made against.
+  contractVersion     String
+  /// The app's own id for this project's workspace, returned by a verified connection. Never typed in.
+  externalWorkspaceId String?
+  /// The app's tenant and connection ids from provisioning (Commerce returns both). Reference only.
+  externalTenantId     String?
+  externalConnectionId String?
+  /// The per-installation credential the app issued (Commerce: a read-only API key), as an encryptSecret
+  /// envelope. Read ONLY by packages/db's Business App client right before a call; never selected for a view.
+  credentialCiphertext String?
+  /// The credential's non-secret prefix, to recognise it in the app's own key list.
+  credentialHint       String?
+  credentialIssuedAt   DateTime?
+  /// When the app last answered a verified connection check.
+  lastConnectedAt     DateTime?
+  /// The last failed check, in words safe to show a Main Admin (never a token or a stack trace).
+  lastError           String?
+  lastErrorAt         DateTime?
+  disabledAt          DateTime?
+  /// Who added it (a login id, no foreign key: the record outlives the login) and their name at the time.
+  installedById       String?
+  installedByName     String?
+  /// Who last changed the status, same shape.
+  updatedById         String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([projectId, appKey])
 }

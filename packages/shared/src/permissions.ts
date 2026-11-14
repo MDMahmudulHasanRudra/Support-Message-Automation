@@ -203,6 +203,11 @@ export const PERMISSIONS: readonly PermissionDefinition[] = [
   { key: "security_settings.view", label: "View Security Settings", category: "Users & Permissions" },
   { key: "security_settings.edit", label: "Edit Security Settings", category: "Users & Permissions" },
 
+  // Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md): opening an installed, connected external app
+  // from a project's workspace. Installing, connecting and disabling one is a Main Admin's (`projects.manage`).
+  // Not a `.view` key on purpose, so Read Only does not gain a way into another product by default.
+  { key: "business_apps.open", label: "Open Connected Business Apps", category: "Business Apps" },
+
   // Main Admin Portal (MULTI_PROJECT_PLAN.md §7). Platform-level, not a module inside a project:
   // `projects.view` opens the portal read-only; `projects.manage` makes someone a Main Admin, who can
   // create projects, change their status, grant and revoke project access, and enter any project.

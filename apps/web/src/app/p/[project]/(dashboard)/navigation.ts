@@ -1,4 +1,4 @@
-import { BadgeCheck, Code2 as InstallIcon, RadioTower as LiveBoardIcon, UsersRound as VisitorsIcon } from "lucide-react";
+import { BadgeCheck, Code2 as InstallIcon, Plane, Puzzle, RadioTower as LiveBoardIcon, ShoppingBag, UsersRound as VisitorsIcon } from "lucide-react";
 import { LEGACY_WHATSAPP_LABEL, pathAllowedByFeatures, REPORT_CATALOGUE, type ReportCategory, type ReportExportFormat } from "@support-automation/shared";
 import {
   Activity,
@@ -141,6 +141,23 @@ export interface NavGroup {
   label: string;
   icon: LucideIcon;
   links: NavLink[];
+}
+
+/** The workspace's Business Apps page; each connected app opens at /apps/<key> (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md). */
+export const BUSINESS_APPS_GROUP_ID = "business-apps";
+export const BUSINESS_APPS_LINK: NavLink = { href: "/apps", label: "Business Apps", icon: Puzzle };
+const BUSINESS_APP_NAV_ICONS = { ShoppingBag, GraduationCap, Plane } as const;
+
+/**
+ * The sidebar's Business Apps group for this project: one link per app the person may open (ACTIVE, decided on the
+ * server), or no group at all. A role without the key never had the group (navGroupsFor dropped the hub link).
+ */
+export function withBusinessApps(groups: NavGroup[], apps: ReadonlyArray<{ key: string; name: string; icon: keyof typeof BUSINESS_APP_NAV_ICONS }>): NavGroup[] {
+  return groups.flatMap((group) => {
+    if (group.id !== BUSINESS_APPS_GROUP_ID) return [group];
+    if (apps.length === 0) return [];
+    return [{ ...group, links: apps.map((app) => ({ href: `${BUSINESS_APPS_LINK.href}/${app.key}`, label: app.name, icon: BUSINESS_APP_NAV_ICONS[app.icon] ?? Puzzle })) }];
+  });
 }
 
 // The one always-visible landing page — pinned above the scrollable groups below rather than
@@ -538,6 +555,15 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Business Apps (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md): separate first-party apps this project added.
+    // The shell replaces this one link with the project's CONNECTED apps (withBusinessApps), and drops the group
+    // when there are none; the hub link is here so the page catalogue, ⌘K and permissions know the pages.
+    id: BUSINESS_APPS_GROUP_ID,
+    label: "Business Apps",
+    icon: Puzzle,
+    links: [BUSINESS_APPS_LINK],
+  },
+  {
     id: "automation",
     label: "Automation Studio",
     icon: ListChecks,
@@ -710,6 +736,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Every integration in one place: connect, fix or manage each from its card (server/integrationsDirectory.ts).
+    id: "integrations-link",
+    label: "Integrations",
+    icon: PlugZap,
+    links: [{ href: "/integrations", label: "Integrations", icon: PlugZap }],
+  },
+  {
     // Last and on its own, so it is always one glance away. A one-link module renders as that link.
     id: "settings-link",
     label: "Settings",
@@ -732,6 +765,8 @@ export const NAV_GROUPS: NavGroup[] = [
  * composers exist only to launch a send and require the manage key to open.
  */
 const NAV_KEY_EXACT: Record<string, string> = {
+  // The directory itself writes nothing; each card is offered only when its own page would open.
+  "/integrations": "settings.view",
   "/group-message-sender": "bulk_messaging.manage",
   "/group-member-adder": "bulk_messaging.manage",
   "/ai-learning/knowledge-base/import": "ai_learning.manage",
@@ -825,6 +860,7 @@ const NAV_KEY_PREFIX: Array<[string, string]> = [
   ["/project-roles", "project_roles.manage"],
   ["/subscription", "project_members.manage"],
   ["/release-notes", "release_notes.view"],
+  ["/apps", "business_apps.open"],
 ].sort((a, b) => b[0].length - a[0].length) as Array<[string, string]>;
 
 /** The key a link needs, or null for a page every signed-in user may open (the Overview). */

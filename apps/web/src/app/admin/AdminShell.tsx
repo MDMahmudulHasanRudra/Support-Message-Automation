@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, Menu, Palette, ShieldCheck, UserRound, X } from "lucide-react";
+import { Blocks, Building2, ChevronRight, FolderKanban, LayoutDashboard, Menu, Palette, Puzzle, ShieldCheck, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PageEpoch } from "@/components/NavigationProgress";
 import { IntentLink } from "@/components/ProjectLink";
@@ -59,6 +59,8 @@ function buildSections(granted: ReadonlySet<string>, hasProjects: boolean): Arra
         { href: "/admin/branding", label: "Branding Settings", icon: Palette, exact: false },
         // Reusable module selections (PROJECT_MODULES.md §8); editing needs projects.manage.
         { href: "/admin/module-templates", label: "Project Templates", icon: Blocks, exact: false },
+        // Separate first-party apps a project can add (docs/BUSINESS_APP_INTEGRATION_CONTRACT.md); managing needs projects.manage.
+        { href: "/admin/business-apps", label: "Business Apps", icon: Puzzle, exact: false },
         // The other global modules (Release Notes) are the project portal's own pages, opened without tabs.
         ...groups
           .filter((g) => isGlobal(g.links) && g.id !== "users-permissions")

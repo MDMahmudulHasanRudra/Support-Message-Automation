@@ -13,6 +13,23 @@ import type { NextConfig } from "next";
  */
 
 /**
+ * The one external origin a page may frame: the connected Commerce dashboard (Business Apps, shown inside the
+ * workspace). Origin only, HTTPS or loopback HTTP, the same rule as packages/shared `parseApprovedAppUrl`
+ * (inlined: this file must not import). Unset or invalid = nothing added.
+ */
+function embeddedAppOrigin(): string | null {
+  const raw = process.env.COMMERCE_APP_URL?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    return url.protocol === "https:" || (url.protocol === "http:" && loopback) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Report-only for now: browsers report what it WOULD block to /api/csp-report and block nothing.
  * 'unsafe-inline' scripts and styles are allowed because Next's hydration uses inline scripts; removing
  * that needs a per-request nonce, which is a later, separate step. frame-ancestors is not honoured in a
@@ -26,7 +43,7 @@ export const CSP_REPORT_ONLY = [
   "font-src 'self' data:",
   "media-src 'self' blob:",
   "connect-src 'self'",
-  "frame-src 'self'",
+  `frame-src 'self'${embeddedAppOrigin() ? ` ${embeddedAppOrigin()}` : ""}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
